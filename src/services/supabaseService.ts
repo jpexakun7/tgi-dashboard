@@ -1,0 +1,787 @@
+import { supabase } from '../lib/supabase';
+import {
+  Employee,
+  CompanyAsset,
+  PayrollRecord,
+  AttendanceRecord,
+  LeaveRequest,
+  OvertimeRequest,
+  ReimbursementClaim,
+} from '../types';
+
+export interface SupabaseSyncStatus {
+  isConnected: boolean;
+  isTablesCreated: boolean;
+  statusText: string;
+  lastSyncTime: Date | null;
+  error?: string | null;
+  tableDetails?: {
+    employees: boolean;
+    company_assets: boolean;
+    payrolls: boolean;
+    attendances: boolean;
+    leave_requests: boolean;
+    overtime_requests: boolean;
+    reimbursements: boolean;
+  };
+}
+
+export function employeeToDb(emp: Employee) {
+  return {
+    id: emp.id,
+    nik: emp.nik,
+    full_name: emp.fullName,
+    email: emp.email,
+    google_email: emp.googleEmail || null,
+    phone: emp.phone || null,
+    avatar_url: emp.avatarUrl || null,
+    face_photo_url: emp.facePhotoUrl || null,
+    role: emp.role || 'Staff',
+    gender: emp.gender || 'Laki-laki',
+    department: emp.department || 'Operasional',
+    employment_status: emp.employmentStatus || 'PKWT (Kontrak)',
+    join_date: emp.joinDate || new Date().toISOString().split('T')[0],
+    base_salary: Number(emp.baseSalary) || 0,
+    allowances: emp.allowances || { position: 0, transport: 0, meal: 0, communication: 0 },
+    bank_name: emp.bankName || 'BCA',
+    bank_account_number: emp.bankAccountNumber || '',
+    bank_account_holder: emp.bankAccountHolder || emp.fullName,
+    npwp: emp.npwp || '00.000.000.0-000.000',
+    ptkp_status: emp.ptkpStatus || 'TK/0',
+    bpjs_kesehatan_no: emp.bpjsKesehatanNo || '0001000000000',
+    bpjs_ketenagakerjaan_no: emp.bpjsKetenagakerjaanNo || '00000000000',
+    remaining_leave_days: Number(emp.remainingLeaveDays) ?? 12,
+    is_active: emp.isActive ?? true,
+    approval_status: emp.approvalStatus || 'approved',
+    updated_at: new Date().toISOString(),
+  };
+}
+
+export function dbToEmployee(row: any): Employee {
+  return {
+    id: row.id,
+    nik: row.nik,
+    fullName: row.full_name || '',
+    email: row.email || '',
+    googleEmail: row.google_email || undefined,
+    phone: row.phone || '',
+    avatarUrl: row.avatar_url || '',
+    facePhotoUrl: row.face_photo_url || undefined,
+    role: row.role || 'Staff',
+    gender: row.gender || 'Laki-laki',
+    department: row.department || 'Operasional',
+    employmentStatus: row.employment_status || 'PKWT (Kontrak)',
+    joinDate: row.join_date || new Date().toISOString().split('T')[0],
+    baseSalary: Number(row.base_salary) || 0,
+    allowances: row.allowances || {
+      position: 0,
+      transport: 0,
+      meal: 0,
+      communication: 0,
+    },
+    bankName: row.bank_name || 'BCA',
+    bankAccountNumber: row.bank_account_number || '',
+    bankAccountHolder: row.bank_account_holder || '',
+    npwp: row.npwp || '00.000.000.0-000.000',
+    ptkpStatus: row.ptkp_status || 'TK/0',
+    bpjsKesehatanNo: row.bpjs_kesehatan_no || '0001000000000',
+    bpjsKetenagakerjaanNo: row.bpjs_ketenagakerjaan_no || '00000000000',
+    remainingLeaveDays: Number(row.remaining_leave_days) ?? 12,
+    isActive: row.is_active ?? true,
+    approvalStatus: row.approval_status || 'approved',
+  };
+}
+
+export function assetToDb(asset: CompanyAsset) {
+  return {
+    id: asset.id,
+    asset_code: asset.assetCode,
+    serial_number: asset.serialNumber || null,
+    name: asset.name,
+    category: asset.category,
+    condition: asset.condition || 'Baik',
+    purchase_date: asset.purchaseDate || null,
+    purchase_cost: Number(asset.purchaseCost) || 0,
+    status: asset.status || 'Tersedia',
+    location: asset.location || null,
+    assigned_to_employee_id: asset.assignedToEmployeeId || null,
+    assigned_to_employee_name: asset.assignedToEmployeeName || null,
+    assigned_to_employee_nik: asset.assignedToEmployeeNik || null,
+    assigned_date: asset.assignedDate || null,
+    handover_condition_notes: asset.handoverConditionNotes || null,
+    photo_url: asset.photoUrl || null,
+    specifications: asset.specifications || null,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+export function dbToAsset(row: any): CompanyAsset {
+  return {
+    id: row.id,
+    assetCode: row.asset_code,
+    serialNumber: row.serial_number || undefined,
+    name: row.name,
+    category: row.category,
+    condition: row.condition || 'Baik',
+    purchaseDate: row.purchase_date || '',
+    purchaseCost: Number(row.purchase_cost) || 0,
+    status: row.status || 'Tersedia',
+    location: row.location || undefined,
+    assignedToEmployeeId: row.assigned_to_employee_id || null,
+    assignedToEmployeeName: row.assigned_to_employee_name || null,
+    assignedToEmployeeNik: row.assigned_to_employee_nik || null,
+    assignedDate: row.assigned_date || null,
+    handoverConditionNotes: row.handover_condition_notes || null,
+    photoUrl: row.photo_url || undefined,
+    specifications: row.specifications || undefined,
+  };
+}
+
+export function payrollToDb(p: PayrollRecord) {
+  return {
+    id: p.id,
+    employee_id: p.employeeId,
+    period: p.period,
+    base_salary: Number(p.baseSalary) || 0,
+    allowance_position: Number(p.allowancePosition) || 0,
+    allowance_transport: Number(p.allowanceTransport) || 0,
+    allowance_meal: Number(p.allowanceMeal) || 0,
+    allowance_communication: Number(p.allowanceCommunication) || 0,
+    overtime_pay: Number(p.overtimePay) || 0,
+    bonus: Number(p.bonus) || 0,
+    total_gross_salary: Number(p.totalGrossSalary) || 0,
+    late_deduction: Number(p.lateDeduction) || 0,
+    bpjs_kesehatan_employee: Number(p.bpjsKesehatanEmployee) || 0,
+    bpjs_kesehatan_employer: Number(p.bpjsKesehatanEmployer) || 0,
+    bpjs_jht_employee: Number(p.bpjsJhtEmployee) || 0,
+    bpjs_jht_employer: Number(p.bpjsJhtEmployer) || 0,
+    bpjs_jp_employee: Number(p.bpjsJpEmployee) || 0,
+    bpjs_jp_employer: Number(p.bpjsJpEmployer) || 0,
+    bpjs_jkk_employer: Number(p.bpjsJkkEmployer) || 0,
+    bpjs_jkm_employer: Number(p.bpjsJkmEmployer) || 0,
+    pph21_ter: Number(p.pph21TER) || 0,
+    cash_advance_deduction: Number(p.cashAdvanceDeduction) || 0,
+    total_deductions: Number(p.totalDeductions) || 0,
+    take_home_pay: Number(p.takeHomePay) || 0,
+    payment_status: p.paymentStatus || 'Draft',
+    payment_date: p.paymentDate || null,
+    reference_number: p.referenceNumber || `PAY-${Date.now()}`,
+  };
+}
+
+export function dbToPayroll(row: any): PayrollRecord {
+  return {
+    id: row.id,
+    employeeId: row.employee_id,
+    period: row.period,
+    createdAt: row.created_at || new Date().toISOString(),
+    baseSalary: Number(row.base_salary) || 0,
+    allowancePosition: Number(row.allowance_position) || 0,
+    allowanceTransport: Number(row.allowance_transport) || 0,
+    allowanceMeal: Number(row.allowance_meal) || 0,
+    allowanceCommunication: Number(row.allowance_communication) || 0,
+    overtimePay: Number(row.overtime_pay) || 0,
+    bonus: Number(row.bonus) || 0,
+    totalGrossSalary: Number(row.total_gross_salary) || 0,
+    lateDeduction: Number(row.late_deduction) || 0,
+    bpjsKesehatanEmployee: Number(row.bpjs_kesehatan_employee) || 0,
+    bpjsKesehatanEmployer: Number(row.bpjs_kesehatan_employer) || 0,
+    bpjsJhtEmployee: Number(row.bpjs_jht_employee) || 0,
+    bpjsJhtEmployer: Number(row.bpjs_jht_employer) || 0,
+    bpjsJpEmployee: Number(row.bpjs_jp_employee) || 0,
+    bpjsJpEmployer: Number(row.bpjs_jp_employer) || 0,
+    bpjsJkkEmployer: Number(row.bpjs_jkk_employer) || 0,
+    bpjsJkmEmployer: Number(row.bpjs_jkm_employer) || 0,
+    pph21TER: Number(row.pph21_ter) || 0,
+    otherDeductions: 0,
+    cashAdvanceDeduction: Number(row.cash_advance_deduction) || 0,
+    totalDeductions: Number(row.total_deductions) || 0,
+    takeHomePay: Number(row.take_home_pay) || 0,
+    paymentStatus: row.payment_status || 'Draft',
+    paymentDate: row.payment_date || undefined,
+    referenceNumber: row.reference_number || `PAY-${row.id}`,
+  };
+}
+
+export async function checkSupabaseStatus(): Promise<SupabaseSyncStatus> {
+  try {
+    const [empRes, astRes, payRes, attRes, lveRes, ovtRes, rmbRes] = await Promise.all([
+      supabase.from('employees').select('id', { count: 'exact', head: true }),
+      supabase.from('company_assets').select('id', { count: 'exact', head: true }),
+      supabase.from('payrolls').select('id', { count: 'exact', head: true }),
+      supabase.from('attendances').select('id', { count: 'exact', head: true }),
+      supabase.from('leave_requests').select('id', { count: 'exact', head: true }),
+      supabase.from('overtime_requests').select('id', { count: 'exact', head: true }),
+      supabase.from('reimbursements').select('id', { count: 'exact', head: true }),
+    ]);
+
+    const isConnectionError =
+      empRes.error &&
+      !empRes.error.message?.includes('does not exist') &&
+      empRes.error.code !== '42P01' &&
+      empRes.error.code !== 'PGRST205';
+
+    if (isConnectionError) {
+      return {
+        isConnected: false,
+        isTablesCreated: false,
+        statusText: 'Gagal Menghubungi Supabase',
+        lastSyncTime: null,
+        error: empRes.error?.message,
+      };
+    }
+
+    const tableDetails = {
+      employees: !empRes.error,
+      company_assets: !astRes.error,
+      payrolls: !payRes.error,
+      attendances: !attRes.error,
+      leave_requests: !lveRes.error,
+      overtime_requests: !ovtRes.error,
+      reimbursements: !rmbRes.error,
+    };
+
+    const isCoreCreated = tableDetails.employees;
+    const allTablesCreated = Object.values(tableDetails).every(Boolean);
+
+    return {
+      isConnected: true,
+      isTablesCreated: isCoreCreated,
+      statusText: allTablesCreated
+        ? 'Terhubung & 7 Tabel Aktif Sinkronisasi Real-time'
+        : 'Terhubung ke Supabase (Sebagian Tabel Belum Dibuat)',
+      lastSyncTime: new Date(),
+      error: allTablesCreated
+        ? null
+        : 'Tabel Presensi, Cuti, Lembur, atau Reimbursement belum dibuat. Jalankan skrip SQL tambahan.',
+      tableDetails,
+    };
+  } catch (err: any) {
+    return {
+      isConnected: false,
+      isTablesCreated: false,
+      statusText: 'Offline / Menggunakan Local Storage',
+      lastSyncTime: null,
+      error: err?.message || 'Koneksi gagal',
+    };
+  }
+}
+
+export async function autoSeedSupabaseIfEmpty(
+  mockEmployees: Employee[],
+  mockAssets: CompanyAsset[],
+  mockPayrolls: PayrollRecord[]
+): Promise<{ seeded: boolean; message: string }> {
+  try {
+    const { count, error: empCountError } = await supabase
+      .from('employees')
+      .select('id', { count: 'exact', head: true });
+
+    if (empCountError) {
+      return { seeded: false, message: empCountError.message };
+    }
+
+    if (count !== null && count > 0) {
+      return { seeded: false, message: `Database telah berisi ${count} karyawan.` };
+    }
+
+    // Seed employees
+    const mappedEmps = mockEmployees.map(employeeToDb);
+    const { error: seedEmpErr } = await supabase.from('employees').insert(mappedEmps);
+    if (seedEmpErr) {
+      return { seeded: false, message: seedEmpErr.message };
+    }
+
+    // Seed assets
+    if (mockAssets.length > 0) {
+      const mappedAssets = mockAssets.map(assetToDb);
+      await supabase.from('company_assets').insert(mappedAssets);
+    }
+
+    // Seed payrolls
+    if (mockPayrolls.length > 0) {
+      const mappedPayrolls = mockPayrolls.map(payrollToDb);
+      await supabase.from('payrolls').insert(mappedPayrolls);
+    }
+
+    return { seeded: true, message: `Berhasil mengunggah ${mockEmployees.length} karyawan dan ${mockAssets.length} aset awal ke Supabase!` };
+  } catch (err: any) {
+    return { seeded: false, message: err?.message || 'Gagal seeding' };
+  }
+}
+
+export async function fetchEmployeesFromSupabase(): Promise<Employee[] | null> {
+  try {
+    const { data, error } = await supabase
+      .from('employees')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error || !data) return null;
+    return data.map(dbToEmployee);
+  } catch {
+    return null;
+  }
+}
+
+export async function insertEmployeeToSupabase(emp: Employee): Promise<boolean> {
+  try {
+    const row = employeeToDb(emp);
+    const { error } = await supabase.from('employees').insert([row]);
+    if (error) {
+      console.warn('Supabase insert employee error (fallback to local):', error.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn('Supabase insert employee error:', err);
+    return false;
+  }
+}
+
+export async function updateEmployeeInSupabase(emp: Employee): Promise<boolean> {
+  try {
+    const row = employeeToDb(emp);
+    const { error } = await supabase.from('employees').update(row).eq('id', emp.id);
+    if (error) {
+      console.warn('Supabase update employee error:', error.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn('Supabase update employee error:', err);
+    return false;
+  }
+}
+
+export async function deleteEmployeeFromSupabase(id: string): Promise<boolean> {
+  try {
+    const { error } = await supabase.from('employees').delete().eq('id', id);
+    if (error) {
+      console.warn('Supabase delete employee error:', error.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn('Supabase delete employee error:', err);
+    return false;
+  }
+}
+
+export async function fetchAssetsFromSupabase(): Promise<CompanyAsset[] | null> {
+  try {
+    const { data, error } = await supabase
+      .from('company_assets')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error || !data) return null;
+    return data.map(dbToAsset);
+  } catch {
+    return null;
+  }
+}
+
+export async function insertAssetToSupabase(asset: CompanyAsset): Promise<boolean> {
+  try {
+    const row = assetToDb(asset);
+    const { error } = await supabase.from('company_assets').insert([row]);
+    if (error) {
+      console.warn('Supabase insert asset error:', error.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn('Supabase insert asset error:', err);
+    return false;
+  }
+}
+
+export async function updateAssetInSupabase(asset: CompanyAsset): Promise<boolean> {
+  try {
+    const row = assetToDb(asset);
+    const { error } = await supabase.from('company_assets').update(row).eq('id', asset.id);
+    if (error) {
+      console.warn('Supabase update asset error:', error.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn('Supabase update asset error:', err);
+    return false;
+  }
+}
+
+export async function deleteAssetFromSupabase(id: string): Promise<boolean> {
+  try {
+    const { error } = await supabase.from('company_assets').delete().eq('id', id);
+    if (error) {
+      console.warn('Supabase delete asset error:', error.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn('Supabase delete asset error:', err);
+    return false;
+  }
+}
+
+export async function fetchPayrollsFromSupabase(): Promise<PayrollRecord[] | null> {
+  try {
+    const { data, error } = await supabase
+      .from('payrolls')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error || !data) return null;
+    return data.map(dbToPayroll);
+  } catch {
+    return null;
+  }
+}
+
+export async function upsertPayrollToSupabase(record: PayrollRecord): Promise<boolean> {
+  try {
+    const row = payrollToDb(record);
+    const { error } = await supabase.from('payrolls').upsert(row, { onConflict: 'id' });
+    if (error) {
+      console.warn('Supabase upsert payroll error:', error.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn('Supabase upsert payroll error:', err);
+    return false;
+  }
+}
+
+// -----------------------------------------------------------------------------
+// ATTENDANCES (Presensi)
+// -----------------------------------------------------------------------------
+export function attendanceToDb(att: AttendanceRecord) {
+  return {
+    id: att.id,
+    employee_id: att.employeeId,
+    date: att.date,
+    check_in: att.checkIn || '',
+    check_out: att.checkOut || '',
+    status: att.status || 'Hadir Tepat Waktu',
+    work_hours: Number(att.workHours) || 8,
+    late_minutes: Number(att.lateMinutes) || 0,
+    notes: att.notes || null,
+    face_scan_verified: att.faceScanVerified ?? false,
+    face_confidence: Number(att.faceConfidence) || 0,
+    face_photo_snapshot: att.facePhotoSnapshot || null,
+    location_coords: att.locationCoords || null,
+    location_address: att.locationAddress || null,
+    is_in_office_radius: att.isInOfficeRadius ?? true,
+    distance_meters: Number(att.distanceMeters) || 0,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+export function dbToAttendance(row: any): AttendanceRecord {
+  return {
+    id: row.id,
+    employeeId: row.employee_id,
+    date: row.date,
+    checkIn: row.check_in || '',
+    checkOut: row.check_out || '',
+    status: row.status || 'Hadir Tepat Waktu',
+    workHours: Number(row.work_hours) || 8,
+    lateMinutes: Number(row.late_minutes) || 0,
+    notes: row.notes || undefined,
+    faceScanVerified: Boolean(row.face_scan_verified),
+    faceConfidence: Number(row.face_confidence) || 0,
+    facePhotoSnapshot: row.face_photo_snapshot || undefined,
+    locationCoords: row.location_coords || undefined,
+    locationAddress: row.location_address || undefined,
+    isInOfficeRadius: row.is_in_office_radius ?? true,
+    distanceMeters: Number(row.distance_meters) || 0,
+  };
+}
+
+export async function fetchAttendancesFromSupabase(): Promise<AttendanceRecord[] | null> {
+  try {
+    const { data, error } = await supabase
+      .from('attendances')
+      .select('*')
+      .order('date', { ascending: false });
+
+    if (error || !data) return null;
+    return data.map(dbToAttendance);
+  } catch {
+    return null;
+  }
+}
+
+export async function upsertAttendanceToSupabase(att: AttendanceRecord): Promise<boolean> {
+  try {
+    const row = attendanceToDb(att);
+    const { error } = await supabase.from('attendances').upsert(row, { onConflict: 'id' });
+    if (error) {
+      console.warn('Supabase upsert attendance error:', error.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn('Supabase upsert attendance error:', err);
+    return false;
+  }
+}
+
+// -----------------------------------------------------------------------------
+// LEAVE REQUESTS (Cuti & Izin)
+// -----------------------------------------------------------------------------
+export function leaveToDb(leave: LeaveRequest) {
+  return {
+    id: leave.id,
+    employee_id: leave.employeeId,
+    type: leave.type,
+    start_date: leave.startDate,
+    end_date: leave.endDate,
+    total_days: Number(leave.totalDays) || 1,
+    reason: leave.reason || '',
+    status: leave.status || 'Menunggu Persetujuan',
+    applied_at: leave.appliedAt || new Date().toISOString(),
+    approved_by: leave.approvedBy || null,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+export function dbToLeave(row: any): LeaveRequest {
+  return {
+    id: row.id,
+    employeeId: row.employee_id,
+    type: row.type || 'Cuti Tahunan',
+    startDate: row.start_date,
+    endDate: row.end_date,
+    totalDays: Number(row.total_days) || 1,
+    reason: row.reason || '',
+    status: row.status || 'Menunggu Persetujuan',
+    appliedAt: row.applied_at || new Date().toISOString(),
+    approvedBy: row.approved_by || undefined,
+  };
+}
+
+export async function fetchLeaveRequestsFromSupabase(): Promise<LeaveRequest[] | null> {
+  try {
+    const { data, error } = await supabase
+      .from('leave_requests')
+      .select('*')
+      .order('applied_at', { ascending: false });
+
+    if (error || !data) return null;
+    return data.map(dbToLeave);
+  } catch {
+    return null;
+  }
+}
+
+export async function upsertLeaveRequestToSupabase(req: LeaveRequest): Promise<boolean> {
+  try {
+    const row = leaveToDb(req);
+    const { error } = await supabase.from('leave_requests').upsert(row, { onConflict: 'id' });
+    if (error) {
+      console.warn('Supabase upsert leave request error:', error.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn('Supabase upsert leave request error:', err);
+    return false;
+  }
+}
+
+// -----------------------------------------------------------------------------
+// OVERTIME REQUESTS (Klaim Lembur)
+// -----------------------------------------------------------------------------
+export function overtimeToDb(ot: OvertimeRequest) {
+  return {
+    id: ot.id,
+    employee_id: ot.employeeId,
+    date: ot.date,
+    hours: Number(ot.hours) || 1,
+    task_description: ot.taskDescription || '',
+    calculated_pay: Number(ot.calculatedPay) || 0,
+    status: ot.status || 'Menunggu Persetujuan',
+    updated_at: new Date().toISOString(),
+  };
+}
+
+export function dbToOvertime(row: any): OvertimeRequest {
+  return {
+    id: row.id,
+    employeeId: row.employee_id,
+    date: row.date,
+    hours: Number(row.hours) || 1,
+    taskDescription: row.task_description || '',
+    calculatedPay: Number(row.calculated_pay) || 0,
+    status: row.status || 'Menunggu Persetujuan',
+  };
+}
+
+export async function fetchOvertimeRequestsFromSupabase(): Promise<OvertimeRequest[] | null> {
+  try {
+    const { data, error } = await supabase
+      .from('overtime_requests')
+      .select('*')
+      .order('date', { ascending: false });
+
+    if (error || !data) return null;
+    return data.map(dbToOvertime);
+  } catch {
+    return null;
+  }
+}
+
+export async function upsertOvertimeRequestToSupabase(ot: OvertimeRequest): Promise<boolean> {
+  try {
+    const row = overtimeToDb(ot);
+    const { error } = await supabase.from('overtime_requests').upsert(row, { onConflict: 'id' });
+    if (error) {
+      console.warn('Supabase upsert overtime request error:', error.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn('Supabase upsert overtime request error:', err);
+    return false;
+  }
+}
+
+// -----------------------------------------------------------------------------
+// REIMBURSEMENTS (Klaim Biaya)
+// -----------------------------------------------------------------------------
+export function reimbursementToDb(claim: ReimbursementClaim) {
+  return {
+    id: claim.id,
+    claim_number: claim.claimNumber,
+    employee_id: claim.employeeId,
+    date: claim.date,
+    category: claim.category,
+    amount: Number(claim.amount) || 0,
+    description: claim.description || '',
+    receipt_number: claim.receiptNumber || null,
+    receipt_photo_url: claim.receiptPhotoUrl || null,
+    receipt_file_name: claim.receiptFileName || null,
+    receipt_file_type: claim.receiptFileType || 'image',
+    status: claim.status || 'Menunggu Persetujuan',
+    applied_at: claim.appliedAt || new Date().toISOString(),
+    approved_at: claim.approvedAt || null,
+    approved_by: claim.approvedBy || null,
+    rejection_reason: claim.rejectionReason || null,
+    payment_method: claim.paymentMethod || null,
+    disbursed_at: claim.disbursedAt || null,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+export function dbToReimbursement(row: any): ReimbursementClaim {
+  return {
+    id: row.id,
+    claimNumber: row.claim_number,
+    employeeId: row.employee_id,
+    date: row.date,
+    category: row.category,
+    amount: Number(row.amount) || 0,
+    description: row.description || '',
+    receiptNumber: row.receipt_number || undefined,
+    receiptPhotoUrl: row.receipt_photo_url || undefined,
+    receiptFileName: row.receipt_file_name || undefined,
+    receiptFileType: row.receipt_file_type || 'image',
+    status: row.status || 'Menunggu Persetujuan',
+    appliedAt: row.applied_at || new Date().toISOString(),
+    approvedAt: row.approved_at || undefined,
+    approvedBy: row.approved_by || undefined,
+    rejectionReason: row.rejection_reason || undefined,
+    paymentMethod: row.payment_method || undefined,
+    disbursedAt: row.disbursed_at || undefined,
+  };
+}
+
+export async function fetchReimbursementsFromSupabase(): Promise<ReimbursementClaim[] | null> {
+  try {
+    const { data, error } = await supabase
+      .from('reimbursements')
+      .select('*')
+      .order('applied_at', { ascending: false });
+
+    if (error || !data) return null;
+    return data.map(dbToReimbursement);
+  } catch {
+    return null;
+  }
+}
+
+export async function upsertReimbursementToSupabase(claim: ReimbursementClaim): Promise<boolean> {
+  try {
+    const row = reimbursementToDb(claim);
+    const { error } = await supabase.from('reimbursements').upsert(row, { onConflict: 'id' });
+    if (error) {
+      console.warn('Supabase upsert reimbursement error:', error.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn('Supabase upsert reimbursement error:', err);
+    return false;
+  }
+}
+
+export async function deleteReimbursementFromSupabase(id: string): Promise<boolean> {
+  try {
+    const { error } = await supabase.from('reimbursements').delete().eq('id', id);
+    if (error) {
+      console.warn('Supabase delete reimbursement error:', error.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn('Supabase delete reimbursement error:', err);
+    return false;
+  }
+}
+
+export async function deleteAttendanceFromSupabase(id: string): Promise<boolean> {
+  try {
+    const { error } = await supabase.from('attendances').delete().eq('id', id);
+    if (error) {
+      console.warn('Supabase delete attendance error:', error.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn('Supabase delete attendance error:', err);
+    return false;
+  }
+}
+
+export async function deleteLeaveRequestFromSupabase(id: string): Promise<boolean> {
+  try {
+    const { error } = await supabase.from('leave_requests').delete().eq('id', id);
+    if (error) {
+      console.warn('Supabase delete leave request error:', error.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn('Supabase delete leave request error:', err);
+    return false;
+  }
+}
+
+export async function deleteOvertimeRequestFromSupabase(id: string): Promise<boolean> {
+  try {
+    const { error } = await supabase.from('overtime_requests').delete().eq('id', id);
+    if (error) {
+      console.warn('Supabase delete overtime request error:', error.message);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn('Supabase delete overtime request error:', err);
+    return false;
+  }
+}
+
