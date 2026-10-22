@@ -1233,7 +1233,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
           </div>
 
-          {/* Section 3: Standar Jam Kerja & Tarif Lembur Default */}
+          {/* Section 3: Standar Jam Kerja & Tarif Lembur Per Menit */}
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
             <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3">
               <div className="p-2 rounded-xl bg-teal-50 text-teal-600 border border-teal-100">
@@ -1241,10 +1241,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </div>
               <div>
                 <h3 className="font-bold text-sm text-slate-900">
-                  Standar Jam Kerja & Tarif Lembur Default (Overtime Rates)
+                  Standar Jam Kerja & Rumus Tarif Lembur Per Menit (Per-Minute Overtime)
                 </h3>
                 <p className="text-xs text-slate-500">
-                  Parameter kalkulasi jam kerja harian dan formula kompensasi lembur otomatis di slip gaji.
+                  Kalkulasi kompensasi lembur dihitung proporsional per menit: ((Gaji Pokok + Tunj. Jabatan) ÷ 173 ÷ 60) × Pengali Lembur.
                 </p>
               </div>
             </div>
@@ -1306,25 +1306,27 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   }
                   className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-bold"
                 />
-                <span className="text-[10px] text-slate-400 mt-1 block">Regulasi Depnaker: 1.5x jam ke-1</span>
+                <span className="text-[10px] text-slate-400 mt-1 block">Standar: 1.5× tarif per menit</span>
               </div>
 
               <div>
-                <label className="block text-slate-700 font-bold mb-1">Tarif Lembur Dasar (IDR / Jam)</label>
+                <label className="block text-slate-700 font-bold mb-1">Tarif Dasar Lembur (IDR / Menit)</label>
                 <input
                   type="number"
-                  step={5000}
-                  min={20000}
-                  value={formData.defaultOvertimeRatePerHour}
-                  onChange={(e) =>
+                  step={100}
+                  min={200}
+                  value={formData.defaultOvertimeRatePerMinute || Math.round((formData.defaultOvertimeRatePerHour || 55000) / 60)}
+                  onChange={(e) => {
+                    const perMin = Number(e.target.value);
                     setFormData({
                       ...formData,
-                      defaultOvertimeRatePerHour: Number(e.target.value),
-                    })
-                  }
+                      defaultOvertimeRatePerMinute: perMin,
+                      defaultOvertimeRatePerHour: perMin * 60,
+                    });
+                  }}
                   className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-mono font-bold"
                 />
-                <span className="text-[10px] text-slate-400 mt-1 block">Default: Rp 55.000 / jam</span>
+                <span className="text-[10px] text-slate-400 mt-1 block">Dihitung akurat per 1 menit lembur</span>
               </div>
             </div>
           </div>

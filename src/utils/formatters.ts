@@ -1,4 +1,4 @@
-import { Employee, PayrollRecord, PTKPStatus } from '../types';
+import { Employee, PayrollRecord, PTKPStatus, WorkShift } from '../types';
 
 export function formatRupiah(amount: number): string {
   return new Intl.NumberFormat('id-ID', {
@@ -156,11 +156,236 @@ export function getTERRate(category: 'A' | 'B' | 'C', grossMonthly: number): num
   }
 }
 
-// Hitung Payroll Karyawan Lengkap sesuai Regulasi Indonesia
+// Hitung Tarif Lembur Per Menit: ((Gaji Pokok + Tunjangan Jabatan) / 173 / 60) * Multiplier
+export function getOvertimeRatePerMinute(
+  employee?: Partial<Employee> | null,
+  multiplier: number = 1.5,
+  customRatePerMinute?: number
+): number {
+  if (customRatePerMinute && customRatePerMinute > 0) {
+    return Math.round(customRatePerMinute);
+  }
+  const baseSalary = Number(employee?.baseSalary) || 5000000;
+  const position = Number(employee?.allowances?.position) || 0;
+  const perMinuteBase = (baseSalary + position) / 173 / 60;
+  return Math.max(100, Math.round(perMinuteBase * multiplier));
+}
+
+// Hitung Total Upah Lembur Berdasarkan Durasi Menit
+export function calculateOvertimePayByMinutes(
+  employee?: Partial<Employee> | null,
+  totalMinutes: number = 0,
+  multiplier: number = 1.5,
+  customRatePerMinute?: number
+): number {
+  const ratePerMin = getOvertimeRatePerMinute(employee, multiplier, customRatePerMinute);
+  return Math.round(Math.max(0, totalMinutes) * ratePerMin);
+}
+
+// Ambil durasi menit dari objek OvertimeRequest (mendukung data lama berbasis jam maupun data baru berbasis menit)
+export function getOvertimeMinutes(ot: { minutes?: number; hours?: number }): number {
+  if (typeof ot.minutes === 'number' && !isNaN(ot.minutes) && ot.minutes > 0) {
+    return Math.round(ot.minutes);
+  }
+  return Math.round((Number(ot.hours) || 0) * 60);
+}
+
+// Format durasi menit menjadi teks yang mudah dibaca, misal: "135 Menit (2 Jam 15 Menit)"
+export function formatOvertimeMinutes(totalMinutes: number): string {
+  const mins = Math.max(0, Math.round(totalMinutes || 0));
+  if (mins < 60) {
+    return `${mins} Menit`;
+  }
+  const hrs = Math.floor(mins / 60);
+  const rem = mins % 60;
+  if (rem === 0) {
+    return `${mins} Menit (${hrs} Jam)`;
+  }
+  return `${mins} Menit (${hrs} Jam ${rem} Mnt)`;
+}
+
+// Hitung selisih menit antara Jam Mulai (HH:mm) dan Jam Selesai (HH:mm)
+export function calculateMinutesBetweenTimes(startTime?: string, endTime?: string): number {
+  if (!startTime || !endTime) return 0;
+  const [sh, sm] = startTime.split(':').map(Number);
+  const [eh, em] = endTime.split(':').map(Number);
+  if (isNaN(sh) || isNaN(sm) || isNaN(eh) || isNaN(em)) return 0;
+  let startMins = sh * 60 + sm;
+  let endMins = eh * 60 + em;
+  if (endMins < startMins) {
+    // Melewati tengah malam
+    endMins += 24 * 60;
+  }
+  return Math.max(0, endMins - startMins);
+}
+
+// Daftar Shift Default apabila belum dikonfigurasi
+export const DEFAULT_WORK_SHIFTS: WorkShift[] = [
+  {
+    id: 'shift-pagi-reguler',
+    code: 'SHF-01',
+    name: 'Shift Reguler Pagi (Kantor Pusat)',
+    checkInTime: '09:00',
+    checkOutTime: '17:30',
+    gracePeriodMinutes: 5,
+    breakDurationMinutes: 60,
+    workDays: ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat'],
+    colorTheme: 'emerald',
+    location: 'Kantor Pusat Hayam Wuruk',
+    isDefault: true,
+    isActive: true,
+    description: 'Jadwal standar staf manajemen, IT, HRD, dan keuangan kantor pusat.',
+  },
+  {
+    id: 'shift-pagi-gudang',
+    code: 'SHF-02',
+    name: 'Shift Pagi Gudang & Logistik',
+    checkInTime: '08:00',
+    checkOutTime: '16:30',
+    gracePeriodMinutes: 10,
+    breakDurationMinutes: 60,
+    workDays: ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'],
+    colorTheme: 'teal',
+    location: 'Gudang Kapuk & Sentra Grosir',
+    isDefault: false,
+    isActive: true,
+    description: 'Jadwal operasional pagi tim gudang, QC tas, dan logistik pengiriman.',
+  },
+  {
+    id: 'shift-siang-toko',
+    code: 'SHF-03',
+    name: 'Shift Siang / Sore (Toko & Live)',
+    checkInTime: '13:00',
+    checkOutTime: '21:30',
+    gracePeriodMinutes: 10,
+    breakDurationMinutes: 60,
+    workDays: ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'],
+    colorTheme: 'indigo',
+    location: 'Studio Live & Showroom Grosir',
+    isDefault: false,
+    isActive: true,
+    description: 'Jadwal shift siang-malam untuk host live streaming, CS, dan kasir toko.',
+  },
+  {
+    id: 'shift-malam-ekspedisi',
+    code: 'SHF-04',
+    name: 'Shift Malam (Ekspedisi & Bongkar Muat)',
+    checkInTime: '21:00',
+    checkOutTime: '05:00',
+    gracePeriodMinutes: 15,
+    breakDurationMinutes: 60,
+    workDays: ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'],
+    colorTheme: 'purple',
+    location: 'Gudang Bongkar Muat Kontainer',
+    isDefault: false,
+    isActive: true,
+    description: 'Jadwal shift malam khusus tim bongkar muat kontainer import dan ekspedisi.',
+  },
+];
+
+// Ambil jadwal shift kerja karyawan yang berlaku
+export function getEmployeeShift(
+  employee?: Partial<Employee> | null,
+  shifts?: WorkShift[]
+): WorkShift {
+  const list = shifts && shifts.length > 0 ? shifts : DEFAULT_WORK_SHIFTS;
+  if (employee?.shiftId) {
+    const matched = list.find((s) => s.id === employee.shiftId);
+    if (matched) return matched;
+  }
+  return list.find((s) => s.isDefault) || list[0] || DEFAULT_WORK_SHIFTS[0];
+}
+
+// Evaluasi jam masuk & pulang terhadap jadwal shift yang ditentukan
+export function evaluateAttendanceAgainstShift(
+  checkIn: string,
+  checkOut: string,
+  shift: WorkShift
+): {
+  status: 'Hadir Tepat Waktu' | 'Terlambat';
+  lateMinutes: number;
+  earlyLeaveMinutes: number;
+  workHours: number;
+  maxAllowedCheckIn: string;
+} {
+  const [sh, sm] = (shift.checkInTime || '09:00').split(':').map(Number);
+  const [eh, em] = (shift.checkOutTime || '17:30').split(':').map(Number);
+  const scheduledStart = (isNaN(sh) ? 9 : sh) * 60 + (isNaN(sm) ? 0 : sm);
+  let scheduledEnd = (isNaN(eh) ? 17 : eh) * 60 + (isNaN(em) ? 30 : em);
+  if (scheduledEnd <= scheduledStart) {
+    scheduledEnd += 24 * 60;
+  }
+
+  const grace = Math.max(0, Number(shift.gracePeriodMinutes) || 0);
+  const maxAllowedTotal = (scheduledStart + grace) % (24 * 60);
+  const maxAllowedCheckIn = `${String(Math.floor(maxAllowedTotal / 60)).padStart(2, '0')}:${String(
+    maxAllowedTotal % 60
+  ).padStart(2, '0')}`;
+
+  // Parse actual checkIn
+  const [ch, cm] = (checkIn || '').split(':').map(Number);
+  let lateMinutes = 0;
+  if (!isNaN(ch) && !isNaN(cm)) {
+    let actualStart = ch * 60 + cm;
+    // Handle overnight shift where scheduledStart is e.g. 21:00 and actualStart is 00:30
+    if (scheduledStart >= 18 * 60 && actualStart < 6 * 60) {
+      actualStart += 24 * 60;
+    }
+    if (actualStart > scheduledStart + grace) {
+      lateMinutes = actualStart - scheduledStart;
+    }
+  }
+
+  // Parse actual checkOut
+  const [outH, outM] = (checkOut || '').split(':').map(Number);
+  let earlyLeaveMinutes = 0;
+  let workHours = 0;
+  const breakMins = Math.max(0, Number(shift.breakDurationMinutes) || 0);
+
+  if (!isNaN(ch) && !isNaN(cm) && !isNaN(outH) && !isNaN(outM)) {
+    let actualStart = ch * 60 + cm;
+    let actualEnd = outH * 60 + outM;
+    if (actualEnd < actualStart) {
+      actualEnd += 24 * 60;
+    }
+    const rawDurationMins = Math.max(0, actualEnd - actualStart);
+    const netDurationMins =
+      rawDurationMins > 240 ? Math.max(0, rawDurationMins - breakMins) : rawDurationMins;
+    workHours = Number((netDurationMins / 60).toFixed(1));
+
+    // Check early leave against scheduledEnd
+    let normalizedOut = outH * 60 + outM;
+    if (scheduledEnd > 24 * 60 && normalizedOut < 12 * 60) {
+      normalizedOut += 24 * 60;
+    }
+    if (normalizedOut < scheduledEnd) {
+      earlyLeaveMinutes = Math.max(0, scheduledEnd - normalizedOut);
+    }
+  } else {
+    // Default scheduled work hours if checkOut not yet filled
+    const scheduledRaw = Math.max(0, scheduledEnd - scheduledStart);
+    const scheduledNet =
+      scheduledRaw > 240 ? Math.max(0, scheduledRaw - breakMins) : scheduledRaw;
+    workHours = Number((scheduledNet / 60).toFixed(1));
+  }
+
+  const status: 'Hadir Tepat Waktu' | 'Terlambat' =
+    lateMinutes > 0 ? 'Terlambat' : 'Hadir Tepat Waktu';
+
+  return {
+    status,
+    lateMinutes,
+    earlyLeaveMinutes,
+    workHours,
+    maxAllowedCheckIn,
+  };
+}
+
+// Hitung Payroll Karyawan Lengkap sesuai Regulasi Indonesia (Lembur dihitung Per Menit)
 export function calculatePayroll(
   employee: Employee,
   period: string,
-  overtimeHours: number = 0,
+  overtimeMinutes: number = 0,
   bonus: number = 0,
   lateMinutes: number = 0,
   cashAdvanceDeduction: number = 0,
@@ -173,9 +398,10 @@ export function calculatePayroll(
   const meal = Number(allowances.meal) || 0;
   const communication = Number(allowances.communication) || 0;
 
-  // Lembur Kemenaker: 1/173 x Gaji Sebulan (Gaji Pokok + Tunjangan Tetap)
-  const hourlyRate = (baseSalary + position) / 173;
-  const overtimePay = Math.round(overtimeHours * hourlyRate * 1.5);
+  // Hitungan Lembur Per Menit: ((Gaji Pokok + Tunjangan Jabatan) / 173 / 60) * 1.5 * Total Menit Lembur
+  const overtimeRatePerMinute = getOvertimeRatePerMinute(employee, 1.5);
+  const normalizedMinutes = Math.max(0, Math.round(overtimeMinutes));
+  const overtimePay = Math.round(normalizedMinutes * overtimeRatePerMinute);
 
   const totalGrossSalary = baseSalary + position + transport + meal + communication + overtimePay + bonus;
 
@@ -229,6 +455,8 @@ export function calculatePayroll(
     allowanceMeal: meal,
     allowanceCommunication: communication,
     overtimePay,
+    overtimeMinutes: normalizedMinutes,
+    overtimeRatePerMinute,
     bonus,
     totalGrossSalary,
     lateDeduction,
@@ -251,3 +479,4 @@ export function calculatePayroll(
     referenceNumber,
   };
 }
+

@@ -624,14 +624,19 @@ export async function upsertLeaveRequestToSupabase(req: LeaveRequest): Promise<b
 }
 
 // -----------------------------------------------------------------------------
-// OVERTIME REQUESTS (Klaim Lembur)
+// OVERTIME REQUESTS (Klaim Lembur Per Menit)
 // -----------------------------------------------------------------------------
 export function overtimeToDb(ot: OvertimeRequest) {
+  const totalMinutes =
+    typeof ot.minutes === 'number' && ot.minutes > 0
+      ? Math.round(ot.minutes)
+      : Math.round((Number(ot.hours) || 1) * 60);
+  const hoursDecimal = Number((totalMinutes / 60).toFixed(2));
   return {
     id: ot.id,
     employee_id: ot.employeeId,
     date: ot.date,
-    hours: Number(ot.hours) || 1,
+    hours: hoursDecimal,
     task_description: ot.taskDescription || '',
     calculated_pay: Number(ot.calculatedPay) || 0,
     status: ot.status || 'Menunggu Persetujuan',
@@ -640,11 +645,17 @@ export function overtimeToDb(ot: OvertimeRequest) {
 }
 
 export function dbToOvertime(row: any): OvertimeRequest {
+  const hoursVal = Number(row.hours) || 1;
+  const minutesVal =
+    row.minutes !== undefined && Number(row.minutes) > 0
+      ? Math.round(Number(row.minutes))
+      : Math.round(hoursVal * 60);
   return {
     id: row.id,
     employeeId: row.employee_id,
     date: row.date,
-    hours: Number(row.hours) || 1,
+    hours: Number((minutesVal / 60).toFixed(2)),
+    minutes: minutesVal,
     taskDescription: row.task_description || '',
     calculatedPay: Number(row.calculated_pay) || 0,
     status: row.status || 'Menunggu Persetujuan',

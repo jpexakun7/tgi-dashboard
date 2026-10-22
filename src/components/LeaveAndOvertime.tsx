@@ -9,9 +9,18 @@ import {
   User,
   ShieldCheck,
   Calendar,
+  Calculator,
 } from 'lucide-react';
 import { Employee, LeaveRequest, OvertimeRequest } from '../types';
-import { formatIndoDate, formatRupiah } from '../utils/formatters';
+import {
+  formatIndoDate,
+  formatRupiah,
+  getOvertimeRatePerMinute,
+  calculateOvertimePayByMinutes,
+  getOvertimeMinutes,
+  formatOvertimeMinutes,
+  calculateMinutesBetweenTimes,
+} from '../utils/formatters';
 
 interface LeaveAndOvertimeProps {
   employees: Employee[];
@@ -48,11 +57,26 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
   const [leaveDays, setLeaveDays] = useState(1);
   const [leaveReason, setLeaveReason] = useState('');
 
-  // Overtime Form State
+  // Overtime Form State (Hitungan Per Menit)
   const [otEmpId, setOtEmpId] = useState(employees[0]?.id || '');
   const [otDate, setOtDate] = useState(new Date().toISOString().split('T')[0]);
-  const [otHours, setOtHours] = useState(2);
+  const [otMinutes, setOtMinutes] = useState<number>(90);
+  const [otStartTime, setOtStartTime] = useState<string>('17:30');
+  const [otEndTime, setOtEndTime] = useState<string>('19:00');
   const [otTask, setOtTask] = useState('');
+
+  const selectedOtEmployee = employees.find((e) => e.id === otEmpId);
+  const selectedOtRatePerMinute = getOvertimeRatePerMinute(selectedOtEmployee, 1.5);
+  const previewOvertimePay = calculateOvertimePayByMinutes(selectedOtEmployee, otMinutes, 1.5);
+
+  const handleTimeRangeChange = (newStart: string, newEnd: string) => {
+    setOtStartTime(newStart);
+    setOtEndTime(newEnd);
+    const diffMins = calculateMinutesBetweenTimes(newStart, newEnd);
+    if (diffMins > 0) {
+      setOtMinutes(diffMins);
+    }
+  };
 
   const handleSaveLeave = (e: React.FormEvent) => {
     e.preventDefault();
@@ -75,15 +99,20 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
   const handleSaveOvertime = (e: React.FormEvent) => {
     e.preventDefault();
     const emp = employees.find((e) => e.id === otEmpId);
-    const hourly = emp ? (emp.baseSalary + emp.allowances.position) / 173 : 50000;
-    const calculatedPay = Math.round(Number(otHours) * hourly * 1.5);
+    const validMinutes = Math.max(1, Math.round(Number(otMinutes) || 0));
+    const ratePerMinute = getOvertimeRatePerMinute(emp, 1.5);
+    const calculatedPay = calculateOvertimePayByMinutes(emp, validMinutes, 1.5);
 
     const newOt: OvertimeRequest = {
       id: `ot-${Date.now()}`,
       employeeId: otEmpId,
       date: otDate,
-      hours: Number(otHours),
-      taskDescription: otTask || 'Pekerjaan proyek mendesak',
+      hours: Number((validMinutes / 60).toFixed(2)),
+      minutes: validMinutes,
+      startTime: otStartTime || undefined,
+      endTime: otEndTime || undefined,
+      ratePerMinute,
+      taskDescription: otTask || 'Pekerjaan operasional lembur',
       calculatedPay,
       status: 'Menunggu Persetujuan',
     };
@@ -99,10 +128,10 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
         <div>
           <h1 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
             <CalendarDays className="w-6 h-6 text-emerald-600" />
-            Manajemen Cuti & Klaim Lembur
+            Manajemen Cuti & Klaim Lembur (Hitungan Per Menit)
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Persetujuan permohonan cuti tahunan, izin sakit, dan kalkulasi upah lembur resmi Kemenaker.
+            Persetujuan permohonan cuti tahunan, izin sakit, dan kalkulasi upah lembur presisi per menit.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -120,7 +149,7 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
               className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-md shadow-indigo-600/30"
             >
               <Plus className="w-4 h-4" />
-              Ajukan Lembur Baru
+              Catat Lembur Baru (Per Menit)
             </button>
           )}
         </div>
@@ -152,7 +181,7 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
           }`}
         >
           <Clock className="w-4 h-4" />
-          Klaim Lembur (Overtime)
+          Klaim Lembur Per Menit (Overtime)
           <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-slate-100 text-slate-700">
             {overtimeRequests.length}
           </span>
@@ -275,16 +304,16 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
         </div>
       )}
 
-      {/* SUB-TAB 2: OVERTIME REQUESTS */}
+      {/* SUB-TAB 2: OVERTIME REQUESTS (PER MENIT) */}
       {activeSubTab === 'overtime' && (
         <div className="space-y-6">
-          {/* Overtime Kemnaker Formula info */}
+          {/* Overtime Per-Minute Formula info */}
           <div className="bg-indigo-50/70 p-4 rounded-2xl border border-indigo-200/80 text-xs text-indigo-900 flex items-start gap-3">
-            <Clock className="w-5 h-5 text-indigo-600 shrink-0 mt-0.5" />
+            <Calculator className="w-5 h-5 text-indigo-600 shrink-0 mt-0.5" />
             <div>
-              <h4 className="font-bold">Standar Perhitungan Upah Lembur (Kepmenaker RI)</h4>
+              <h4 className="font-bold">Rumus Hitungan Upah Lembur Per Menit (Akurat & Proporsional)</h4>
               <p className="text-indigo-800 mt-0.5">
-                Upah per Jam = <strong>1 / 173 × (Gaji Pokok + Tunjangan Tetap)</strong>. Jam pertama lembur pada hari kerja dibayar 1.5×, jam berikutnya 2×. Nominal lembur yang disetujui akan langsung ditambahkan ke komponen slip gaji bulan berjalan.
+                Tarif Lembur per Menit = <strong>((Gaji Pokok + Tunjangan Jabatan) ÷ 173 ÷ 60) × 1.5</strong>. Total Upah Lembur = <strong>Total Menit Lembur × Tarif per Menit</strong>. Setiap menit kelebihan jam kerja dihitung secara presisi tanpa pembulatan jam yang merugikan karyawan.
               </p>
             </div>
           </div>
@@ -296,9 +325,10 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
                 <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
                   <tr>
                     <th className="py-3 px-4">Karyawan</th>
-                    <th className="py-3 px-4">Tanggal Lembur</th>
-                    <th className="py-3 px-4">Durasi Jam</th>
-                    <th className="py-3 px-4">Estimasi Upah Lembur</th>
+                    <th className="py-3 px-4">Tanggal & Jam Lembur</th>
+                    <th className="py-3 px-4">Durasi (Menit)</th>
+                    <th className="py-3 px-4">Tarif / Menit</th>
+                    <th className="py-3 px-4">Total Upah Lembur</th>
                     <th className="py-3 px-4">Deskripsi Tugas / Pekerjaan</th>
                     <th className="py-3 px-4 text-center">Status</th>
                     <th className="py-3 px-4 text-center">Aksi HR</th>
@@ -307,6 +337,8 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
                 <tbody className="divide-y divide-slate-100">
                   {overtimeRequests.map((ot) => {
                     const emp = employees.find((e) => e.id === ot.employeeId);
+                    const totalMins = getOvertimeMinutes(ot);
+                    const ratePerMin = ot.ratePerMinute || getOvertimeRatePerMinute(emp, 1.5);
                     return (
                       <tr key={ot.id} className="hover:bg-slate-50/70 transition-colors">
                         <td className="py-3 px-4">
@@ -323,15 +355,33 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
                           </div>
                         </td>
                         <td className="py-3 px-4 text-slate-700">
-                          {formatIndoDate(ot.date)}
+                          <span className="block font-medium">{formatIndoDate(ot.date)}</span>
+                          {ot.startTime && ot.endTime && (
+                            <span className="text-[10px] font-mono text-slate-500">
+                              Pukul {ot.startTime} - {ot.endTime} WIB
+                            </span>
+                          )}
                         </td>
-                        <td className="py-3 px-4 font-semibold text-indigo-700">
-                          {ot.hours} Jam
+                        <td className="py-3 px-4">
+                          <span className="font-bold text-indigo-700 block">
+                            {totalMins} Menit
+                          </span>
+                          <span className="text-[10px] text-slate-500">
+                            {formatOvertimeMinutes(totalMins)}
+                          </span>
                         </td>
-                        <td className="py-3 px-4 font-bold text-slate-900">
-                          {formatRupiah(ot.calculatedPay)}
+                        <td className="py-3 px-4 font-mono text-slate-700">
+                          {formatRupiah(ratePerMin)} <span className="text-[10px] text-slate-400">/mnt</span>
                         </td>
-                        <td className="py-3 px-4 text-slate-600 max-w-[240px] truncate">
+                        <td className="py-3 px-4">
+                          <span className="font-bold text-slate-900 block">
+                            {formatRupiah(ot.calculatedPay)}
+                          </span>
+                          <span className="text-[10px] text-emerald-700 font-mono">
+                            {totalMins} mnt × {formatRupiah(ratePerMin)}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-slate-600 max-w-[220px] truncate" title={ot.taskDescription}>
                           {ot.taskDescription}
                         </td>
                         <td className="py-3 px-4 text-center">
@@ -476,30 +526,37 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
         </div>
       )}
 
-      {/* Modal Ajukan Lembur Baru */}
+      {/* Modal Ajukan Lembur Baru (Hitungan Per Menit) */}
       {isOvertimeModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200">
-            <h3 className="text-base font-bold text-slate-900">Form Klaim Lembur Karyawan</h3>
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200">
+            <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+              <Clock className="w-5 h-5 text-indigo-600" />
+              Form Klaim Lembur Karyawan (Hitungan Per Menit)
+            </h3>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Masukkan jam mulai & selesai atau ketik langsung jumlah menit lembur.
+            </p>
+
             <form onSubmit={handleSaveOvertime} className="mt-4 space-y-3.5 text-xs">
               <div>
-                <label className="block text-slate-600 mb-1">Pilih Karyawan</label>
+                <label className="block text-slate-700 font-semibold mb-1">Pilih Karyawan</label>
                 <select
                   value={otEmpId}
                   onChange={(e) => setOtEmpId(e.target.value)}
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800"
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium"
                 >
                   {employees.map((e) => (
                     <option key={e.id} value={e.id}>
-                      {e.fullName} ({e.role})
+                      {e.fullName} ({e.role}) — Tarif: {formatRupiah(getOvertimeRatePerMinute(e, 1.5))}/menit
                     </option>
                   ))}
                 </select>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-2.5">
                 <div>
-                  <label className="block text-slate-600 mb-1">Tanggal Lembur</label>
+                  <label className="block text-slate-700 font-semibold mb-1">Tanggal Lembur</label>
                   <input
                     type="date"
                     value={otDate}
@@ -508,25 +565,87 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-600 mb-1">Durasi Lembur (Jam)</label>
+                  <label className="block text-slate-700 font-semibold mb-1">Jam Mulai</label>
                   <input
-                    type="number"
-                    step={0.5}
-                    min={0.5}
-                    value={otHours}
-                    onChange={(e) => setOtHours(Number(e.target.value))}
-                    className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800"
+                    type="time"
+                    value={otStartTime}
+                    onChange={(e) => handleTimeRangeChange(e.target.value, otEndTime)}
+                    className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">Jam Selesai</label>
+                  <input
+                    type="time"
+                    value={otEndTime}
+                    onChange={(e) => handleTimeRangeChange(otStartTime, e.target.value)}
+                    className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-mono"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-slate-600 mb-1">Rincian Tugas Lembur</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-slate-700 font-semibold">
+                    Total Durasi Lembur (Menit) *
+                  </label>
+                  <span className="text-[11px] font-bold text-indigo-600">
+                    Setara: {formatOvertimeMinutes(otMinutes)}
+                  </span>
+                </div>
+                <input
+                  type="number"
+                  step={1}
+                  min={1}
+                  max={720}
+                  required
+                  value={otMinutes}
+                  onChange={(e) => setOtMinutes(Math.max(1, Number(e.target.value)))}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-mono font-bold text-sm"
+                />
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {[15, 30, 45, 60, 90, 120, 150, 180, 240].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => setOtMinutes(preset)}
+                      className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-colors cursor-pointer ${
+                        otMinutes === preset
+                          ? 'bg-indigo-600 text-white border-indigo-600'
+                          : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-indigo-50 hover:text-indigo-700'
+                      }`}
+                    >
+                      {preset} Menit
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Simulasi Rincian Kalkulasi Per Menit */}
+              <div className="p-3.5 bg-indigo-50/80 border border-indigo-200 rounded-xl space-y-1.5">
+                <div className="flex items-center justify-between text-[11px] text-indigo-800">
+                  <span>Tarif Lembur per Menit (1.5× Upah/Menit):</span>
+                  <span className="font-mono font-bold">{formatRupiah(selectedOtRatePerMinute)} / menit</span>
+                </div>
+                <div className="flex items-center justify-between text-[11px] text-indigo-800">
+                  <span>Durasi Dihitung:</span>
+                  <span className="font-mono font-bold">{otMinutes} Menit</span>
+                </div>
+                <div className="pt-1.5 border-t border-indigo-200/80 flex items-center justify-between">
+                  <span className="font-bold text-indigo-950">Total Estimasi Upah Lembur:</span>
+                  <span className="text-sm font-black text-indigo-700">
+                    {formatRupiah(previewOvertimePay)}
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-semibold mb-1">Rincian Tugas Lembur</label>
                 <textarea
                   rows={2}
                   value={otTask}
                   onChange={(e) => setOtTask(e.target.value)}
-                  placeholder="e.g. Closing pembukuan akhir bulan / Deployment aplikasi"
+                  placeholder="e.g. Closing pembukuan akhir bulan / Bongkar muat gudang"
                   className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800"
                 />
               </div>
@@ -543,7 +662,7 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
                   type="submit"
                   className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-xl cursor-pointer"
                 >
-                  Kirim Klaim Lembur
+                  Simpan Klaim Lembur ({otMinutes} Menit)
                 </button>
               </div>
             </form>
@@ -553,3 +672,4 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
     </div>
   );
 };
+

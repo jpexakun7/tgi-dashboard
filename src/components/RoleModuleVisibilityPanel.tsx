@@ -116,7 +116,15 @@ export const ALL_DASHBOARD_MODULES: ModuleDefinition[] = [
     label: 'Klaim Reimbursement & Biaya',
     category: 'Penggajian & Keuangan',
     icon: Receipt,
-    description: 'Pengajuan klaim bon/nota bensin, transportasi, medis, konsumsi lembur, dan pencairan kasbon.',
+    description: 'Pengajuan klaim bon/nota bensin, transportasi, medis, konsumsi lembur, dan pencairan biaya.',
+  },
+  {
+    id: 'cash_advance',
+    label: 'Kasbon & Pinjaman Karyawan',
+    category: 'Penggajian & Keuangan',
+    icon: Wallet,
+    description: 'Pengajuan kasbon darurat staf, persetujuan plafon gaji, pencairan dana, dan cicilan potong gaji otomatis.',
+    sensitive: true,
   },
   {
     id: 'assets',

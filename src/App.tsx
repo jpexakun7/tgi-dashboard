@@ -12,6 +12,7 @@ import {
   initialAssetHistoryLogs,
   initialPerformanceReviews,
   initialNotifications,
+  initialCashAdvances,
 } from './mockData';
 import {
   Employee,
@@ -35,8 +36,16 @@ import {
   ReviewPeriodType,
   AppNotification,
   RolePermissionConfig,
+  CashAdvance,
+  CashAdvanceInstallment,
+  WorkShift,
 } from './types';
-import { calculatePayroll } from './utils/formatters';
+import {
+  calculatePayroll,
+  getOvertimeMinutes,
+  getOvertimeRatePerMinute,
+  DEFAULT_WORK_SHIFTS,
+} from './utils/formatters';
 import { Sidebar, ActiveTab } from './components/Sidebar';
 import { Header } from './components/Header';
 import { DashboardOverview } from './components/DashboardOverview';
@@ -45,6 +54,7 @@ import { PayrollManagement } from './components/PayrollManagement';
 import { AttendanceView } from './components/AttendanceView';
 import { LeaveAndOvertime } from './components/LeaveAndOvertime';
 import { ReimbursementView } from './components/ReimbursementView';
+import { CashAdvanceView } from './components/CashAdvanceView';
 import { AssetManagementView } from './components/AssetManagementView';
 import { PerformanceReviewView } from './components/PerformanceReviewView';
 import { TaxAndBpjsView } from './components/TaxAndBpjsView';
@@ -223,7 +233,7 @@ export default function App() {
   }, [notifications]);
 
   // Employee Portal Tab override controller from notifications
-  const [portalTabOverride, setPortalTabOverride] = useState<'payroll' | 'leave' | 'claims' | 'assets' | 'performance' | 'profile' | null>(null);
+  const [portalTabOverride, setPortalTabOverride] = useState<'payroll' | 'attendance' | 'leave' | 'claims' | 'cash_advance' | 'assets' | 'performance' | 'profile' | null>(null);
 
   // Send Notification Helper (Dispatches in-app message & logs to Audit Trail)
   const sendNotification = (params: {
@@ -339,6 +349,12 @@ export default function App() {
     } else if (actionUrl === 'performance_review') {
       setDashboardMode('admin');
       setActiveTab('performance_review');
+    } else if (actionUrl === 'cash_advance') {
+      if (dashboardMode === 'employee') {
+        setPortalTabOverride('cash_advance');
+      } else {
+        setActiveTab('cash_advance');
+      }
     } else {
       setActiveTab(actionUrl as any);
     }
@@ -495,8 +511,27 @@ export default function App() {
               if (!roleConf.allowedModules.includes('roles_management')) {
                 roleConf.allowedModules.push('roles_management');
               }
+              if (
+                (key === 'Super Admin' ||
+                  key === 'HR & Payroll Admin' ||
+                  key === 'Finance & Reimbursement') &&
+                !roleConf.allowedModules.includes('cash_advance')
+              ) {
+                roleConf.allowedModules.push('cash_advance');
+              }
+              if (
+                (key === 'Super Admin' ||
+                  key === 'HR & Payroll Admin' ||
+                  key === 'Operations Manager') &&
+                !roleConf.allowedModules.includes('work_shifts')
+              ) {
+                roleConf.allowedModules.push('work_shifts');
+              }
             }
           });
+        }
+        if (!parsed.workShifts || !Array.isArray(parsed.workShifts) || parsed.workShifts.length === 0) {
+          parsed.workShifts = DEFAULT_WORK_SHIFTS;
         }
         return parsed;
       }
@@ -705,6 +740,44 @@ export default function App() {
     }
   }, [reviews]);
 
+  // Cash Advances (Kasbon & Cicilan Potongan Gaji) State
+  const [cashAdvances, setCashAdvances] = useState<CashAdvance[]>(() => {
+    try {
+      const saved = localStorage.getItem('tgi_cash_advances_data');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {
+      console.error('Failed to parse cash advances', e);
+    }
+    return initialCashAdvances;
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('tgi_cash_advances_data', JSON.stringify(cashAdvances));
+    } catch (e) {
+      console.error('Failed to save cash advances', e);
+    }
+  }, [cashAdvances]);
+
+  // Listen to storage events across browser tabs so Portal Karyawan and Panel Admin HR sync immediately
+  useEffect(() => {
+    const handleStorageSync = (e: StorageEvent) => {
+      if (e.key === 'tgi_cash_advances_data' && e.newValue) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          if (Array.isArray(parsed)) setCashAdvances(parsed);
+        } catch (err) {
+          console.error(err);
+        }
+      }
+    };
+    window.addEventListener('storage', handleStorageSync);
+    return () => window.removeEventListener('storage', handleStorageSync);
+  }, []);
+
   // Payslip Modal State
   const [selectedPayslip, setSelectedPayslip] = useState<PayrollRecord | null>(null);
 
@@ -712,6 +785,7 @@ export default function App() {
   const pendingLeaves = leaveRequests.filter((l) => l.status === 'Menunggu Persetujuan');
   const pendingOvertimes = overtimeRequests.filter((o) => o.status === 'Menunggu Persetujuan');
   const pendingReimbursements = reimbursements.filter((r) => r.status === 'Menunggu Persetujuan');
+  const pendingCashAdvances = cashAdvances.filter((c) => c.status === 'pending');
 
   // Web Gatekeeper PIN Unlock State (controls initial entry into the web app)
   const [isWebPinUnlocked, setIsWebPinUnlocked] = useState<boolean>(() => {
@@ -1168,12 +1242,18 @@ export default function App() {
     setPayrolls((prev) =>
       prev.map((p) => {
         if (p.employeeId === updatedEmp.id) {
+          const otMins =
+            p.overtimeMinutes !== undefined
+              ? p.overtimeMinutes
+              : Math.round(p.overtimePay / Math.max(100, getOvertimeRatePerMinute(updatedEmp, 1.5)));
           return calculatePayroll(
             updatedEmp,
             companyConfig.currentPayrollPeriod,
-            Math.round(p.overtimePay / 100000),
+            otMins,
             p.bonus,
-            p.lateDeduction > 0 ? 30 : 0
+            p.lateDeduction > 0 ? 30 : 0,
+            p.cashAdvanceDeduction,
+            p.cashAdvanceNotes
           );
         }
         return p;
@@ -1257,26 +1337,33 @@ export default function App() {
   // Handlers for Payroll
   const handleRecalculatePayroll = () => {
     const updated = employees.map((emp) => {
-      // Find approved overtimes for this employee
+      // Find approved overtimes for this employee (in minutes)
       const employeeOts = overtimeRequests.filter(
         (o) => o.employeeId === emp.id && o.status === 'Disetujui'
       );
-      const totalOtHours = employeeOts.reduce((acc, curr) => acc + curr.hours, 0);
+      const totalOtMinutes = employeeOts.reduce(
+        (acc, curr) => acc + getOvertimeMinutes(curr),
+        0
+      );
 
       // Find attendances
       const empAtts = attendances.filter((a) => a.employeeId === emp.id);
       const totalLateMinutes = empAtts.reduce((acc, curr) => acc + curr.lateMinutes, 0);
 
-      // Find existing bonus if any
+      // Find existing bonus & cash advance deduction if any
       const existingRecord = payrolls.find((p) => p.employeeId === emp.id);
       const bonus = existingRecord ? existingRecord.bonus : 0;
+      const caDeduct = existingRecord ? existingRecord.cashAdvanceDeduction : 0;
+      const caNotes = existingRecord ? existingRecord.cashAdvanceNotes : undefined;
 
       return calculatePayroll(
         emp,
         companyConfig.currentPayrollPeriod,
-        totalOtHours,
+        totalOtMinutes,
         bonus,
-        totalLateMinutes
+        totalLateMinutes,
+        caDeduct,
+        caNotes
       );
     });
 
@@ -1285,12 +1372,12 @@ export default function App() {
     logActivity(
       'PAYROLL_RUN',
       'Gaji & Payroll',
-      `Menjalankan batch kalkulasi payroll periode "${companyConfig.currentPayrollPeriod}" untuk seluruh ${employees.length} karyawan aktif.`,
+      `Menjalankan batch kalkulasi payroll periode "${companyConfig.currentPayrollPeriod}" (lembur dihitung per menit) untuk seluruh ${employees.length} karyawan aktif.`,
       {
         targetId: `payroll-${companyConfig.currentPayrollPeriod}`,
         targetName: `Batch Payroll ${companyConfig.currentPayrollPeriod}`,
         severity: 'warning',
-        notes: 'Sinkronisasi jam lembur terverifikasi dan potongan keterlambatan.',
+        notes: 'Sinkronisasi durasi menit lembur terverifikasi dan potongan keterlambatan.',
       }
     );
   };
@@ -1314,7 +1401,7 @@ export default function App() {
     );
   };
 
-  // Handlers for Attendance
+  // Handlers for Attendance & Work Shifts
   const handleAddAttendance = (att: AttendanceRecord) => {
     setAttendances((prev) => {
       const exists = prev.some((a) => a.id === att.id);
@@ -1324,6 +1411,85 @@ export default function App() {
       return [att, ...prev];
     });
     upsertAttendanceToSupabase(att);
+  };
+
+  const handleUpdateShifts = (newShifts: WorkShift[]) => {
+    setCompanyConfig((prev) => ({
+      ...prev,
+      workShifts: newShifts,
+    }));
+
+    logActivity(
+      'SHIFT_SCHEDULE_UPDATE',
+      'Pengaturan Sistem',
+      `Memperbarui konfigurasi jadwal shift jam masuk & pulang kerja (${newShifts.length} shift aktif).`,
+      {
+        targetId: 'work-shifts',
+        targetName: 'Jadwal Shift Jam Kerja',
+        newValue: newShifts.map((s) => `${s.code}: ${s.checkInTime}-${s.checkOutTime}`).join(', '),
+        severity: 'info',
+      }
+    );
+  };
+
+  const handleAssignEmployeeShift = (employeeId: string, shiftId: string) => {
+    const emp = employees.find((e) => e.id === employeeId);
+    const shift = (companyConfig.workShifts || DEFAULT_WORK_SHIFTS).find((s) => s.id === shiftId);
+
+    setEmployees((prev) =>
+      prev.map((e) => {
+        if (e.id === employeeId) {
+          const updatedEmp = { ...e, shiftId };
+          updateEmployeeInSupabase(updatedEmp);
+          return updatedEmp;
+        }
+        return e;
+      })
+    );
+
+    if (emp && shift) {
+      logActivity(
+        'EMPLOYEE_SHIFT_ASSIGN',
+        'Data Karyawan',
+        `Mengubah jadwal shift kerja ${emp.fullName} (${emp.nik}) ke ${shift.name} (${shift.checkInTime} - ${shift.checkOutTime} WIB).`,
+        {
+          targetId: emp.id,
+          targetName: emp.fullName,
+          newValue: `${shift.code} (${shift.checkInTime} - ${shift.checkOutTime} WIB)`,
+          severity: 'info',
+        }
+      );
+    }
+  };
+
+  const handleBulkAssignDepartmentShift = (department: string, shiftId: string) => {
+    const shift = (companyConfig.workShifts || DEFAULT_WORK_SHIFTS).find((s) => s.id === shiftId);
+
+    setEmployees((prev) =>
+      prev.map((e) => {
+        if (department === 'ALL' || e.department === department) {
+          const updatedEmp = { ...e, shiftId };
+          updateEmployeeInSupabase(updatedEmp);
+          return updatedEmp;
+        }
+        return e;
+      })
+    );
+
+    if (shift) {
+      logActivity(
+        'EMPLOYEE_SHIFT_ASSIGN',
+        'Data Karyawan',
+        `Penugasan shift massal "${shift.name}" (${shift.checkInTime} - ${shift.checkOutTime} WIB) ke ${
+          department === 'ALL' ? 'Seluruh Departemen' : `Departemen ${department}`
+        }.`,
+        {
+          targetName: department === 'ALL' ? 'Semua Karyawan' : `Departemen ${department}`,
+          newValue: `${shift.code} (${shift.checkInTime} - ${shift.checkOutTime} WIB)`,
+          severity: 'info',
+        }
+      );
+    }
   };
 
   // Handlers for Leave
@@ -1421,24 +1587,28 @@ export default function App() {
     );
   };
 
-  // Handlers for Overtime
+  // Handlers for Overtime (Hitungan Per Menit)
   const handleApproveOvertime = (id: string) => {
     const otItem = overtimeRequests.find((o) => o.id === id);
     const emp = otItem ? employees.find((e) => e.id === otItem.employeeId) : null;
+    const otMins = otItem ? getOvertimeMinutes(otItem) : 0;
 
     setOvertimeRequests((prev) =>
       prev.map((ot) => {
         if (ot.id === id) {
-          // Add overtime pay to employee payroll
+          const itemMins = getOvertimeMinutes(ot);
+          // Add overtime pay & minutes to employee payroll
           setPayrolls((pays) =>
             pays.map((p) => {
               if (p.employeeId === ot.employeeId) {
                 const newOtPay = p.overtimePay + ot.calculatedPay;
+                const newOtMins = (p.overtimeMinutes || 0) + itemMins;
                 const newGross = p.totalGrossSalary + ot.calculatedPay;
                 const newTHP = Math.max(0, newGross - p.totalDeductions);
-                const updatedPayroll = {
+                const updatedPayroll: PayrollRecord = {
                   ...p,
                   overtimePay: newOtPay,
+                  overtimeMinutes: newOtMins,
                   totalGrossSalary: newGross,
                   takeHomePay: newTHP,
                 };
@@ -1459,12 +1629,12 @@ export default function App() {
     logActivity(
       'OVERTIME_STATUS_UPDATE',
       'Persetujuan & Klaim',
-      `Menyetujui klaim lembur ${otItem?.hours || 0} jam (Rp ${otItem?.calculatedPay.toLocaleString('id-ID')}) untuk ${emp?.fullName || otItem?.employeeId}.`,
+      `Menyetujui klaim lembur ${otMins} menit (Rp ${otItem?.calculatedPay.toLocaleString('id-ID')}) untuk ${emp?.fullName || otItem?.employeeId}.`,
       {
         targetId: id,
         targetName: emp?.fullName || otItem?.employeeId,
         oldValue: 'Status: Menunggu Persetujuan',
-        newValue: `Status: Disetujui (+ Rp ${otItem?.calculatedPay.toLocaleString('id-ID')})`,
+        newValue: `Status: Disetujui (${otMins} menit = + Rp ${otItem?.calculatedPay.toLocaleString('id-ID')})`,
         severity: 'info',
       }
     );
@@ -1473,6 +1643,7 @@ export default function App() {
   const handleRejectOvertime = (id: string) => {
     const otItem = overtimeRequests.find((o) => o.id === id);
     const emp = otItem ? employees.find((e) => e.id === otItem.employeeId) : null;
+    const otMins = otItem ? getOvertimeMinutes(otItem) : 0;
 
     setOvertimeRequests((prev) =>
       prev.map((ot) => {
@@ -1488,7 +1659,7 @@ export default function App() {
     logActivity(
       'OVERTIME_STATUS_UPDATE',
       'Persetujuan & Klaim',
-      `Menolak permohonan lembur ${otItem?.hours || 0} jam untuk ${emp?.fullName || otItem?.employeeId}.`,
+      `Menolak permohonan lembur ${otMins} menit untuk ${emp?.fullName || otItem?.employeeId}.`,
       {
         targetId: id,
         targetName: emp?.fullName || otItem?.employeeId,
@@ -1503,14 +1674,15 @@ export default function App() {
     setOvertimeRequests((prev) => [req, ...prev]);
     upsertOvertimeRequestToSupabase(req);
     const emp = employees.find((e) => e.id === req.employeeId);
+    const otMins = getOvertimeMinutes(req);
     logActivity(
       'OVERTIME_STATUS_UPDATE',
       'Persetujuan & Klaim',
-      `Pengajuan mandiri lembur ${req.hours} jam oleh ${emp?.fullName || req.employeeId}: "${req.taskDescription}".`,
+      `Pengajuan lembur ${otMins} menit oleh ${emp?.fullName || req.employeeId}: "${req.taskDescription}".`,
       {
         targetId: req.id,
         targetName: emp?.fullName || req.employeeId,
-        newValue: `Tanggal: ${req.date}, Estimasi: Rp ${req.calculatedPay.toLocaleString('id-ID')}`,
+        newValue: `Tanggal: ${req.date}, Durasi: ${otMins} Menit, Estimasi: Rp ${req.calculatedPay.toLocaleString('id-ID')}`,
         severity: 'info',
       }
     );
@@ -1561,13 +1733,334 @@ export default function App() {
     logActivity(
       'REIMBURSEMENT_STATUS_UPDATE',
       'Persetujuan & Klaim',
-      `Menghapus klaim reimbursement ${claim?.claimNumber || id} senilai Rp ${claim?.amount.toLocaleString('id-ID') || 0}.`,
+      `Menghapus klaim reimbursement ${claim?.claimNumber || id} dari daftar aktif.`,
       {
         targetId: id,
         targetName: claim?.claimNumber || id,
-        oldValue: `Nominal: Rp ${claim?.amount.toLocaleString('id-ID') || 0}, Status: ${claim?.status || '-'}`,
-        newValue: 'Klaim reimbursement dihapus dari sistem',
+        severity: 'danger',
+      }
+    );
+  };
+
+  // ============================================================================
+  // HANDLERS FOR KASBON & CICILAN POTONGAN GAJI (CONNECTED ADMIN <-> EMPLOYEE)
+  // ============================================================================
+  const generateInstallmentSchedule = (
+    amount: number,
+    tenorMonths: number,
+    startPeriod: string
+  ): CashAdvanceInstallment[] => {
+    const months = [
+      'Januari',
+      'Februari',
+      'Maret',
+      'April',
+      'Mei',
+      'Juni',
+      'Juli',
+      'Agustus',
+      'September',
+      'Oktober',
+      'November',
+      'Desember',
+    ];
+    const parts = startPeriod.split(' ');
+    let monthIdx = months.indexOf(parts[0]);
+    if (monthIdx === -1) monthIdx = 9; // Oktober default
+    let year = parseInt(parts[1], 10) || 2026;
+
+    const baseInst = Math.floor(amount / tenorMonths);
+    const remainder = amount - baseInst * tenorMonths;
+
+    const list: CashAdvanceInstallment[] = [];
+    for (let i = 0; i < tenorMonths; i++) {
+      const m = (monthIdx + i) % 12;
+      const y = year + Math.floor((monthIdx + i) / 12);
+      list.push({
+        installmentNumber: i + 1,
+        totalInstallments: tenorMonths,
+        period: `${months[m]} ${y}`,
+        amount: i === tenorMonths - 1 ? baseInst + remainder : baseInst,
+        status: 'scheduled',
+      });
+    }
+    return list;
+  };
+
+  const handleCreateCashAdvance = (
+    advanceData: Omit<
+      CashAdvance,
+      'id' | 'createdAt' | 'status' | 'totalPaid' | 'remainingBalance' | 'installments'
+    >
+  ) => {
+    const newId = `ca-${Date.now().toString().slice(-6)}`;
+    const installments = generateInstallmentSchedule(
+      advanceData.amount,
+      advanceData.tenorMonths,
+      companyConfig.currentPayrollPeriod
+    );
+
+    const newAdvance: CashAdvance = {
+      ...advanceData,
+      id: newId,
+      createdAt: new Date().toISOString(),
+      status: 'pending',
+      totalPaid: 0,
+      remainingBalance: advanceData.amount,
+      installments,
+    };
+
+    setCashAdvances((prev) => [newAdvance, ...prev]);
+
+    sendNotification({
+      recipientType: 'admin',
+      recipientName: 'HRD & Finance PT TGI',
+      title: `Pengajuan Kasbon Baru: ${advanceData.employeeName}`,
+      message: `${advanceData.employeeName} (${advanceData.employeeNik}) mengajukan pinjaman kasbon sebesar Rp ${advanceData.amount.toLocaleString('id-ID')} (Tenor ${advanceData.tenorMonths} bulan). Alasan: "${advanceData.reason}".`,
+      category: 'CASH_ADVANCE',
+      priority: 'high',
+      actionUrl: 'cash_advance',
+      actionLabel: 'Review Kasbon',
+      metadata: {
+        cashAdvanceId: newId,
+        cashAdvanceAmount: advanceData.amount,
+      },
+    });
+
+    logActivity(
+      'CASH_ADVANCE_CREATE',
+      'Kasbon & Keuangan',
+      `Pengajuan kasbon baru #${newId.toUpperCase()} atas nama ${advanceData.employeeName} (${advanceData.employeeNik}) sebesar Rp ${advanceData.amount.toLocaleString('id-ID')} (${advanceData.tenorMonths}x cicilan).`,
+      {
+        targetId: newId,
+        targetName: `${advanceData.employeeName} (${advanceData.employeeNik})`,
+        newValue: `Nominal: Rp ${advanceData.amount.toLocaleString('id-ID')}, Tenor: ${advanceData.tenorMonths} Bulan`,
+        severity: 'info',
+        notes: advanceData.reason,
+      }
+    );
+  };
+
+  const handleApproveCashAdvance = (id: string) => {
+    const target = cashAdvances.find((c) => c.id === id);
+    if (!target) return;
+
+    const approverName = adminUser?.name || 'Administrator Utama (TGI)';
+    setCashAdvances((prev) =>
+      prev.map((c) =>
+        c.id === id
+          ? {
+              ...c,
+              status: 'approved',
+              approvedAt: new Date().toISOString(),
+              approvedBy: approverName,
+            }
+          : c
+      )
+    );
+
+    sendNotification({
+      recipientType: 'employee',
+      recipientEmployeeId: target.employeeId,
+      recipientName: target.employeeName,
+      title: 'Pengajuan Kasbon Anda Telah Disetujui HRD',
+      message: `Permohonan kasbon #${id.toUpperCase()} sebesar Rp ${target.amount.toLocaleString('id-ID')} telah disetujui oleh ${approverName} dan diteruskan ke bagian Finance untuk pencairan dana.`,
+      category: 'CASH_ADVANCE',
+      priority: 'high',
+      actionUrl: 'cash_advance',
+      actionLabel: 'Cek Status Kasbon',
+    });
+
+    logActivity(
+      'CASH_ADVANCE_APPROVE',
+      'Kasbon & Keuangan',
+      `Menyetujui pengajuan kasbon #${id.toUpperCase()} milik ${target.employeeName} sebesar Rp ${target.amount.toLocaleString('id-ID')}.`,
+      {
+        targetId: id,
+        targetName: target.employeeName,
+        oldValue: 'Status: pending',
+        newValue: `Status: approved (Oleh ${approverName})`,
+        severity: 'info',
+      }
+    );
+  };
+
+  const handleRejectCashAdvance = (id: string, reason: string) => {
+    const target = cashAdvances.find((c) => c.id === id);
+    if (!target) return;
+
+    const rejecterName = adminUser?.name || 'Administrator Utama (TGI)';
+    setCashAdvances((prev) =>
+      prev.map((c) =>
+        c.id === id
+          ? {
+              ...c,
+              status: 'rejected',
+              rejectedAt: new Date().toISOString(),
+              rejectedBy: rejecterName,
+              rejectionReason: reason,
+            }
+          : c
+      )
+    );
+
+    sendNotification({
+      recipientType: 'employee',
+      recipientEmployeeId: target.employeeId,
+      recipientName: target.employeeName,
+      title: 'Pengajuan Kasbon Tidak Disetujui',
+      message: `Mohon maaf, pengajuan kasbon #${id.toUpperCase()} sebesar Rp ${target.amount.toLocaleString('id-ID')} belum dapat disetujui. Alasan: "${reason}".`,
+      category: 'CASH_ADVANCE',
+      priority: 'normal',
+      actionUrl: 'cash_advance',
+      actionLabel: 'Lihat Detail',
+    });
+
+    logActivity(
+      'CASH_ADVANCE_REJECT',
+      'Kasbon & Keuangan',
+      `Menolak pengajuan kasbon #${id.toUpperCase()} milik ${target.employeeName}: "${reason}".`,
+      {
+        targetId: id,
+        targetName: target.employeeName,
+        oldValue: `Status: ${target.status}`,
+        newValue: `Status: rejected (${reason})`,
         severity: 'warning',
+      }
+    );
+  };
+
+  const handleDisburseCashAdvance = (
+    id: string,
+    details: {
+      method: 'Bank Transfer' | 'Tunai / Petty Cash';
+      reference: string;
+      notes?: string;
+    }
+  ) => {
+    const target = cashAdvances.find((c) => c.id === id);
+    if (!target) return;
+
+    const disburserName = adminUser?.name || 'Finance & Payroll TGI';
+    setCashAdvances((prev) =>
+      prev.map((c) =>
+        c.id === id
+          ? {
+              ...c,
+              status: 'disbursed',
+              disbursedAt: new Date().toISOString(),
+              disbursedBy: disburserName,
+              disbursementMethod: details.method,
+              disbursementReference: details.reference,
+            }
+          : c
+      )
+    );
+
+    sendNotification({
+      recipientType: 'employee',
+      recipientEmployeeId: target.employeeId,
+      recipientName: target.employeeName,
+      title: 'Dana Kasbon Telah Dicairkan!',
+      message: `Dana kasbon #${id.toUpperCase()} sebesar Rp ${target.amount.toLocaleString('id-ID')} telah dicairkan melalui ${details.method} (Ref: ${details.reference}). Jadwal cicilan potong gaji kini aktif.`,
+      category: 'CASH_ADVANCE',
+      priority: 'high',
+      actionUrl: 'cash_advance',
+      actionLabel: 'Cek Jadwal Cicilan',
+    });
+
+    logActivity(
+      'CASH_ADVANCE_DISBURSE',
+      'Kasbon & Keuangan',
+      `Mencairkan dana kasbon #${id.toUpperCase()} kepada ${target.employeeName} sebesar Rp ${target.amount.toLocaleString('id-ID')} via ${details.method} (Ref: ${details.reference}).`,
+      {
+        targetId: id,
+        targetName: target.employeeName,
+        oldValue: 'Status: approved',
+        newValue: `Status: disbursed (${details.method} - ${details.reference})`,
+        severity: 'warning',
+      }
+    );
+  };
+
+  const handleApplyCashAdvanceDeductionToPayroll = (
+    advanceId: string,
+    installmentNumber: number
+  ) => {
+    const target = cashAdvances.find((c) => c.id === advanceId);
+    if (!target) return;
+    const targetInst = target.installments.find(
+      (i) => i.installmentNumber === installmentNumber
+    );
+    if (!targetInst || targetInst.status === 'deducted') return;
+
+    const newTotalPaid = target.totalPaid + targetInst.amount;
+    const newRemaining = Math.max(0, target.amount - newTotalPaid);
+    const isNowFullyPaid = newRemaining === 0;
+
+    setCashAdvances((prev) =>
+      prev.map((c) => {
+        if (c.id !== advanceId) return c;
+        return {
+          ...c,
+          totalPaid: newTotalPaid,
+          remainingBalance: newRemaining,
+          status: isNowFullyPaid ? 'paid' : 'disbursed',
+          installments: c.installments.map((inst) =>
+            inst.installmentNumber === installmentNumber
+              ? {
+                  ...inst,
+                  status: 'deducted',
+                  deductedAt: new Date().toISOString(),
+                }
+              : inst
+          ),
+        };
+      })
+    );
+
+    // Sync deduction directly into the employee's PayrollRecord
+    setPayrolls((prev) =>
+      prev.map((p) => {
+        if (p.employeeId === target.employeeId) {
+          const nextCaDeduct = (p.cashAdvanceDeduction || 0) + targetInst.amount;
+          const nextTotalDeduct = p.totalDeductions + targetInst.amount;
+          const nextThp = Math.max(0, p.totalGrossSalary - nextTotalDeduct);
+          const updatedPayroll: PayrollRecord = {
+            ...p,
+            cashAdvanceDeduction: nextCaDeduct,
+            cashAdvanceNotes: `Cicilan ke-${installmentNumber}/${target.tenorMonths} (Sisa Rp ${newRemaining.toLocaleString('id-ID')})`,
+            totalDeductions: nextTotalDeduct,
+            takeHomePay: nextThp,
+          };
+          upsertPayrollToSupabase(updatedPayroll);
+          return updatedPayroll;
+        }
+        return p;
+      })
+    );
+
+    sendNotification({
+      recipientType: 'employee',
+      recipientEmployeeId: target.employeeId,
+      recipientName: target.employeeName,
+      title: `Cicilan Kasbon Ke-${installmentNumber} Terpotong di Slip Gaji`,
+      message: `Angsuran kasbon ke-${installmentNumber} dari ${target.tenorMonths} sebesar Rp ${targetInst.amount.toLocaleString('id-ID')} telah dipotong pada slip gaji periode ${targetInst.period}. Sisa pokok kasbon Anda: Rp ${newRemaining.toLocaleString('id-ID')}.`,
+      category: 'CASH_ADVANCE',
+      priority: 'normal',
+      actionUrl: 'payroll',
+      actionLabel: 'Lihat Slip Gaji',
+    });
+
+    logActivity(
+      'CASH_ADVANCE_DEDUCT',
+      'Kasbon & Keuangan',
+      `Memotong cicilan kasbon ke-${installmentNumber}/${target.tenorMonths} sebesar Rp ${targetInst.amount.toLocaleString('id-ID')} dari slip gaji ${target.employeeName}. Sisa kasbon: Rp ${newRemaining.toLocaleString('id-ID')}.`,
+      {
+        targetId: advanceId,
+        targetName: target.employeeName,
+        newValue: `Terpotong: Rp ${targetInst.amount.toLocaleString('id-ID')}, Sisa: Rp ${newRemaining.toLocaleString('id-ID')}`,
+        severity: 'info',
       }
     );
   };
@@ -2186,6 +2679,8 @@ export default function App() {
             onApplyLeave={handleAddLeave}
             onApplyOvertime={handleAddOvertime}
             onApplyReimbursement={handleAddReimbursement}
+            cashAdvances={cashAdvances}
+            onApplyCashAdvance={handleCreateCashAdvance}
             onUpdateProfile={handleUpdateEmployee}
             onOpenPayslip={handleOpenPayslip}
             onSwitchToAdminMode={handleToggleDashboardMode}
@@ -2252,6 +2747,7 @@ export default function App() {
           pendingLeavesCount={pendingLeaves.length}
           pendingOvertimeCount={pendingOvertimes.length}
           pendingReimbursementsCount={pendingReimbursements.length}
+          pendingCashAdvancesCount={pendingCashAdvances.length}
           isOpen={isSidebarOpen}
           setIsOpen={setIsSidebarOpen}
           adminUser={adminUser}
@@ -2357,11 +2853,16 @@ export default function App() {
               />
             )}
 
-            {activeTab === 'attendance' && (
+            {(activeTab === 'attendance' || activeTab === 'work_shifts') && (
               <AttendanceView
                 employees={employees}
                 attendances={attendances}
+                companyConfig={companyConfig}
+                initialSubTab={activeTab === 'work_shifts' ? 'shifts' : 'attendance'}
                 onAddAttendance={handleAddAttendance}
+                onUpdateShifts={handleUpdateShifts}
+                onAssignEmployeeShift={handleAssignEmployeeShift}
+                onBulkAssignDepartmentShift={handleBulkAssignDepartmentShift}
                 onApplyImportedAttendance={(importedAttendances) => {
                   setAttendances((prev) => [...importedAttendances, ...prev]);
                   importedAttendances.forEach((att) => upsertAttendanceToSupabase(att));
@@ -2406,6 +2907,22 @@ export default function App() {
                 onDeleteReimbursement={handleDeleteReimbursement}
                 onImportReimbursements={handleImportReimbursements}
                 adminEmail={adminUser?.email}
+              />
+            )}
+
+            {activeTab === 'cash_advance' && (
+              <CashAdvanceView
+                cashAdvances={cashAdvances}
+                employees={employees}
+                payrolls={payrolls}
+                companyConfig={companyConfig}
+                adminUser={adminUser}
+                onApproveCashAdvance={handleApproveCashAdvance}
+                onRejectCashAdvance={handleRejectCashAdvance}
+                onDisburseCashAdvance={handleDisburseCashAdvance}
+                onCreateCashAdvance={handleCreateCashAdvance}
+                onApplyDeductionToPayroll={handleApplyCashAdvanceDeductionToPayroll}
+                onNavigateToPayroll={() => setActiveTab('payroll')}
               />
             )}
 

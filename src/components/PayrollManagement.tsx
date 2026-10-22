@@ -21,7 +21,13 @@ import {
   ChevronDown,
 } from 'lucide-react';
 import { Employee, PayrollRecord, CompanyConfig, PerformanceReview } from '../types';
-import { formatRupiah, formatIndoDate } from '../utils/formatters';
+import {
+  formatRupiah,
+  formatIndoDate,
+  getOvertimeRatePerMinute,
+  calculateOvertimePayByMinutes,
+  formatOvertimeMinutes,
+} from '../utils/formatters';
 import { UploadPayrollModal } from './UploadPayrollModal';
 import { PayrollReportModal } from './PayrollReportModal';
 import { exportPayrollToCSV, exportPayrollToPDF } from '../utils/payrollExporter';
@@ -57,7 +63,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
   const [selectedDept, setSelectedDept] = useState('ALL');
   const [editingBonusRecord, setEditingBonusRecord] = useState<PayrollRecord | null>(null);
   const [bonusInput, setBonusInput] = useState<number>(0);
-  const [overtimeHoursInput, setOvertimeHoursInput] = useState<number>(0);
+  const [overtimeMinutesInput, setOvertimeMinutesInput] = useState<number>(0);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
@@ -227,7 +233,13 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
   const handleOpenEditBonus = (record: PayrollRecord) => {
     setEditingBonusRecord(record);
     setBonusInput(record.bonus);
-    setOvertimeHoursInput(Math.round(record.overtimePay / 100000));
+    const emp = employees.find((e) => e.id === record.employeeId);
+    const ratePerMin = record.overtimeRatePerMinute || getOvertimeRatePerMinute(emp, 1.5);
+    const currentMins =
+      record.overtimeMinutes !== undefined
+        ? record.overtimeMinutes
+        : Math.round(record.overtimePay / Math.max(100, ratePerMin));
+    setOvertimeMinutesInput(currentMins);
   };
 
   const handleSaveBonus = () => {
@@ -235,8 +247,13 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
     const emp = employees.find((e) => e.id === editingBonusRecord.employeeId);
     if (!emp) return;
 
-    const hourlyRate = (emp.baseSalary + emp.allowances.position) / 173;
-    const newOvertimePay = Math.round(overtimeHoursInput * hourlyRate * 1.5);
+    const ratePerMin = getOvertimeRatePerMinute(emp, companyConfig.defaultOvertimeMultiplier || 1.5);
+    const validMinutes = Math.max(0, Math.round(Number(overtimeMinutesInput) || 0));
+    const newOvertimePay = calculateOvertimePayByMinutes(
+      emp,
+      validMinutes,
+      companyConfig.defaultOvertimeMultiplier || 1.5
+    );
     const newGross =
       editingBonusRecord.baseSalary +
       editingBonusRecord.allowancePosition +
@@ -252,13 +269,15 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
       ...editingBonusRecord,
       bonus: Number(bonusInput),
       overtimePay: newOvertimePay,
+      overtimeMinutes: validMinutes,
+      overtimeRatePerMinute: ratePerMin,
       totalGrossSalary: newGross,
       takeHomePay: newTHP,
     };
 
     onUpdatePayrollRecord(updated);
     setEditingBonusRecord(null);
-    showToast(`Komponen gaji ${emp.fullName} berhasil diperbarui!`);
+    showToast(`Komponen gaji & lembur (${validMinutes} menit) ${emp.fullName} berhasil diperbarui!`);
   };
 
   const filteredPayrolls = payrolls.filter((p) => {
@@ -621,7 +640,9 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                           {formatRupiah(record.overtimePay + record.bonus)}
                         </span>
                         <span className="text-[10px] text-emerald-600 block">
-                          OT: {formatRupiah(record.overtimePay)} | Bns: {formatRupiah(record.bonus)}
+                          OT: {formatRupiah(record.overtimePay)}{' '}
+                          {record.overtimeMinutes ? `(${record.overtimeMinutes} mnt)` : ''} | Bns:{' '}
+                          {formatRupiah(record.bonus)}
                         </span>
                         {matchingRev && (
                           <span
@@ -722,7 +743,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200">
             <h3 className="text-base font-bold text-slate-900">
-              Penyesuaian Bonus & Jam Lembur
+              Penyesuaian Bonus & Lembur (Hitungan Per Menit)
             </h3>
             <p className="text-xs text-slate-500 mt-0.5">
               {employees.find((e) => e.id === editingBonusRecord.employeeId)?.fullName}
@@ -832,19 +853,60 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
               </div>
 
               <div>
-                <label className="block text-slate-600 mb-1 font-semibold">
-                  Total Jam Lembur Disetujui (Jam)
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-slate-600 font-semibold">
+                    Total Durasi Lembur Disetujui (Menit)
+                  </label>
+                  <span className="text-[11px] font-bold text-indigo-600">
+                    {formatOvertimeMinutes(overtimeMinutesInput)}
+                  </span>
+                </div>
                 <input
                   type="number"
-                  step={0.5}
-                  value={overtimeHoursInput}
-                  onChange={(e) => setOvertimeHoursInput(Number(e.target.value))}
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-semibold"
+                  step={1}
+                  min={0}
+                  value={overtimeMinutesInput}
+                  onChange={(e) => setOvertimeMinutesInput(Math.max(0, Number(e.target.value)))}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-mono font-bold text-sm"
                 />
-                <span className="text-[10px] text-slate-400 mt-1 block">
-                  Dihitung otomatis 1.5x upah per jam sesuai Kepmenaker.
-                </span>
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {[0, 30, 60, 90, 120, 180, 240, 300].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => setOvertimeMinutesInput(preset)}
+                      className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition-colors cursor-pointer ${
+                        overtimeMinutesInput === preset
+                          ? 'bg-emerald-600 text-white border-emerald-600'
+                          : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-emerald-50'
+                      }`}
+                    >
+                      {preset} mnt
+                    </button>
+                  ))}
+                </div>
+                {(() => {
+                  const emp = employees.find((e) => e.id === editingBonusRecord.employeeId);
+                  const ratePerMin = getOvertimeRatePerMinute(
+                    emp,
+                    companyConfig.defaultOvertimeMultiplier || 1.5
+                  );
+                  const previewPay = calculateOvertimePayByMinutes(
+                    emp,
+                    overtimeMinutesInput,
+                    companyConfig.defaultOvertimeMultiplier || 1.5
+                  );
+                  return (
+                    <div className="mt-2 p-2.5 bg-emerald-50/80 border border-emerald-200 rounded-xl flex items-center justify-between text-[11px]">
+                      <span className="text-emerald-800">
+                        {overtimeMinutesInput} menit × {formatRupiah(ratePerMin)}/menit:
+                      </span>
+                      <span className="font-bold text-emerald-950">
+                        {formatRupiah(previewPay)}
+                      </span>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
 

@@ -19,6 +19,7 @@ import {
   UserCheck,
   Boxes,
   Award,
+  HandCoins,
 } from 'lucide-react';
 import { GoogleAdminUser, DashboardModule } from '../types';
 
@@ -27,9 +28,11 @@ export type ActiveTab =
   | 'employees'
   | 'payroll'
   | 'attendance'
+  | 'work_shifts'
   | 'leave'
   | 'overtime'
   | 'reimbursement'
+  | 'cash_advance'
   | 'assets'
   | 'performance_review'
   | 'tax_bpjs'
@@ -45,6 +48,7 @@ interface SidebarProps {
   pendingLeavesCount: number;
   pendingOvertimeCount: number;
   pendingReimbursementsCount?: number;
+  pendingCashAdvancesCount?: number;
   isOpen: boolean;
   setIsOpen: (open: boolean) => void;
   adminUser?: GoogleAdminUser | null;
@@ -59,6 +63,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   pendingLeavesCount,
   pendingOvertimeCount,
   pendingReimbursementsCount = 0,
+  pendingCashAdvancesCount = 0,
   isOpen,
   setIsOpen,
   adminUser,
@@ -93,6 +98,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       badge: null,
     },
     {
+      id: 'work_shifts' as ActiveTab,
+      label: 'Jadwal & Shift Kerja',
+      icon: Clock,
+      badge: 'Multi-Shift',
+      badgeColor: 'bg-teal-100 text-teal-800',
+    },
+    {
       id: 'leave' as ActiveTab,
       label: 'Cuti & Izin',
       icon: CalendarDays,
@@ -112,6 +124,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: Receipt,
       badge: pendingReimbursementsCount > 0 ? `${pendingReimbursementsCount}` : null,
       badgeColor: 'bg-rose-100 text-rose-800',
+    },
+    {
+      id: 'cash_advance' as ActiveTab,
+      label: 'Kasbon & Pinjaman',
+      icon: HandCoins,
+      badge: pendingCashAdvancesCount > 0 ? `${pendingCashAdvancesCount}` : 'Cicilan',
+      badgeColor:
+        pendingCashAdvancesCount > 0
+          ? 'bg-amber-100 text-amber-800'
+          : 'bg-emerald-100 text-emerald-800',
     },
     {
       id: 'assets' as ActiveTab,

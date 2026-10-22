@@ -53,6 +53,23 @@ export interface Employee {
     phone: string;
   };
   accessPin?: string; // PIN / Password khusus untuk login Portal Karyawan per akun
+  shiftId?: string; // ID jadwal shift kerja yang diikuti karyawan (contoh: 'shift-pagi-reguler')
+}
+
+export interface WorkShift {
+  id: string;
+  code: string; // e.g. 'SHF-01', 'SHF-02'
+  name: string; // e.g. 'Shift Reguler Pagi (Kantor Pusat)'
+  checkInTime: string; // Jam masuk kerja manual (HH:mm), contoh '09:00'
+  checkOutTime: string; // Jam pulang kerja manual (HH:mm), contoh '17:30'
+  gracePeriodMinutes: number; // Toleransi keterlambatan dalam menit (misal: 5, 10, 15 menit)
+  breakDurationMinutes: number; // Durasi istirahat dalam menit (misal: 60 menit)
+  workDays: string[]; // Hari kerja aktif, misal ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat']
+  colorTheme: 'emerald' | 'indigo' | 'amber' | 'purple' | 'rose' | 'teal';
+  location?: string;
+  isDefault?: boolean;
+  isActive: boolean;
+  description?: string;
 }
 
 export interface PayrollRecord {
@@ -66,6 +83,8 @@ export interface PayrollRecord {
   allowanceMeal: number;
   allowanceCommunication: number;
   overtimePay: number;
+  overtimeMinutes?: number; // Total durasi lembur dalam menit
+  overtimeRatePerMinute?: number; // Tarif lembur per menit
   bonus: number;
   totalGrossSalary: number;
   
@@ -103,15 +122,29 @@ export interface AttendanceRecord {
   notes?: string;
   faceScanVerified?: boolean;
   faceConfidence?: number; // e.g. 98.6
-  facePhotoSnapshot?: string; // Captured snapshot during scan
+  facePhotoSnapshot?: string; // Captured snapshot during scan (Check-In)
+  checkOutPhotoSnapshot?: string; // Captured snapshot during scan (Check-Out)
+  checkInFullTimestamp?: string; // Real-time full date & time string on Check-In
+  checkOutFullTimestamp?: string; // Real-time full date & time string on Check-Out
   locationCoords?: {
     latitude: number;
     longitude: number;
     accuracy: number;
   };
   locationAddress?: string;
+  checkOutLocationCoords?: {
+    latitude: number;
+    longitude: number;
+    accuracy: number;
+  };
+  checkOutLocationAddress?: string;
   isInOfficeRadius?: boolean;
   distanceMeters?: number;
+  shiftId?: string;
+  shiftName?: string;
+  scheduledCheckIn?: string; // Jam masuk sesuai jadwal shift (contoh: '09:00')
+  scheduledCheckOut?: string; // Jam pulang sesuai jadwal shift (contoh: '17:30')
+  earlyLeaveMinutes?: number; // Pulang lebih cepat dalam menit
 }
 
 export interface GoogleUserAccount {
@@ -171,6 +204,10 @@ export interface OvertimeRequest {
   employeeId: string;
   date: string;
   hours: number;
+  minutes?: number; // Total durasi lembur dalam menit (hitungan per menit)
+  startTime?: string; // Jam mulai lembur (contoh: '17:30')
+  endTime?: string; // Jam selesai lembur (contoh: '19:45')
+  ratePerMinute?: number; // Tarif lembur per menit (IDR/menit)
   taskDescription: string;
   calculatedPay: number;
   status: 'Menunggu Persetujuan' | 'Disetujui' | 'Ditolak';
@@ -181,9 +218,11 @@ export type DashboardModule =
   | 'employees'
   | 'payroll'
   | 'attendance'
+  | 'work_shifts'
   | 'leave'
   | 'overtime'
   | 'reimbursement'
+  | 'cash_advance'
   | 'assets'
   | 'performance_review'
   | 'tax_bpjs'
@@ -284,7 +323,9 @@ export type ActivityActionType =
   | 'SETTINGS_MODIFIED'
   | 'USER_ACCESS_CHANGED'
   | 'LOGIN_ACTIVITY'
-  | 'MANUAL_AUDIT_NOTE';
+  | 'MANUAL_AUDIT_NOTE'
+  | 'SHIFT_SCHEDULE_UPDATE'
+  | 'EMPLOYEE_SHIFT_ASSIGN';
 
 export type ActivitySeverity = 'info' | 'warning' | 'danger' | 'success';
 
@@ -365,6 +406,8 @@ export interface CompanyConfig {
   standardWorkDaysPerWeek?: number;
   defaultOvertimeMultiplier?: number;
   defaultOvertimeRatePerHour?: number;
+  defaultOvertimeRatePerMinute?: number;
+  workShifts?: WorkShift[];
   securitySettings?: {
     adminPin?: string;
     requirePinForAdminMode?: boolean;

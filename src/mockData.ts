@@ -16,8 +16,11 @@ import {
   PerformanceReview,
   AppNotification,
   CashAdvance,
+  WorkShift,
 } from './types';
-import { calculatePayroll } from './utils/formatters';
+import { calculatePayroll, DEFAULT_WORK_SHIFTS } from './utils/formatters';
+
+export const initialWorkShifts: WorkShift[] = DEFAULT_WORK_SHIFTS;
 
 export const initialRolePermissions: Record<GoogleAdminRole, RolePermissionConfig> = {
   'Super Admin': {
@@ -28,9 +31,11 @@ export const initialRolePermissions: Record<GoogleAdminRole, RolePermissionConfi
       'employees',
       'payroll',
       'attendance',
+      'work_shifts',
       'leave',
       'overtime',
       'reimbursement',
+      'cash_advance',
       'assets',
       'performance_review',
       'tax_bpjs',
@@ -56,8 +61,10 @@ export const initialRolePermissions: Record<GoogleAdminRole, RolePermissionConfi
       'employees',
       'payroll',
       'attendance',
+      'work_shifts',
       'leave',
       'overtime',
+      'cash_advance',
       'assets',
       'performance_review',
       'reports',
@@ -80,6 +87,7 @@ export const initialRolePermissions: Record<GoogleAdminRole, RolePermissionConfi
       'overview',
       'payroll',
       'reimbursement',
+      'cash_advance',
       'assets',
       'tax_bpjs',
       'reports',
@@ -101,6 +109,7 @@ export const initialRolePermissions: Record<GoogleAdminRole, RolePermissionConfi
     allowedModules: [
       'overview',
       'attendance',
+      'work_shifts',
       'leave',
       'overtime',
       'assets',
@@ -245,6 +254,8 @@ export const initialCompanyConfig: CompanyConfig = {
   standardWorkDaysPerWeek: 5,
   defaultOvertimeMultiplier: 1.5,
   defaultOvertimeRatePerHour: 55000,
+  defaultOvertimeRatePerMinute: 1400,
+  workShifts: DEFAULT_WORK_SHIFTS,
   securitySettings: {
     adminPin: '2026',
     requirePinForAdminMode: true,
@@ -295,6 +306,7 @@ export const initialEmployees: Employee[] = [
       relation: 'Pasangan',
       phone: '0812-9988-7722',
     },
+    shiftId: 'shift-pagi-reguler',
   },
   {
     id: 'emp-02',
@@ -444,6 +456,7 @@ export const initialEmployees: Employee[] = [
     gender: 'Laki-laki',
     birthDate: '1991-12-30',
     birthPlace: 'Jakarta',
+    shiftId: 'shift-pagi-gudang',
   },
   {
     id: 'emp-06',
@@ -552,6 +565,7 @@ export const initialEmployees: Employee[] = [
     gender: 'Laki-laki',
     birthDate: '1996-08-19',
     birthPlace: 'Tegal',
+    shiftId: 'shift-pagi-gudang',
   },
   // Pending Registrations for Admin ACC
   {
@@ -595,6 +609,7 @@ export const initialEmployees: Employee[] = [
       relation: 'Orang Tua',
       phone: '0813-7722-1100',
     },
+    shiftId: 'shift-pagi-gudang',
   },
   {
     id: 'emp-10',
@@ -637,27 +652,28 @@ export const initialEmployees: Employee[] = [
       relation: 'Orang Tua',
       phone: '0822-9900-5566',
     },
+    shiftId: 'shift-siang-toko',
   },
 ];
 
-// Initial Generated Payroll Records
+// Initial Generated Payroll Records (Overtime dalam satuan Menit)
 export const initialPayrollRecords: PayrollRecord[] = [
-  calculatePayroll(initialEmployees[0], 'Oktober 2026', 6, 1500000, 0),
+  calculatePayroll(initialEmployees[0], 'Oktober 2026', 245, 1500000, 0),
   calculatePayroll(
     initialEmployees[1],
     'Oktober 2026',
-    2,
+    120,
     500000,
     10,
     1000000,
     'Angsuran ke-1 dari 3 (Kasbon Pengobatan Darurat)'
   ),
-  calculatePayroll(initialEmployees[2], 'Oktober 2026', 4, 1000000, 0),
+  calculatePayroll(initialEmployees[2], 'Oktober 2026', 180, 1000000, 0),
   calculatePayroll(initialEmployees[3], 'Oktober 2026', 0, 750000, 25),
-  calculatePayroll(initialEmployees[4], 'Oktober 2026', 10, 1200000, 0),
-  calculatePayroll(initialEmployees[5], 'Oktober 2026', 3, 300000, 0),
-  calculatePayroll(initialEmployees[6], 'Oktober 2026', 5, 0, 0),
-  calculatePayroll(initialEmployees[7], 'Oktober 2026', 12, 400000, 40),
+  calculatePayroll(initialEmployees[4], 'Oktober 2026', 210, 1200000, 0),
+  calculatePayroll(initialEmployees[5], 'Oktober 2026', 95, 300000, 0),
+  calculatePayroll(initialEmployees[6], 'Oktober 2026', 135, 0, 0),
+  calculatePayroll(initialEmployees[7], 'Oktober 2026', 155, 400000, 40),
 ];
 
 export const initialAttendanceRecords: AttendanceRecord[] = [
@@ -836,26 +852,38 @@ export const initialOvertimeRequests: OvertimeRequest[] = [
     employeeId: 'emp-05',
     date: '2026-10-07',
     hours: 3.5,
+    minutes: 210,
+    startTime: '17:30',
+    endTime: '21:00',
+    ratePerMinute: 2052,
     taskDescription: 'Stock opname akhir kuartal gudang transit logistik',
-    calculatedPay: 431000,
+    calculatedPay: 430920,
     status: 'Disetujui',
   },
   {
     id: 'ot-02',
     employeeId: 'emp-01',
     date: '2026-10-05',
-    hours: 4.0,
+    hours: 4.08,
+    minutes: 245,
+    startTime: '17:30',
+    endTime: '21:35',
+    ratePerMinute: 3179,
     taskDescription: 'Maintenance server backend migrasi database akhir pekan',
-    calculatedPay: 763000,
+    calculatedPay: 778855,
     status: 'Disetujui',
   },
   {
     id: 'ot-03',
     employeeId: 'emp-08',
     date: '2026-10-07',
-    hours: 2.5,
+    hours: 2.58,
+    minutes: 155,
+    startTime: '17:30',
+    endTime: '20:05',
+    ratePerMinute: 968,
     taskDescription: 'Bongkar muat armada pengiriman luar kota darurat',
-    calculatedPay: 145000,
+    calculatedPay: 150040,
     status: 'Menunggu Persetujuan',
   },
 ];

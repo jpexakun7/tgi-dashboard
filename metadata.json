@@ -1,7 +1,7 @@
 {
   "name": "TGI Dashboard - Platform Payroll & HRIS",
   "description": "Dashboard manajemen penggajian, absensi, cuti, BPJS, PPh 21 TER 2026, dan data karyawan PT Tas Grosir Import.",
-  "requestFramePermissions": [],
+  "requestFramePermissions": ["camera", "geolocation"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
 

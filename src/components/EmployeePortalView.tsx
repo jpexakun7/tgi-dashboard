@@ -45,6 +45,7 @@ import {
   HandCoins,
   Banknote,
   CalendarCheck2,
+  Camera,
 } from 'lucide-react';
 import {
   Employee,
@@ -62,8 +63,21 @@ import {
   CashAdvanceInstallment,
   AttendanceRecord,
 } from '../types';
-import { formatCurrency, formatIDR, formatRupiah, formatIndoDate } from '../utils/formatters';
+import {
+  formatCurrency,
+  formatIDR,
+  formatRupiah,
+  formatIndoDate,
+  getOvertimeRatePerMinute,
+  calculateOvertimePayByMinutes,
+  getOvertimeMinutes,
+  formatOvertimeMinutes,
+  calculateMinutesBetweenTimes,
+  getEmployeeShift,
+  evaluateAttendanceAgainstShift,
+} from '../utils/formatters';
 import { getEmployeeEffectivePin } from '../services/supabaseService';
+import { LiveFaceGpsAttendanceScanner } from './LiveFaceGpsAttendanceScanner';
 
 interface EmployeePortalViewProps {
   currentEmployee: Employee;
@@ -85,13 +99,20 @@ interface EmployeePortalViewProps {
   onSelectEmployee: (empId: string) => void;
   onReportAssetIssue?: (assetId: string, notes: string) => void;
   notifications?: AppNotification[];
-  activePortalTabOverride?: 'payroll' | 'attendance' | 'leave' | 'claims' | 'assets' | 'performance' | 'profile' | null;
+  activePortalTabOverride?: 'payroll' | 'attendance' | 'leave' | 'claims' | 'cash_advance' | 'assets' | 'performance' | 'profile' | null;
   onOpenNotifications?: () => void;
   isAdminUnlocked?: boolean;
   onRequestAdminAccess?: () => void;
   onLockAdmin?: () => void;
   attendances?: AttendanceRecord[];
   onAddAttendance?: (att: AttendanceRecord) => void;
+  cashAdvances?: CashAdvance[];
+  onApplyCashAdvance?: (
+    advanceData: Omit<
+      CashAdvance,
+      'id' | 'createdAt' | 'status' | 'totalPaid' | 'remainingBalance' | 'installments'
+    >
+  ) => void;
 }
 
 const LEAVE_TYPES: LeaveRequest['type'][] = [
@@ -141,8 +162,10 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
   onLockAdmin,
   attendances = [],
   onAddAttendance,
+  cashAdvances = [],
+  onApplyCashAdvance,
 }) => {
-  const [activePortalTab, setActivePortalTab] = useState<'payroll' | 'attendance' | 'leave' | 'claims' | 'assets' | 'performance' | 'profile'>('payroll');
+  const [activePortalTab, setActivePortalTab] = useState<'payroll' | 'attendance' | 'leave' | 'claims' | 'cash_advance' | 'assets' | 'performance' | 'profile'>('payroll');
   const [isSwitchProfileModalOpen, setIsSwitchProfileModalOpen] = useState(false);
   const [profileSearchQuery, setProfileSearchQuery] = useState('');
   const [pendingSwitchEmp, setPendingSwitchEmp] = useState<Employee | null>(null);
@@ -150,6 +173,15 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
   const [switchPinError, setSwitchPinError] = useState<string | null>(null);
   const [clockInNotes, setClockInNotes] = useState('');
   const [attendanceNotice, setAttendanceNotice] = useState<string | null>(null);
+  const [previewAttendanceRecord, setPreviewAttendanceRecord] = useState<AttendanceRecord | null>(null);
+
+  // Kasbon (Cash Advance) Form State
+  const [isCashAdvanceModalOpen, setIsCashAdvanceModalOpen] = useState(false);
+  const [cashAdvanceAmount, setCashAdvanceAmount] = useState<number>(1500000);
+  const [cashAdvanceTenor, setCashAdvanceTenor] = useState<CashAdvanceTenorMonths>(3);
+  const [cashAdvanceReason, setCashAdvanceReason] = useState('');
+  const [cashAdvanceError, setCashAdvanceError] = useState<string | null>(null);
+  const [cashAdvanceSuccessMsg, setCashAdvanceSuccessMsg] = useState<string | null>(null);
 
   // Sync tab if commanded by notification navigation
   React.useEffect(() => {
@@ -158,7 +190,21 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     }
   }, [activePortalTabOverride]);
 
-  // Personal Attendances
+  // Personal Attendances & Shift Schedule
+  const myShift = useMemo(
+    () => getEmployeeShift(currentEmployee, companyConfig.workShifts),
+    [currentEmployee, companyConfig.workShifts]
+  );
+
+  const [useCustomClockTime, setUseCustomClockTime] = useState(false);
+  const [customClockInTime, setCustomClockInTime] = useState(myShift.checkInTime);
+  const [customClockOutTime, setCustomClockOutTime] = useState(myShift.checkOutTime);
+
+  React.useEffect(() => {
+    setCustomClockInTime(myShift.checkInTime);
+    setCustomClockOutTime(myShift.checkOutTime);
+  }, [myShift.id, myShift.checkInTime, myShift.checkOutTime]);
+
   const myAttendances = useMemo(() => {
     return attendances.filter((a) => a.employeeId === currentEmployee.id);
   }, [attendances, currentEmployee.id]);
@@ -167,6 +213,14 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
   const todayAttendance = useMemo(() => {
     return myAttendances.find((a) => a.date === todayDateStr);
   }, [myAttendances, todayDateStr]);
+
+  const shiftEvalPreview = useMemo(() => {
+    const now = new Date();
+    const nowStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const targetIn = useCustomClockTime ? customClockInTime : todayAttendance?.checkIn || nowStr;
+    const targetOut = useCustomClockTime ? customClockOutTime : todayAttendance?.checkOut || myShift.checkOutTime;
+    return evaluateAttendanceAgainstShift(targetIn, targetOut, myShift);
+  }, [useCustomClockTime, customClockInTime, customClockOutTime, todayAttendance, myShift]);
 
   // Count unread performance / bonus notifications for this employee
   const unreadKpiNotifs = useMemo(() => {
@@ -203,6 +257,64 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     [assets, currentEmployee.id]
   );
 
+  const myCashAdvances = useMemo(
+    () => cashAdvances.filter((ca) => ca.employeeId === currentEmployee.id),
+    [cashAdvances, currentEmployee.id]
+  );
+
+  const activeCashAdvanceBalance = useMemo(
+    () =>
+      myCashAdvances
+        .filter((ca) => ca.status === 'disbursed' || ca.status === 'approved')
+        .reduce((sum, ca) => sum + ca.remainingBalance, 0),
+    [myCashAdvances]
+  );
+
+  const maxCashAdvancePlafon = currentEmployee.baseSalary;
+
+  const handleSubmitCashAdvance = (e: React.FormEvent) => {
+    e.preventDefault();
+    setCashAdvanceError(null);
+
+    if (cashAdvanceAmount <= 0) {
+      setCashAdvanceError('Nominal pengajuan kasbon harus lebih dari Rp 0.');
+      return;
+    }
+    if (cashAdvanceAmount > maxCashAdvancePlafon) {
+      setCashAdvanceError(
+        `Nominal kasbon melebihi plafon maksimum gaji pokok Anda (${formatRupiah(maxCashAdvancePlafon)}).`
+      );
+      return;
+    }
+    if (!cashAdvanceReason.trim()) {
+      setCashAdvanceError('Mohon isi alasan atau keperluan pengajuan kasbon.');
+      return;
+    }
+
+    if (onApplyCashAdvance) {
+      onApplyCashAdvance({
+        employeeId: currentEmployee.id,
+        employeeName: currentEmployee.fullName,
+        employeeNik: currentEmployee.nik,
+        department: currentEmployee.department,
+        position: currentEmployee.role,
+        baseSalary: currentEmployee.baseSalary,
+        maxAllowedAmount: maxCashAdvancePlafon,
+        amount: cashAdvanceAmount,
+        reason: cashAdvanceReason.trim(),
+        tenorMonths: cashAdvanceTenor,
+        monthlyInstallment: Math.round(cashAdvanceAmount / cashAdvanceTenor),
+      });
+    }
+
+    setIsCashAdvanceModalOpen(false);
+    setCashAdvanceReason('');
+    setCashAdvanceSuccessMsg(
+      `Pengajuan kasbon sebesar ${formatRupiah(cashAdvanceAmount)} (Tenor ${cashAdvanceTenor} bulan) berhasil dikirim ke Panel Admin HR & Finance!`
+    );
+    setTimeout(() => setCashAdvanceSuccessMsg(null), 5000);
+  };
+
   // Leave Form State
   const [isLeaveModalOpen, setIsLeaveModalOpen] = useState(false);
   const [leaveForm, setLeaveForm] = useState({
@@ -222,19 +334,38 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     return Math.max(1, diffDays);
   }, [leaveForm.startDate, leaveForm.endDate]);
 
-  // Overtime Form State
+  // Overtime Form State (Hitungan Per Menit)
   const [isOvertimeModalOpen, setIsOvertimeModalOpen] = useState(false);
   const [overtimeForm, setOvertimeForm] = useState({
     date: new Date().toISOString().slice(0, 10),
-    hours: 2,
+    minutes: 90,
+    startTime: '17:30',
+    endTime: '19:00',
     taskDescription: '',
   });
 
-  // Calculate estimated overtime pay: (Base Salary / 173) * 1.5 * hours (Kemenaker standard)
+  const myOvertimeRatePerMinute = useMemo(() => {
+    return getOvertimeRatePerMinute(currentEmployee, companyConfig.defaultOvertimeMultiplier || 1.5);
+  }, [currentEmployee, companyConfig.defaultOvertimeMultiplier]);
+
+  // Calculate estimated overtime pay per minute: ((Base Salary + Position Allowance) / 173 / 60) * 1.5 * minutes
   const estimatedOvertimePay = useMemo(() => {
-    const hourlyRate = (currentEmployee.baseSalary || 5000000) / 173;
-    return Math.round(hourlyRate * 1.5 * (overtimeForm.hours || 1));
-  }, [currentEmployee.baseSalary, overtimeForm.hours]);
+    return calculateOvertimePayByMinutes(
+      currentEmployee,
+      overtimeForm.minutes || 0,
+      companyConfig.defaultOvertimeMultiplier || 1.5
+    );
+  }, [currentEmployee, overtimeForm.minutes, companyConfig.defaultOvertimeMultiplier]);
+
+  const handleOvertimeTimeRangeChange = (newStart: string, newEnd: string) => {
+    const diffMins = calculateMinutesBetweenTimes(newStart, newEnd);
+    setOvertimeForm((prev) => ({
+      ...prev,
+      startTime: newStart,
+      endTime: newEnd,
+      minutes: diffMins > 0 ? diffMins : prev.minutes,
+    }));
+  };
 
   // Reimbursement Form State
   const [isReimbursementModalOpen, setIsReimbursementModalOpen] = useState(false);
@@ -333,16 +464,22 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     });
   };
 
-  // Overtime Submit Handler
+  // Overtime Submit Handler (Hitungan Per Menit)
   const handleSubmitOvertime = (e: React.FormEvent) => {
     e.preventDefault();
     if (!overtimeForm.taskDescription.trim()) return;
+
+    const validMinutes = Math.max(1, Math.round(Number(overtimeForm.minutes) || 0));
 
     const newReq: OvertimeRequest = {
       id: `ot-${Date.now().toString().slice(-6)}`,
       employeeId: currentEmployee.id,
       date: overtimeForm.date,
-      hours: overtimeForm.hours,
+      hours: Number((validMinutes / 60).toFixed(2)),
+      minutes: validMinutes,
+      startTime: overtimeForm.startTime || undefined,
+      endTime: overtimeForm.endTime || undefined,
+      ratePerMinute: myOvertimeRatePerMinute,
       taskDescription: overtimeForm.taskDescription.trim(),
       calculatedPay: estimatedOvertimePay,
       status: 'Menunggu Persetujuan',
@@ -352,7 +489,9 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     setIsOvertimeModalOpen(false);
     setOvertimeForm({
       date: new Date().toISOString().slice(0, 10),
-      hours: 2,
+      minutes: 90,
+      startTime: '17:30',
+      endTime: '19:00',
       taskDescription: '',
     });
   };
@@ -472,6 +611,20 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 NIK: <span className="font-mono font-bold">{currentEmployee.nik}</span> •{' '}
                 {currentEmployee.role} ({currentEmployee.department})
               </p>
+              <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActivePortalTab('attendance')}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-white text-emerald-900 hover:bg-emerald-50 shadow-sm cursor-pointer transition-all"
+                >
+                  <Camera className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>
+                    {todayAttendance?.checkIn
+                      ? `Absen Wajah & GPS HP (${todayAttendance.checkIn})`
+                      : 'Absen Foto Wajah & GPS HP Sekarang'}
+                  </span>
+                </button>
+              </div>
             </div>
           </div>
 
@@ -649,6 +802,21 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
         >
           <Clock className="w-4 h-4" />
           Klaim Lembur & Reimbursement
+        </button>
+
+        <button
+          onClick={() => setActivePortalTab('cash_advance')}
+          className={`flex items-center gap-2 px-4 py-2.5 text-xs sm:text-sm font-semibold rounded-xl whitespace-nowrap transition-all cursor-pointer ${
+            activePortalTab === 'cash_advance'
+              ? 'bg-emerald-600 text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          <HandCoins className="w-4 h-4" />
+          <span>Pengajuan Kasbon & Cicilan ({myCashAdvances.length})</span>
+          {myCashAdvances.some((c) => c.status === 'pending' || c.status === 'approved') && (
+            <span className="w-2 h-2 rounded-full bg-amber-400" />
+          )}
         </button>
 
         <button
@@ -877,6 +1045,15 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                       <span className="font-semibold">- {formatCurrency(currentPay.lateDeduction)}</span>
                     </div>
                   )}
+                  {currentPay && (currentPay.cashAdvanceDeduction || 0) > 0 && (
+                    <div className="flex justify-between items-center text-rose-800 bg-rose-50 px-2 py-1 rounded">
+                      <span>
+                        Potongan Cicilan Kasbon{' '}
+                        {currentPay.cashAdvanceNotes ? `(${currentPay.cashAdvanceNotes})` : ''}
+                      </span>
+                      <span className="font-bold">- {formatCurrency(currentPay.cashAdvanceDeduction || 0)}</span>
+                    </div>
+                  )}
                   <div className="pt-2 border-t border-slate-200 flex justify-between items-center font-bold text-slate-900 text-sm">
                     <span>Total Potongan:</span>
                     <span className="text-rose-700">- {formatCurrency(totalDeduct)}</span>
@@ -899,7 +1076,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
         </div>
       )}
 
-      {/* TAB PRESENSI & ABSENSI MANDIRI */}
+      {/* TAB PRESENSI & ABSENSI MANDIRI (MENGIKUTI JADWAL SHIFT) */}
       {activePortalTab === 'attendance' && (
         <div className="space-y-6">
           {attendanceNotice && (
@@ -909,18 +1086,69 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
             </div>
           )}
 
+          {/* Active Shift Schedule Banner for Employee */}
+          <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2 text-xs text-slate-500 font-mono">
+                  <span className="font-bold text-emerald-700">{myShift.code}</span>
+                  <span aria-hidden="true">·</span>
+                  <span>Jadwal Kerja Aktif Anda</span>
+                  {myShift.location && (
+                    <>
+                      <span aria-hidden="true">·</span>
+                      <span className="font-sans">{myShift.location}</span>
+                    </>
+                  )}
+                </div>
+                <h3 className="text-base sm:text-lg font-bold text-slate-900 mt-1">
+                  {myShift.name}
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Hari Kerja: <strong>{myShift.workDays.join(', ')}</strong> · Istirahat:{' '}
+                  <strong>{myShift.breakDurationMinutes} Menit</strong>
+                </p>
+              </div>
+
+              <div className="grid grid-cols-3 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200 text-xs shrink-0">
+                <div>
+                  <span className="text-slate-500 block text-[10px]">Jam Masuk Shift</span>
+                  <span className="font-mono font-bold text-emerald-700 text-sm">
+                    {myShift.checkInTime} WIB
+                  </span>
+                </div>
+                <div className="border-l border-slate-200 pl-3">
+                  <span className="text-slate-500 block text-[10px]">Jam Pulang Shift</span>
+                  <span className="font-mono font-bold text-indigo-700 text-sm">
+                    {myShift.checkOutTime} WIB
+                  </span>
+                </div>
+                <div className="border-l border-slate-200 pl-3">
+                  <span className="text-slate-500 block text-[10px]">Batas Tepat Waktu</span>
+                  <span className="font-mono font-bold text-slate-900 text-sm">
+                    {shiftEvalPreview.maxAllowedCheckIn} WIB
+                  </span>
+                  <span className="block text-[10px] text-slate-400">
+                    (Toleransi {myShift.gracePeriodMinutes} mnt)
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* Clock In / Clock Out Action Card */}
-          <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-xs">
+          <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-xs space-y-5">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-5">
               <div>
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 uppercase tracking-wider">
-                  <MapPin className="w-3 h-3" /> Radius Kantor Pusat Terverifikasi (Real-time Supabase)
-                </span>
-                <h3 className="text-base sm:text-lg font-bold text-slate-900 mt-1.5">
+                <div className="flex items-center gap-2 text-xs text-emerald-700 font-semibold">
+                  <MapPin className="w-3.5 h-3.5" />
+                  <span>Presensi Mengikuti Jadwal {myShift.name} ({myShift.checkInTime} – {myShift.checkOutTime} WIB)</span>
+                </div>
+                <h3 className="text-base sm:text-lg font-bold text-slate-900 mt-1">
                   Presensi Kehadiran Hari Ini ({formatIndoDate(todayDateStr)})
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Jam kerja standar operasional: 09:00 - 17:30 WIB. Data presensi otomatis tersimpan ke Cloud Supabase.
+                  Status tepat waktu atau terlambat dihitung otomatis berdasarkan jam masuk shift Anda ({myShift.checkInTime} WIB + toleransi {myShift.gracePeriodMinutes} menit).
                 </p>
               </div>
 
@@ -941,135 +1169,339 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-5">
-              <div className="md:col-span-2">
-                <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                  Catatan Kehadiran / Lokasi Kerja (Opsional)
+            {/* Option to toggle Real-Time Clock vs Custom Shift Time Simulation */}
+            <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <label className="flex items-center gap-2 text-xs font-bold text-slate-800 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={useCustomClockTime}
+                    onChange={(e) => setUseCustomClockTime(e.target.checked)}
+                    className="rounded text-emerald-600 focus:ring-emerald-500"
+                  />
+                  <span>Gunakan Input Jam Absen Manual / Simulasi Mengikuti Shift</span>
                 </label>
-                <input
-                  type="text"
-                  value={clockInNotes}
-                  onChange={(e) => setClockInNotes(e.target.value)}
-                  placeholder="Contoh: Hadir tepat waktu di Kantor Pusat / Gudang Kapuk..."
-                  className="w-full px-3.5 py-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
-                />
+
+                <span className="text-[11px] text-slate-500">
+                  {useCustomClockTime
+                    ? 'Mode input jam aktif: Anda dapat menguji jam masuk & pulang terhadap shift'
+                    : 'Mode jam real-time perangkat aktif'}
+                </span>
               </div>
 
-              <div className="flex items-end gap-2.5">
-                <button
-                  type="button"
-                  disabled={Boolean(todayAttendance?.checkIn)}
-                  onClick={() => {
-                    const now = new Date();
-                    const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-                    const isLate = now.getHours() > 9 || (now.getHours() === 9 && now.getMinutes() > 5);
-                    const lateMins = isLate ? Math.max(1, (now.getHours() - 9) * 60 + now.getMinutes()) : 0;
-                    const newAtt: AttendanceRecord = {
-                      id: todayAttendance ? todayAttendance.id : `att-${Date.now()}`,
-                      employeeId: currentEmployee.id,
-                      date: todayDateStr,
-                      checkIn: timeStr,
-                      checkOut: todayAttendance?.checkOut || '',
-                      status: isLate ? 'Terlambat' : 'Hadir Tepat Waktu',
-                      workHours: 8,
-                      lateMinutes: lateMins,
-                      notes: clockInNotes.trim() || 'Presensi Mandiri via Portal Karyawan',
-                      faceScanVerified: true,
-                      faceConfidence: 98.8,
-                      locationAddress: 'Kantor Pusat PT Tas Grosir Import',
-                      isInOfficeRadius: true,
-                      distanceMeters: 12,
-                    };
-                    onAddAttendance?.(newAtt);
-                    setAttendanceNotice(`Berhasil Clock-In pada pukul ${timeStr} WIB dan tersimpan ke Supabase!`);
-                    setTimeout(() => setAttendanceNotice(null), 4000);
-                  }}
-                  className="flex-1 py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer shadow-xs flex items-center justify-center gap-1.5"
-                >
-                  <CalendarCheck2 className="w-4 h-4" />
-                  <span>{todayAttendance?.checkIn ? `Sudah Masuk (${todayAttendance.checkIn})` : 'Absen Masuk (Clock In)'}</span>
-                </button>
+              {useCustomClockTime && (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-slate-200/80 items-end">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                      Jam Absen Masuk (Check-In)
+                    </label>
+                    <input
+                      type="time"
+                      value={customClockInTime}
+                      onChange={(e) => setCustomClockInTime(e.target.value)}
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl font-mono text-xs font-bold text-slate-900"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                      Jam Absen Pulang (Check-Out)
+                    </label>
+                    <input
+                      type="time"
+                      value={customClockOutTime}
+                      onChange={(e) => setCustomClockOutTime(e.target.value)}
+                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl font-mono text-xs font-bold text-slate-900"
+                    />
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCustomClockInTime(myShift.checkInTime);
+                        setCustomClockOutTime(myShift.checkOutTime);
+                      }}
+                      className="px-2.5 py-2 bg-white hover:bg-emerald-50 text-emerald-700 border border-slate-200 rounded-lg text-[11px] font-semibold cursor-pointer"
+                    >
+                      Sesuai Shift ({myShift.checkInTime} - {myShift.checkOutTime})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const [h, m] = myShift.checkInTime.split(':').map(Number);
+                        const lateTotal = ((h || 9) * 60 + (m || 0) + (myShift.gracePeriodMinutes || 5) + 15) % (24 * 60);
+                        const lateStr = `${String(Math.floor(lateTotal / 60)).padStart(2, '0')}:${String(lateTotal % 60).padStart(2, '0')}`;
+                        setCustomClockInTime(lateStr);
+                      }}
+                      className="px-2.5 py-2 bg-white hover:bg-amber-50 text-amber-700 border border-slate-200 rounded-lg text-[11px] font-semibold cursor-pointer"
+                    >
+                      Tes Terlambat
+                    </button>
+                  </div>
+                </div>
+              )}
 
-                <button
-                  type="button"
-                  disabled={!todayAttendance?.checkIn || Boolean(todayAttendance?.checkOut && todayAttendance.checkOut !== '-')}
-                  onClick={() => {
-                    if (!todayAttendance) return;
-                    const now = new Date();
-                    const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-                    const updatedAtt: AttendanceRecord = {
-                      ...todayAttendance,
-                      checkOut: timeStr,
-                      notes: clockInNotes.trim() || todayAttendance.notes || 'Selesai jam kerja normal',
-                    };
-                    onAddAttendance?.(updatedAtt);
-                    setAttendanceNotice(`Berhasil Clock-Out pada pukul ${timeStr} WIB dan diperbarui di Supabase!`);
-                    setTimeout(() => setAttendanceNotice(null), 4000);
-                  }}
-                  className="flex-1 py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-200 disabled:text-slate-400 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer shadow-xs flex items-center justify-center gap-1.5"
-                >
-                  <Clock className="w-4 h-4" />
-                  <span>{todayAttendance?.checkOut ? `Pulang (${todayAttendance.checkOut})` : 'Absen Pulang'}</span>
-                </button>
+              {/* Live Shift Comparison Indicator */}
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200/70 text-xs">
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-500">Evaluasi terhadap {myShift.code}:</span>
+                  <span
+                    className={`font-bold ${
+                      shiftEvalPreview.lateMinutes > 0 ? 'text-amber-700' : 'text-emerald-700'
+                    }`}
+                  >
+                    {shiftEvalPreview.status}
+                    {shiftEvalPreview.lateMinutes > 0
+                      ? ` (Terlambat ${shiftEvalPreview.lateMinutes} Menit dari jadwal ${myShift.checkInTime})`
+                      : ` (Sesuai jadwal masuk ${myShift.checkInTime})`}
+                  </span>
+                </div>
+                <span className="font-mono text-slate-600">
+                  Estimasi Durasi: <strong>{shiftEvalPreview.workHours} Jam</strong>
+                </span>
               </div>
             </div>
-          </div>
+
+              {/* Live Camera & Real-Time Phone GPS Attendance Scanner */}
+              <LiveFaceGpsAttendanceScanner
+                currentEmployee={currentEmployee}
+                activeShift={myShift}
+                todayAttendance={todayAttendance}
+                todayDateStr={todayDateStr}
+                useCustomClockTime={useCustomClockTime}
+                customClockInTime={customClockInTime}
+                customClockOutTime={customClockOutTime}
+                clockInNotes={clockInNotes}
+                onChangeNotes={setClockInNotes}
+                onSubmitAttendance={(record, mode) => {
+                  onAddAttendance?.(record);
+                  if (mode === 'check_in') {
+                    setAttendanceNotice(
+                      `Berhasil Absen Masuk dengan Foto Wajah & GPS HP pukul ${record.checkIn} WIB (${
+                        record.checkInFullTimestamp || ''
+                      }) di ${record.locationAddress || myShift.location} → Status: ${record.status}${
+                        record.lateMinutes > 0 ? ` (Terlambat ${record.lateMinutes} menit)` : ''
+                      }!`
+                    );
+                  } else {
+                    setAttendanceNotice(
+                      `Berhasil Absen Pulang dengan Foto Wajah & GPS HP pukul ${record.checkOut} WIB (${
+                        record.checkOutFullTimestamp || ''
+                      }) • Durasi Kerja: ${record.workHours} Jam!`
+                    );
+                  }
+                  setTimeout(() => setAttendanceNotice(null), 7000);
+                }}
+              />
+            </div>
 
           {/* Personal Attendance History Table */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
             <div className="p-5 border-b border-slate-100 flex items-center justify-between">
               <div>
-                <h3 className="text-sm font-bold text-slate-900">Riwayat Presensi & Kehadiran Saya</h3>
-                <p className="text-xs text-slate-500">Total {myAttendances.length} catatan kehadiran tercatat</p>
+                <h3 className="text-sm font-bold text-slate-900">
+                  Riwayat Presensi, Foto Wajah & Titik Lokasi GPS Saya
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Total {myAttendances.length} catatan kehadiran tercatat beserta bukti foto wajah real-time & koordinat GPS HP
+                </p>
               </div>
             </div>
 
             {myAttendances.length === 0 ? (
               <div className="p-8 text-center text-xs text-slate-400">
-                Belum ada riwayat presensi untuk akun Anda. Silakan klik tombol <strong>Absen Masuk</strong> di atas.
+                Belum ada riwayat presensi untuk akun Anda. Silakan klik tombol <strong>Jepret Foto Wajah & Absen Masuk</strong> pada kamera di atas.
               </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse text-xs">
                   <thead>
                     <tr className="bg-slate-50 text-slate-500 border-b border-slate-200 uppercase text-[10px] font-bold">
-                      <th className="py-3 px-4">Tanggal</th>
-                      <th className="py-3 px-4">Jam Masuk</th>
-                      <th className="py-3 px-4">Jam Pulang</th>
-                      <th className="py-3 px-4">Status</th>
-                      <th className="py-3 px-4">Durasi Kerja</th>
-                      <th className="py-3 px-4">Keterangan</th>
+                      <th className="py-3 px-4">Tanggal & Jam Real-Time</th>
+                      <th className="py-3 px-4">Bukti Foto Wajah</th>
+                      <th className="py-3 px-4">Jadwal Shift</th>
+                      <th className="py-3 px-4">Jam Masuk / Pulang</th>
+                      <th className="py-3 px-4">Status Evaluasi Shift</th>
+                      <th className="py-3 px-4">Detail Lokasi GPS HP</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {myAttendances.map((att) => (
-                      <tr key={att.id} className="hover:bg-slate-50/80">
-                        <td className="py-3 px-4 font-semibold text-slate-800">{formatIndoDate(att.date)}</td>
-                        <td className="py-3 px-4 font-mono text-emerald-700 font-bold">{att.checkIn || '-'}</td>
-                        <td className="py-3 px-4 font-mono text-indigo-700 font-bold">{att.checkOut || '-'}</td>
-                        <td className="py-3 px-4">
-                          <span
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                              att.status === 'Hadir Tepat Waktu'
-                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                : att.status === 'Terlambat'
-                                ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                                : 'bg-blue-50 text-blue-700 border border-blue-200'
-                            }`}
-                          >
-                            {att.status}
-                            {att.lateMinutes > 0 ? ` (${att.lateMinutes} mnt)` : ''}
-                          </span>
-                        </td>
-                        <td className="py-3 px-4 text-slate-600">{att.workHours} Jam</td>
-                        <td className="py-3 px-4 text-slate-500">{att.notes || '-'}</td>
-                      </tr>
-                    ))}
+                    {myAttendances.map((att) => {
+                      const schedIn = att.scheduledCheckIn || myShift.checkInTime;
+                      const schedOut = att.scheduledCheckOut || myShift.checkOutTime;
+                      const shiftLabel = att.shiftName || myShift.name;
+                      const photoToShow = att.facePhotoSnapshot || att.checkOutPhotoSnapshot;
+                      return (
+                        <tr key={att.id} className="hover:bg-slate-50/80">
+                          <td className="py-3 px-4 whitespace-nowrap">
+                            <span className="font-semibold text-slate-800 block">
+                              {formatIndoDate(att.date)}
+                            </span>
+                            {att.checkInFullTimestamp && (
+                              <span className="text-[10px] font-mono text-emerald-700 block mt-0.5">
+                                {att.checkInFullTimestamp}
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4">
+                            {photoToShow ? (
+                              <button
+                                type="button"
+                                onClick={() => setPreviewAttendanceRecord(att)}
+                                className="flex items-center gap-2 group cursor-pointer text-left"
+                              >
+                                <img
+                                  src={photoToShow}
+                                  alt="Foto Absen"
+                                  className="w-12 h-10 rounded-lg object-cover border border-emerald-300 shadow-2xs group-hover:ring-2 group-hover:ring-emerald-500 transition-all"
+                                />
+                                <div>
+                                  <span className="text-[11px] font-bold text-emerald-700 group-hover:underline block">
+                                    Lihat Foto & GPS
+                                  </span>
+                                  <span className="text-[10px] text-slate-400 block">
+                                    Watermark Real-Time
+                                  </span>
+                                </div>
+                              </button>
+                            ) : (
+                              <span className="text-[11px] text-slate-400 italic">
+                                Tanpa Foto
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4">
+                            <span className="font-semibold text-slate-800 block">{shiftLabel}</span>
+                            <span className="text-[10px] font-mono text-slate-500">
+                              Jadwal: {schedIn} - {schedOut} WIB
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 font-mono">
+                            <span className="text-emerald-700 font-bold">
+                              Masuk: {att.checkIn || '-'}
+                            </span>
+                            <span className="block text-indigo-700 font-bold text-[11px]">
+                              Pulang: {att.checkOut || '-'} ({att.workHours}j)
+                            </span>
+                          </td>
+                          <td className="py-3 px-4">
+                            <span
+                              className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                                att.status === 'Hadir Tepat Waktu'
+                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                  : att.status === 'Terlambat'
+                                  ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                  : 'bg-blue-50 text-blue-700 border border-blue-200'
+                              }`}
+                            >
+                              {att.status}
+                              {att.lateMinutes > 0 ? ` (${att.lateMinutes} mnt)` : ''}
+                            </span>
+                            {(att.earlyLeaveMinutes || 0) > 0 && (
+                              <span className="block text-[10px] text-rose-600 font-medium mt-0.5">
+                                Pulang cepat {att.earlyLeaveMinutes} mnt
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 max-w-xs">
+                            <div className="text-[11px] font-medium text-slate-800 line-clamp-2">
+                              {att.locationAddress || att.notes || '-'}
+                            </div>
+                            {att.locationCoords && (
+                              <div className="text-[10px] font-mono text-slate-500 mt-0.5">
+                                GPS: {att.locationCoords.latitude.toFixed(6)},{' '}
+                                {att.locationCoords.longitude.toFixed(6)} (±
+                                {att.locationCoords.accuracy}m)
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
             )}
           </div>
+
+          {/* Modal Detail Foto Wajah & Lokasi GPS dari Tabel Riwayat */}
+          {previewAttendanceRecord && (
+            <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
+              <div className="bg-white rounded-2xl max-w-2xl w-full overflow-hidden shadow-2xl border border-slate-200">
+                <div className="px-5 py-4 bg-slate-900 text-white flex items-center justify-between">
+                  <div>
+                    <h4 className="text-sm font-bold flex items-center gap-2">
+                      <Camera className="w-4 h-4 text-emerald-400" />
+                      <span>Bukti Foto Wajah & Lokasi GPS Real-Time ({formatIndoDate(previewAttendanceRecord.date)})</span>
+                    </h4>
+                    <p className="text-[11px] text-slate-300 mt-0.5">
+                      {currentEmployee.fullName} ({currentEmployee.nik}) • {previewAttendanceRecord.shiftName || myShift.name}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewAttendanceRecord(null)}
+                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="p-5 space-y-4 max-h-[82vh] overflow-y-auto">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {previewAttendanceRecord.facePhotoSnapshot && (
+                      <div className="space-y-1.5">
+                        <span className="text-xs font-bold text-emerald-800 block">
+                          Foto Absen Masuk ({previewAttendanceRecord.checkIn} WIB)
+                        </span>
+                        <img
+                          src={previewAttendanceRecord.facePhotoSnapshot}
+                          alt="Foto Absen Masuk"
+                          className="w-full rounded-xl border border-slate-200 shadow-xs"
+                        />
+                      </div>
+                    )}
+                    {previewAttendanceRecord.checkOutPhotoSnapshot && (
+                      <div className="space-y-1.5">
+                        <span className="text-xs font-bold text-indigo-800 block">
+                          Foto Absen Pulang ({previewAttendanceRecord.checkOut} WIB)
+                        </span>
+                        <img
+                          src={previewAttendanceRecord.checkOutPhotoSnapshot}
+                          alt="Foto Absen Pulang"
+                          className="w-full rounded-xl border border-slate-200 shadow-xs"
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5 text-xs">
+                    <div className="flex flex-wrap justify-between gap-2">
+                      <span className="text-slate-500">Waktu Real-Time Tercatat:</span>
+                      <span className="font-mono font-bold text-slate-900">
+                        {previewAttendanceRecord.checkInFullTimestamp || `${previewAttendanceRecord.date} • ${previewAttendanceRecord.checkIn} WIB`}
+                      </span>
+                    </div>
+                    {previewAttendanceRecord.locationCoords && (
+                      <div className="flex flex-wrap justify-between gap-2">
+                        <span className="text-slate-500">Titik Koordinat GPS HP:</span>
+                        <span className="font-mono font-bold text-emerald-700">
+                          Lat {previewAttendanceRecord.locationCoords.latitude.toFixed(6)}°, Long{' '}
+                          {previewAttendanceRecord.locationCoords.longitude.toFixed(6)}° (Akurasi ±
+                          {previewAttendanceRecord.locationCoords.accuracy}m)
+                        </span>
+                      </div>
+                    )}
+                    <div className="pt-1 border-t border-slate-200/80">
+                      <span className="text-slate-500 block mb-0.5">Detail Alamat Lokasi GPS HP:</span>
+                      <span className="font-semibold text-slate-900 block">
+                        {previewAttendanceRecord.locationAddress || previewAttendanceRecord.notes || '-'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1212,7 +1644,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              Klaim Jam Lembur ({myOvertimeRequests.length})
+              Klaim Lembur Per Menit ({myOvertimeRequests.length})
             </button>
             <button
               onClick={() => setClaimsSubTab('reimbursement')}
@@ -1226,14 +1658,16 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
             </button>
           </div>
 
-          {/* SUB-TAB: LEMBUR */}
+          {/* SUB-TAB: LEMBUR PER MENIT */}
           {claimsSubTab === 'overtime' && (
             <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-xs space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
-                  <h3 className="text-base font-bold text-slate-900">Riwayat Pengajuan Jam Lembur</h3>
+                  <h3 className="text-base font-bold text-slate-900">
+                    Riwayat Pengajuan Lembur (Hitungan Per Menit)
+                  </h3>
                   <p className="text-xs text-slate-500">
-                    Klaim upah lembur akan otomatis diperhitungkan ke dalam slip gaji setelah disetujui HRD
+                    Setiap menit lembur dihitung proporsional ({formatRupiah(myOvertimeRatePerMinute)}/menit) dan otomatis masuk ke slip gaji setelah disetujui HRD
                   </p>
                 </div>
                 <button
@@ -1241,54 +1675,107 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   className="inline-flex items-center gap-2 px-4 py-2 text-xs sm:text-sm font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl shadow-xs transition-colors self-start sm:self-auto cursor-pointer"
                 >
                   <Plus className="w-4 h-4" />
-                  Ajukan Jam Lembur
+                  Ajukan Lembur (Per Menit)
                 </button>
+              </div>
+
+              {/* Info Ringkasan Tarif Lembur Per Menit Karyawan */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3.5 bg-indigo-50/70 border border-indigo-200/80 rounded-xl text-xs">
+                <div>
+                  <span className="text-indigo-700 block text-[11px]">Tarif Lembur Anda / Menit:</span>
+                  <span className="font-mono font-extrabold text-indigo-950 text-sm">
+                    {formatRupiah(myOvertimeRatePerMinute)} / menit
+                  </span>
+                </div>
+                <div>
+                  <span className="text-indigo-700 block text-[11px]">Total Durasi Disetujui:</span>
+                  <span className="font-bold text-indigo-950 text-sm">
+                    {formatOvertimeMinutes(
+                      myOvertimeRequests
+                        .filter((o) => o.status === 'Disetujui')
+                        .reduce((acc, o) => acc + getOvertimeMinutes(o), 0)
+                    )}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-indigo-700 block text-[11px]">Total Upah Lembur Disetujui:</span>
+                  <span className="font-bold text-emerald-700 text-sm">
+                    {formatRupiah(
+                      myOvertimeRequests
+                        .filter((o) => o.status === 'Disetujui')
+                        .reduce((acc, o) => acc + o.calculatedPay, 0)
+                    )}
+                  </span>
+                </div>
               </div>
 
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs border-collapse">
                   <thead>
                     <tr className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
-                      <th className="py-3 px-3">Tanggal Lembur</th>
-                      <th className="py-3 px-3">Durasi</th>
+                      <th className="py-3 px-3">Tanggal & Jam</th>
+                      <th className="py-3 px-3">Durasi (Menit)</th>
+                      <th className="py-3 px-3">Tarif / Menit</th>
                       <th className="py-3 px-3">Uraian Tugas Lembur</th>
-                      <th className="py-3 px-3">Estimasi Upah Lembur</th>
+                      <th className="py-3 px-3">Total Upah Lembur</th>
                       <th className="py-3 px-3">Status Verifikasi</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {myOvertimeRequests.length === 0 ? (
                       <tr>
-                        <td colSpan={5} className="py-8 text-center text-slate-400">
+                        <td colSpan={6} className="py-8 text-center text-slate-400">
                           Belum ada pengajuan lembur yang tercatat.
                         </td>
                       </tr>
                     ) : (
-                      myOvertimeRequests.map((ot) => (
-                        <tr key={ot.id} className="hover:bg-slate-50/70 transition-colors">
-                          <td className="py-3 px-3 whitespace-nowrap text-slate-600 font-medium">{ot.date}</td>
-                          <td className="py-3 px-3 whitespace-nowrap font-bold text-slate-800">{ot.hours} Jam</td>
-                          <td className="py-3 px-3 max-w-sm truncate text-slate-700" title={ot.taskDescription}>
-                            {ot.taskDescription}
-                          </td>
-                          <td className="py-3 px-3 whitespace-nowrap font-bold text-emerald-700">
-                            {formatCurrency(ot.calculatedPay)}
-                          </td>
-                          <td className="py-3 px-3 whitespace-nowrap">
-                            <span
-                              className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${
-                                ot.status === 'Disetujui'
-                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                                : ot.status === 'Ditolak'
-                                ? 'bg-rose-100 text-rose-800 border border-rose-200'
-                                : 'bg-amber-100 text-amber-800 border border-amber-200'
-                              }`}
-                            >
-                              {ot.status}
-                            </span>
-                          </td>
-                        </tr>
-                      ))
+                      myOvertimeRequests.map((ot) => {
+                        const mins = getOvertimeMinutes(ot);
+                        const ratePerMin = ot.ratePerMinute || myOvertimeRatePerMinute;
+                        return (
+                          <tr key={ot.id} className="hover:bg-slate-50/70 transition-colors">
+                            <td className="py-3 px-3 whitespace-nowrap text-slate-600 font-medium">
+                              <span className="block">{ot.date}</span>
+                              {ot.startTime && ot.endTime && (
+                                <span className="text-[10px] font-mono text-slate-400">
+                                  {ot.startTime} - {ot.endTime} WIB
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-3 px-3 whitespace-nowrap">
+                              <span className="font-bold text-indigo-700 block">{mins} Menit</span>
+                              <span className="text-[10px] text-slate-400">{formatOvertimeMinutes(mins)}</span>
+                            </td>
+                            <td className="py-3 px-3 whitespace-nowrap font-mono text-slate-600">
+                              {formatRupiah(ratePerMin)}/mnt
+                            </td>
+                            <td className="py-3 px-3 max-w-sm truncate text-slate-700" title={ot.taskDescription}>
+                              {ot.taskDescription}
+                            </td>
+                            <td className="py-3 px-3 whitespace-nowrap">
+                              <span className="font-bold text-emerald-700 block">
+                                {formatCurrency(ot.calculatedPay)}
+                              </span>
+                              <span className="text-[10px] font-mono text-slate-400">
+                                {mins} mnt × {formatRupiah(ratePerMin)}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3 whitespace-nowrap">
+                              <span
+                                className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${
+                                  ot.status === 'Disetujui'
+                                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                    : ot.status === 'Ditolak'
+                                    ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                                    : 'bg-amber-100 text-amber-800 border border-amber-200'
+                                }`}
+                              >
+                                {ot.status}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
@@ -1388,6 +1875,441 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* TAB: PENGAJUAN KASBON & CICILAN POTONG GAJI */}
+      {activePortalTab === 'cash_advance' && (
+        <div className="space-y-6 animate-in fade-in-50">
+          {cashAdvanceSuccessMsg && (
+            <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-emerald-900 text-xs font-semibold flex items-center justify-between shadow-xs">
+              <div className="flex items-center gap-2.5">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                <span>{cashAdvanceSuccessMsg}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCashAdvanceSuccessMsg(null)}
+                className="text-emerald-700 hover:text-emerald-950 font-bold cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
+          {/* 3 Summary Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="bg-gradient-to-br from-amber-500 to-orange-600 rounded-2xl p-5 text-white shadow-sm flex flex-col justify-between">
+              <div>
+                <span className="text-xs font-bold uppercase tracking-wider text-amber-100">
+                  Plafon Maksimum Kasbon Anda
+                </span>
+                <h3 className="text-2xl font-extrabold mt-1">
+                  {formatRupiah(maxCashAdvancePlafon)}
+                </h3>
+                <p className="text-xs text-amber-100 mt-1">
+                  Maksimal 100% dari Gaji Pokok ({currentEmployee.role})
+                </p>
+              </div>
+              <div className="mt-4 pt-3 border-t border-white/20">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCashAdvanceAmount(Math.min(1500000, maxCashAdvancePlafon));
+                    setCashAdvanceTenor(3);
+                    setCashAdvanceReason('');
+                    setCashAdvanceError(null);
+                    setIsCashAdvanceModalOpen(true);
+                  }}
+                  className="w-full py-2 px-3 bg-white text-amber-900 hover:bg-amber-50 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+                >
+                  <Plus className="w-4 h-4 text-amber-700" />
+                  <span>Ajukan Pinjaman Kasbon Baru</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs flex flex-col justify-between">
+              <div>
+                <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                  Sisa Pinjaman Kasbon Berjalan
+                </span>
+                <h3 className="text-2xl font-bold text-indigo-700 mt-1">
+                  {formatRupiah(activeCashAdvanceBalance)}
+                </h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  Total pokok kasbon aktif yang sedang dicicil melalui potong gaji
+                </p>
+              </div>
+              <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-600">
+                <span>Status Pengajuan Aktif:</span>
+                <span className="font-bold text-indigo-700">
+                  {myCashAdvances.filter((c) => c.status === 'disbursed' || c.status === 'pending' || c.status === 'approved').length} Kasbon
+                </span>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs flex flex-col justify-between">
+              <div>
+                <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                  Potongan Cicilan Bulan Ini ({companyConfig.currentPayrollPeriod})
+                </span>
+                <h3 className="text-2xl font-bold text-emerald-700 mt-1">
+                  {formatRupiah(
+                    myCashAdvances
+                      .filter((c) => c.status === 'disbursed')
+                      .reduce((sum, c) => {
+                        const inst = c.installments.find(
+                          (i) => i.period === companyConfig.currentPayrollPeriod
+                        );
+                        return sum + (inst ? inst.amount : 0);
+                      }, 0)
+                  )}
+                </h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  Otomatis terhubung dengan slip gaji bulanan Anda
+                </p>
+              </div>
+              <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-600">
+                <span>Rekening Pencairan:</span>
+                <span className="font-mono font-bold text-slate-800">
+                  {currentEmployee.bankName} - {currentEmployee.bankAccountNumber}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* List of Employee Cash Advances & Installments */}
+          <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                  <HandCoins className="w-5 h-5 text-amber-600" />
+                  <span>Riwayat Pengajuan Kasbon & Jadwal Cicilan Potong Gaji</span>
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Terhubung langsung secara real-time dengan Panel Kasbon Admin HR & Finance PT Tas Grosir Import.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setCashAdvanceAmount(Math.min(1500000, maxCashAdvancePlafon));
+                  setCashAdvanceTenor(3);
+                  setCashAdvanceReason('');
+                  setCashAdvanceError(null);
+                  setIsCashAdvanceModalOpen(true);
+                }}
+                className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer self-start sm:self-auto"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Ajukan Kasbon Baru</span>
+              </button>
+            </div>
+
+            {myCashAdvances.length === 0 ? (
+              <div className="py-12 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200 space-y-2">
+                <HandCoins className="w-10 h-10 text-slate-300 mx-auto" />
+                <p className="text-sm font-bold text-slate-700">
+                  Belum Ada Riwayat Pengajuan Kasbon
+                </p>
+                <p className="text-xs text-slate-400 max-w-md mx-auto">
+                  Anda dapat mengajukan fasilitas pinjaman kasbon darurat karyawan dengan cicilan potong gaji otomatis hingga 12 bulan tanpa bunga.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {myCashAdvances.map((ca) => {
+                  const statusInfo =
+                    ca.status === 'pending'
+                      ? {
+                          label: 'Menunggu Persetujuan HR/Finance',
+                          cls: 'bg-amber-100 text-amber-800 border-amber-200',
+                        }
+                      : ca.status === 'approved'
+                      ? {
+                          label: 'Disetujui HRD (Menunggu Pencairan Transfer)',
+                          cls: 'bg-blue-100 text-blue-800 border-blue-200',
+                        }
+                      : ca.status === 'disbursed'
+                      ? {
+                          label: 'Aktif Dicairkan (Sedang Dicicil)',
+                          cls: 'bg-indigo-100 text-indigo-800 border-indigo-200',
+                        }
+                      : ca.status === 'paid'
+                      ? {
+                          label: 'Lunas',
+                          cls: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+                        }
+                      : {
+                          label: 'Ditolak',
+                          cls: 'bg-rose-100 text-rose-800 border-rose-200',
+                        };
+
+                  return (
+                    <div
+                      key={ca.id}
+                      className="p-5 rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-slate-50/70 space-y-4 shadow-2xs"
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100">
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-mono text-xs font-bold text-slate-500">
+                              #{ca.id.toUpperCase()}
+                            </span>
+                            <span
+                              className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${statusInfo.cls}`}
+                            >
+                              {statusInfo.label}
+                            </span>
+                            <span className="text-xs text-slate-400">
+                              • Diajukan: {formatIndoDate(ca.createdAt.slice(0, 10))}
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-700 font-medium mt-1.5">
+                            <strong>Keperluan:</strong> &ldquo;{ca.reason}&rdquo;
+                          </p>
+                        </div>
+
+                        <div className="sm:text-right">
+                          <span className="text-[10px] font-bold uppercase text-slate-400 block">
+                            Nominal Pinjaman Kasbon
+                          </span>
+                          <span className="text-lg font-black text-slate-900">
+                            {formatRupiah(ca.amount)}
+                          </span>
+                          <span className="text-[11px] text-amber-700 font-semibold block">
+                            Tenor {ca.tenorMonths} Bulan ({formatRupiah(ca.monthlyInstallment)} / bln)
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Progress & Balance Info */}
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                        <div className="p-3 bg-white rounded-xl border border-slate-200">
+                          <span className="text-slate-400 text-[11px] block">Sudah Terpotong Gaji:</span>
+                          <span className="font-bold text-emerald-700 text-sm">
+                            {formatRupiah(ca.totalPaid)}
+                          </span>
+                        </div>
+                        <div className="p-3 bg-white rounded-xl border border-slate-200">
+                          <span className="text-slate-400 text-[11px] block">Sisa Pokok Kasbon:</span>
+                          <span className="font-bold text-indigo-700 text-sm">
+                            {formatRupiah(ca.remainingBalance)}
+                          </span>
+                        </div>
+                        <div className="p-3 bg-white rounded-xl border border-slate-200">
+                          <span className="text-slate-400 text-[11px] block">Info Pencairan / Otorisasi:</span>
+                          <span className="font-semibold text-slate-800 text-[11px] block truncate">
+                            {ca.disbursedAt
+                              ? `${ca.disbursementMethod || 'Transfer'} (${ca.disbursementReference || '-'})`
+                              : ca.approvedBy
+                              ? `Disetujui oleh ${ca.approvedBy}`
+                              : ca.rejectionReason
+                              ? `Alasan ditolak: ${ca.rejectionReason}`
+                              : 'Menunggu verifikasi Admin HR'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Installments Schedule Table */}
+                      {ca.installments && ca.installments.length > 0 && (
+                        <div className="pt-2">
+                          <span className="text-[11px] font-bold text-slate-600 block mb-2">
+                            Jadwal Angsuran Potong Gaji ({ca.installments.length}x Cicilan):
+                          </span>
+                          <div className="grid grid-cols-1 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                            {ca.installments.map((inst) => (
+                              <div
+                                key={inst.installmentNumber}
+                                className={`p-2.5 rounded-xl border text-xs flex items-center justify-between ${
+                                  inst.status === 'deducted'
+                                    ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900'
+                                    : 'bg-white border-slate-200 text-slate-700'
+                                }`}
+                              >
+                                <div>
+                                  <div className="font-bold text-[11px]">
+                                    Cicilan ke-{inst.installmentNumber} ({inst.period})
+                                  </div>
+                                  <div className="font-mono font-bold text-xs">
+                                    {formatRupiah(inst.amount)}
+                                  </div>
+                                </div>
+                                <span
+                                  className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                                    inst.status === 'deducted'
+                                      ? 'bg-emerald-600 text-white'
+                                      : 'bg-slate-100 text-slate-600'
+                                  }`}
+                                >
+                                  {inst.status === 'deducted' ? 'Lunas' : 'Terjadwal'}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* MODAL PENGAJUAN KASBON BARU (PORTAL KARYAWAN) */}
+      {isCashAdvanceModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in-50 zoom-in-95">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-amber-50 text-amber-600 rounded-xl border border-amber-200">
+                  <HandCoins className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">
+                    Form Pengajuan Kasbon Karyawan
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Otomatis terkirim ke Panel Kasbon Admin HR & Finance
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsCashAdvanceModalOpen(false)}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmitCashAdvance} className="space-y-4 text-xs">
+              {cashAdvanceError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+                  <span>{cashAdvanceError}</span>
+                </div>
+              )}
+
+              <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl flex items-center justify-between">
+                <div>
+                  <span className="text-[11px] text-amber-800 block">
+                    Pemohon Kasbon: <strong>{currentEmployee.fullName}</strong> ({currentEmployee.nik})
+                  </span>
+                  <span className="text-[11px] text-amber-900 font-bold">
+                    Plafon Maksimum Kasbon: {formatRupiah(maxCashAdvancePlafon)}
+                  </span>
+                </div>
+                <span className="text-[10px] font-bold bg-white px-2.5 py-1 rounded-lg border border-amber-300 text-amber-800">
+                  Bunga 0%
+                </span>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  Nominal Pinjaman Kasbon (Rp) *
+                </label>
+                <input
+                  type="number"
+                  min={100000}
+                  max={maxCashAdvancePlafon}
+                  step={50000}
+                  required
+                  value={cashAdvanceAmount}
+                  onChange={(e) => setCashAdvanceAmount(Number(e.target.value))}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl font-mono text-sm font-extrabold text-slate-900 focus:outline-hidden focus:border-amber-600"
+                />
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {[500000, 1000000, 2000000, 3000000, Math.round(maxCashAdvancePlafon * 0.5)]
+                    .filter((v, idx, arr) => v <= maxCashAdvancePlafon && arr.indexOf(v) === idx)
+                    .map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setCashAdvanceAmount(preset)}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border cursor-pointer transition-colors ${
+                          cashAdvanceAmount === preset
+                            ? 'bg-amber-600 text-white border-amber-600'
+                            : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-amber-50'
+                        }`}
+                      >
+                        {formatRupiah(preset)}
+                      </button>
+                    ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1.5">
+                  Pilih Tenor Cicilan Potong Gaji *
+                </label>
+                <div className="grid grid-cols-4 gap-2">
+                  {([1, 3, 6, 12] as CashAdvanceTenorMonths[]).map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setCashAdvanceTenor(t)}
+                      className={`py-2.5 px-3 rounded-xl font-bold text-xs border transition-all cursor-pointer ${
+                        cashAdvanceTenor === t
+                          ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+                          : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      {t} Bulan
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="p-3.5 bg-indigo-50 border border-indigo-200 rounded-xl flex items-center justify-between">
+                <div>
+                  <span className="text-[11px] font-semibold text-indigo-800 block">
+                    Estimasi Potongan Gaji per Bulan ({cashAdvanceTenor}x Cicilan):
+                  </span>
+                  <span className="text-[10px] text-indigo-600">
+                    Mulai periode payroll {companyConfig.currentPayrollPeriod}
+                  </span>
+                </div>
+                <span className="text-base font-black text-indigo-900">
+                  {formatRupiah(Math.round(cashAdvanceAmount / cashAdvanceTenor))} / bln
+                </span>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  Alasan / Keperluan Pengajuan Kasbon *
+                </label>
+                <textarea
+                  rows={3}
+                  required
+                  value={cashAdvanceReason}
+                  onChange={(e) => setCashAdvanceReason(e.target.value)}
+                  placeholder="Jelaskan keperluan pengajuan kasbon (contoh: Biaya pengobatan keluarga, perbaikan kendaraan kerja, biaya pendidikan anak, dll)..."
+                  className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl focus:outline-hidden focus:border-amber-600"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsCashAdvanceModalOpen(false)}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5"
+                >
+                  <HandCoins className="w-4 h-4" />
+                  <span>Kirim Pengajuan Kasbon</span>
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 
@@ -2109,7 +3031,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
         </div>
       )}
 
-      {/* MODAL PENGAJUAN LEMBUR */}
+      {/* MODAL PENGAJUAN LEMBUR (HITUNGAN PER MENIT) */}
       {isOvertimeModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
           <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in-50 zoom-in-95">
@@ -2118,18 +3040,25 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl">
                   <Clock className="w-5 h-5" />
                 </div>
-                <h3 className="text-base font-bold text-slate-900">Form Pengajuan Jam Lembur</h3>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">
+                    Form Pengajuan Lembur (Hitungan Per Menit)
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Pilih jam mulai & selesai atau ketik langsung durasi menit lembur Anda
+                  </p>
+                </div>
               </div>
               <button
                 onClick={() => setIsOvertimeModalOpen(false)}
-                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100"
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
             <form onSubmit={handleSubmitOvertime} className="space-y-3.5 text-xs">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-2.5">
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">Tanggal Lembur *</label>
                   <input
@@ -2141,24 +3070,81 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Jumlah Jam Lembur *</label>
+                  <label className="block font-semibold text-slate-700 mb-1">Jam Mulai</label>
                   <input
-                    type="number"
-                    min={1}
-                    max={8}
-                    required
-                    value={overtimeForm.hours}
-                    onChange={(e) => setOvertimeForm({ ...overtimeForm, hours: Number(e.target.value) })}
-                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden font-bold"
+                    type="time"
+                    value={overtimeForm.startTime}
+                    onChange={(e) => handleOvertimeTimeRangeChange(e.target.value, overtimeForm.endTime)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Jam Selesai</label>
+                  <input
+                    type="time"
+                    value={overtimeForm.endTime}
+                    onChange={(e) => handleOvertimeTimeRangeChange(overtimeForm.startTime, e.target.value)}
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden font-mono"
                   />
                 </div>
               </div>
 
-              <div className="p-3 bg-indigo-50 rounded-xl border border-indigo-200 flex items-center justify-between text-xs">
-                <span className="text-indigo-800">Estimasi Kompensasi Lembur:</span>
-                <span className="font-bold text-indigo-900 text-sm">
-                  {formatCurrency(estimatedOvertimePay)}
-                </span>
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="font-semibold text-slate-700">
+                    Jumlah Durasi Lembur (Menit) *
+                  </label>
+                  <span className="text-[11px] font-bold text-indigo-600">
+                    Setara: {formatOvertimeMinutes(overtimeForm.minutes)}
+                  </span>
+                </div>
+                <input
+                  type="number"
+                  min={1}
+                  max={720}
+                  step={1}
+                  required
+                  value={overtimeForm.minutes}
+                  onChange={(e) =>
+                    setOvertimeForm({ ...overtimeForm, minutes: Math.max(1, Number(e.target.value)) })
+                  }
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden font-mono font-bold text-sm text-slate-900"
+                />
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {[15, 30, 45, 60, 90, 120, 150, 180, 240].map((preset) => (
+                    <button
+                      key={preset}
+                      type="button"
+                      onClick={() => setOvertimeForm({ ...overtimeForm, minutes: preset })}
+                      className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border transition-colors cursor-pointer ${
+                        overtimeForm.minutes === preset
+                          ? 'bg-indigo-600 text-white border-indigo-600'
+                          : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-indigo-50 hover:text-indigo-700'
+                      }`}
+                    >
+                      {preset} Menit
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="p-3.5 bg-indigo-50 rounded-xl border border-indigo-200 space-y-1.5 text-xs">
+                <div className="flex items-center justify-between text-[11px] text-indigo-800">
+                  <span>Tarif Lembur Anda per Menit:</span>
+                  <span className="font-mono font-bold">{formatCurrency(myOvertimeRatePerMinute)} / menit</span>
+                </div>
+                <div className="flex items-center justify-between text-[11px] text-indigo-800">
+                  <span>Rumus Kalkulasi:</span>
+                  <span className="font-mono font-semibold">
+                    {overtimeForm.minutes} menit × {formatCurrency(myOvertimeRatePerMinute)}
+                  </span>
+                </div>
+                <div className="pt-1.5 border-t border-indigo-200/80 flex items-center justify-between">
+                  <span className="font-bold text-indigo-950">Estimasi Kompensasi Lembur:</span>
+                  <span className="font-black text-indigo-900 text-sm">
+                    {formatCurrency(estimatedOvertimePay)}
+                  </span>
+                </div>
               </div>
 
               <div>
@@ -2177,15 +3163,15 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 <button
                   type="button"
                   onClick={() => setIsOvertimeModalOpen(false)}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl"
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-xs"
+                  className="px-4 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-xs cursor-pointer"
                 >
-                  Kirim Klaim Lembur
+                  Kirim Klaim Lembur ({overtimeForm.minutes} Menit)
                 </button>
               </div>
             </form>

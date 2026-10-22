@@ -1,6 +1,6 @@
 import React from 'react';
 import { Employee, PayrollRecord, CompanyConfig } from '../types';
-import { formatRupiah, terbilangRupiah, formatIndoDate } from '../utils/formatters';
+import { formatRupiah, terbilangRupiah, formatIndoDate, getOvertimeRatePerMinute } from '../utils/formatters';
 import { X, Printer, Download, CheckCircle, ShieldCheck, Building2 } from 'lucide-react';
 
 interface PayslipModalProps {
@@ -146,7 +146,22 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
                   <span className="font-medium">{formatRupiah(payroll.allowanceCommunication)}</span>
                 </div>
                 <div className="flex justify-between py-2 px-4">
-                  <span className="text-slate-700">Upah Lembur (Overtime)</span>
+                  <div>
+                    <span className="text-slate-700 block">Upah Lembur (Hitungan Per Menit)</span>
+                    {payroll.overtimePay > 0 && (
+                      <span className="text-[10px] text-emerald-700 font-mono">
+                        {(() => {
+                          const ratePerMin =
+                            payroll.overtimeRatePerMinute || getOvertimeRatePerMinute(employee, 1.5);
+                          const mins =
+                            payroll.overtimeMinutes !== undefined
+                              ? payroll.overtimeMinutes
+                              : Math.round(payroll.overtimePay / Math.max(100, ratePerMin));
+                          return `${mins} menit × ${formatRupiah(ratePerMin)}/menit`;
+                        })()}
+                      </span>
+                    )}
+                  </div>
                   <span className="font-medium">{formatRupiah(payroll.overtimePay)}</span>
                 </div>
                 {payroll.bonus > 0 && (
