@@ -166,6 +166,7 @@ export const initialAllowedGoogleAdmins: GoogleAdminAccount[] = [
     phone: '0812-9988-7711',
     notes: 'Akun pengelola sistem utama (Master Admin)',
     department: 'Manajemen & IT',
+    accessPin: '2026',
   },
   {
     id: 'gadmin-02',
@@ -178,6 +179,7 @@ export const initialAllowedGoogleAdmins: GoogleAdminAccount[] = [
     phone: '0811-2233-4455',
     notes: 'Direktur Utama / Pemilik Bisnis TGI',
     department: 'Direksi & Eksekutif',
+    accessPin: '8888',
   },
   {
     id: 'gadmin-03',
@@ -190,6 +192,7 @@ export const initialAllowedGoogleAdmins: GoogleAdminAccount[] = [
     phone: '0813-4455-6677',
     notes: 'Kepala Divisi SDM, Penggajian & Presensi',
     department: 'Human Resources & GA',
+    accessPin: '2025',
   },
   {
     id: 'gadmin-04',
@@ -202,6 +205,7 @@ export const initialAllowedGoogleAdmins: GoogleAdminAccount[] = [
     phone: '0812-7788-9900',
     notes: 'Manager Keuangan, Pajak PPh 21 & Klaim',
     department: 'Keuangan & Akuntansi',
+    accessPin: '3030',
   },
   {
     id: 'gadmin-05',
@@ -214,6 +218,7 @@ export const initialAllowedGoogleAdmins: GoogleAdminAccount[] = [
     phone: '0818-5566-7788',
     notes: 'Koordinator Operasional Toko & Gudang',
     department: 'Operasional',
+    accessPin: '4040',
   },
 ];
 
@@ -243,6 +248,9 @@ export const initialCompanyConfig: CompanyConfig = {
   securitySettings: {
     adminPin: '2026',
     requirePinForAdminMode: true,
+    webAccessPin: '2026',
+    requirePinForWebAccess: true,
+    defaultEmployeePin: '1234',
   },
 };
 

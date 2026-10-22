@@ -54,6 +54,7 @@ import {
 } from '../mockData';
 import { GranularRbacPanel } from './GranularRbacPanel';
 import { RoleModuleVisibilityPanel } from './RoleModuleVisibilityPanel';
+import { PinManagementPanel } from './PinManagementPanel';
 
 export interface UserAccountItem {
   id: string;
@@ -206,6 +207,7 @@ interface SettingsViewProps {
   onUpdateConfig: (newConfig: CompanyConfig) => void;
   onNavigateToRoleManagement?: () => void;
   employees?: Employee[];
+  onUpdateEmployee?: (updatedEmp: Employee) => void;
   onLogAudit?: (
     actionType: ActivityActionType,
     category: ActivityCategory,
@@ -214,7 +216,7 @@ interface SettingsViewProps {
   ) => void;
   onSendNotification?: (notif: any) => void;
   adminUser?: GoogleAdminUser | null;
-  initialTab?: 'module_visibility' | 'rbac' | 'accounts' | 'general_payroll';
+  initialTab?: 'pin_security' | 'module_visibility' | 'rbac' | 'accounts' | 'general_payroll';
   onSwitchAdminUserRole?: (roleName: string) => void;
   onOpenSupabaseModal?: () => void;
 }
@@ -223,21 +225,23 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   companyConfig,
   onUpdateConfig,
   employees = [],
+  onUpdateEmployee,
   onLogAudit,
   onSendNotification,
   adminUser,
-  initialTab = 'module_visibility',
+  initialTab = 'pin_security',
   onSwitchAdminUserRole,
   onOpenSupabaseModal,
 }) => {
   // Navigation tabs:
+  // 0. "Setting PIN & Password Akun"
   // 1. "Visibilitas Menu & Role"
   // 2. "Manajemen Role & Hak Akses (RBAC)"
   // 3. "Pengaturan Akun & Akses Pengguna"
   // 4. "Konfigurasi Umum Sistem & Payroll"
-  const [activeSubTab, setActiveSubTab] = useState<'module_visibility' | 'rbac' | 'accounts' | 'general_payroll'>(
-    initialTab
-  );
+  const [activeSubTab, setActiveSubTab] = useState<
+    'pin_security' | 'module_visibility' | 'rbac' | 'accounts' | 'general_payroll'
+  >(initialTab);
 
   const [formData, setFormData] = useState<CompanyConfig>({
     ...companyConfig,
@@ -674,12 +678,29 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </div>
       </div>
 
-      {/* 4 Navigation Tabs:
+      {/* 5 Navigation Tabs:
+          0. "Setting PIN & Password Akun (Per Akun)"
           1. "Visibilitas Menu & Role (Atur Tampilan)"
           2. "Matriks Granular RBAC (Operasi CRUD)"
           3. "Pengaturan Akun & Akses Pengguna"
           4. "Konfigurasi Umum Sistem & Payroll" */}
       <div className="flex items-center gap-2 border-b border-slate-200 pb-px overflow-x-auto">
+        <button
+          type="button"
+          onClick={() => setActiveSubTab('pin_security')}
+          className={`px-4 py-3 text-xs font-bold flex items-center gap-2 border-b-2 transition-all cursor-pointer whitespace-nowrap ${
+            activeSubTab === 'pin_security'
+              ? 'border-purple-600 text-purple-700 bg-white rounded-t-xl shadow-2xs'
+              : 'border-transparent text-slate-500 hover:text-slate-800 hover:bg-slate-100/60 rounded-t-xl'
+          }`}
+        >
+          <KeyRound className="w-4 h-4 text-purple-600" />
+          <span>Setting PIN & Password Akun</span>
+          <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-purple-100 text-purple-800 font-bold">
+            PIN per Akun
+          </span>
+        </button>
+
         <button
           type="button"
           onClick={() => setActiveSubTab('module_visibility')}
@@ -744,6 +765,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </span>
         </button>
       </div>
+
+      {/* ============================================================== */}
+      {/* TAB 0: SETTING PIN & PASSWORD AKUN (ADMIN HR VS KARYAWAN)      */}
+      {/* ============================================================== */}
+      {activeSubTab === 'pin_security' && (
+        <PinManagementPanel
+          companyConfig={companyConfig}
+          onUpdateConfig={onUpdateConfig}
+          employees={employees}
+          onUpdateEmployee={onUpdateEmployee}
+          onLogAudit={onLogAudit}
+        />
+      )}
 
       {/* ============================================================== */}
       {/* TAB 1: VISIBILITAS MENU & ROLE (ATUR TAMPILAN)                 */}
@@ -1456,7 +1490,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 />
               </div>
             </div>
-          {/* Section 6: PIN Keamanan & Kunci Panel HR/Payroll Admin */}
+          </div>
+
+          {/* Section 6: PIN Keamanan Akses Web & Kunci Panel HR/Payroll Admin */}
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
             <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3">
               <div className="p-2 rounded-xl bg-purple-50 text-purple-700 border border-purple-100">
@@ -1464,10 +1500,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </div>
               <div>
                 <h3 className="font-bold text-sm text-slate-900">
-                  PIN Keamanan & Kunci Panel HR/Payroll Admin
+                  PIN Khusus Akses Web & Kunci Panel HR/Payroll Admin
                 </h3>
                 <p className="text-xs text-slate-500">
-                  Mencegah karyawan umum membuka panel admin, mengintip besaran gaji rekan kerja, atau mengubah data payroll.
+                  Lindungi pintu masuk utama website dengan Kode PIN Khusus dan amankan akses Panel HR/Payroll Admin.
                 </p>
               </div>
             </div>
@@ -1475,7 +1511,36 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
               <div>
                 <label className="block text-slate-700 font-bold mb-1">
-                  PIN Keamanan Admin (4 - 8 Karakter)
+                  Kode PIN Khusus Masuk Web (Gatekeeper)
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    maxLength={8}
+                    required
+                    value={formData.securitySettings?.webAccessPin || formData.securitySettings?.adminPin || '2026'}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        securitySettings: {
+                          ...formData.securitySettings,
+                          webAccessPin: e.target.value.trim(),
+                        },
+                      })
+                    }
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-mono text-sm font-bold text-slate-900 tracking-wider"
+                    placeholder="2026"
+                  />
+                  <KeyRound className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+                <span className="text-[10px] text-slate-500 mt-1 block">
+                  PIN standar masuk web: <code className="font-mono text-purple-700">2026</code> (atau 123456).
+                </span>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-bold mb-1">
+                  PIN Keamanan Panel HR & Payroll Admin
                 </label>
                 <div className="relative">
                   <input
@@ -1498,12 +1563,39 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   <KeyRound className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                 </div>
                 <span className="text-[10px] text-slate-500 mt-1 block">
-                  PIN bawaan standar: <code className="font-mono text-purple-700">2026</code>. Ubah sesuai kebutuhan privasi HR.
+                  PIN khusus pembuka menu Admin HR & Penggajian: <code className="font-mono text-purple-700">2026</code>.
                 </span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-slate-100 text-xs">
+              <div className="flex flex-col justify-center">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={formData.securitySettings?.requirePinForWebAccess ?? true}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        securitySettings: {
+                          ...formData.securitySettings,
+                          requirePinForWebAccess: e.target.checked,
+                        },
+                      })
+                    }
+                    className="w-4 h-4 rounded text-purple-600 focus:ring-purple-500 border-slate-300"
+                  />
+                  <span className="text-xs font-semibold text-slate-800">
+                    Wajibkan Kode PIN Khusus saat pertama kali membuka Web
+                  </span>
+                </label>
+                <p className="text-[11px] text-slate-500 mt-1 pl-6">
+                  Pengunjung wajib memasukkan Kode PIN sebelum dapat melihat halaman apapun di dalam aplikasi web ini.
+                </p>
               </div>
 
               <div className="flex flex-col justify-center">
-                <label className="flex items-center gap-2 cursor-pointer pt-2">
+                <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={formData.securitySettings?.requirePinForAdminMode ?? true}
@@ -1519,11 +1611,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     className="w-4 h-4 rounded text-purple-600 focus:ring-purple-500 border-slate-300"
                   />
                   <span className="text-xs font-semibold text-slate-800">
-                    Wajibkan verifikasi PIN saat beralih ke Mode Admin
+                    Wajibkan verifikasi PIN saat beralih ke Mode Admin HR
                   </span>
                 </label>
                 <p className="text-[11px] text-slate-500 mt-1 pl-6">
-                  Jika aktif, siapapun yang membuka tautan aplikasi akan berada di Portal Karyawan mandiri dan hanya dapat melihat slip gajinya sendiri.
+                  Mencegah karyawan biasa beralih ke Panel HR & mengintip gaji karyawan lain tanpa otorisasi PIN Admin.
                 </p>
               </div>
             </div>
@@ -1543,7 +1635,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <Save className="w-4 h-4" />
               <span>Simpan Konfigurasi Sistem & Payroll</span>
             </button>
-         </div>
           </div>
         </form>
       )}

@@ -26,7 +26,24 @@ export interface SupabaseSyncStatus {
   };
 }
 
+export function getEmployeeEffectivePin(emp?: Partial<Employee> | null, fallbackDefault = '1234'): string {
+  if (!emp) return fallbackDefault;
+  if (emp.accessPin && emp.accessPin.trim().length > 0) {
+    return emp.accessPin.trim();
+  }
+  // Generate deterministic unique 4-digit PIN per employee from NIK (e.g., TGI-2021-001 -> 1001)
+  if (emp.nik) {
+    const digits = emp.nik.replace(/\D/g, '');
+    if (digits.length >= 3) {
+      return `1${digits.slice(-3)}`;
+    }
+  }
+  return fallbackDefault;
+}
+
 export function employeeToDb(emp: Employee) {
+  const effectivePin = getEmployeeEffectivePin(emp);
+  const rawAllowances = emp.allowances || { position: 0, transport: 0, meal: 0, communication: 0 };
   return {
     id: emp.id,
     nik: emp.nik,
@@ -42,7 +59,13 @@ export function employeeToDb(emp: Employee) {
     employment_status: emp.employmentStatus || 'PKWT (Kontrak)',
     join_date: emp.joinDate || new Date().toISOString().split('T')[0],
     base_salary: Number(emp.baseSalary) || 0,
-    allowances: emp.allowances || { position: 0, transport: 0, meal: 0, communication: 0 },
+    allowances: {
+      position: Number(rawAllowances.position) || 0,
+      transport: Number(rawAllowances.transport) || 0,
+      meal: Number(rawAllowances.meal) || 0,
+      communication: Number(rawAllowances.communication) || 0,
+      _accessPin: effectivePin,
+    },
     bank_name: emp.bankName || 'BCA',
     bank_account_number: emp.bankAccountNumber || '',
     bank_account_holder: emp.bankAccountHolder || emp.fullName,
@@ -58,6 +81,12 @@ export function employeeToDb(emp: Employee) {
 }
 
 export function dbToEmployee(row: any): Employee {
+  const rawAllowances = row.allowances || {};
+  const storedPin =
+    row.access_pin ||
+    rawAllowances._accessPin ||
+    getEmployeeEffectivePin({ nik: row.nik });
+
   return {
     id: row.id,
     nik: row.nik,
@@ -73,11 +102,11 @@ export function dbToEmployee(row: any): Employee {
     employmentStatus: row.employment_status || 'PKWT (Kontrak)',
     joinDate: row.join_date || new Date().toISOString().split('T')[0],
     baseSalary: Number(row.base_salary) || 0,
-    allowances: row.allowances || {
-      position: 0,
-      transport: 0,
-      meal: 0,
-      communication: 0,
+    allowances: {
+      position: Number(rawAllowances.position) || 0,
+      transport: Number(rawAllowances.transport) || 0,
+      meal: Number(rawAllowances.meal) || 0,
+      communication: Number(rawAllowances.communication) || 0,
     },
     bankName: row.bank_name || 'BCA',
     bankAccountNumber: row.bank_account_number || '',
@@ -85,10 +114,11 @@ export function dbToEmployee(row: any): Employee {
     npwp: row.npwp || '00.000.000.0-000.000',
     ptkpStatus: row.ptkp_status || 'TK/0',
     bpjsKesehatanNo: row.bpjs_kesehatan_no || '0001000000000',
-    bpjsKetenagakerjaanNo: row.bpjs_ketenagakerjaan_no || '00000000000',
+    bpjsKetenagakerjaanNo: row.bpjsKetenagakerjaanNo || '00000000000',
     remainingLeaveDays: Number(row.remaining_leave_days) ?? 12,
     isActive: row.is_active ?? true,
     approvalStatus: row.approval_status || 'approved',
+    accessPin: String(storedPin),
   };
 }
 

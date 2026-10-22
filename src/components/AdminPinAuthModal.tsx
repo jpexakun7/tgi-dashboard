@@ -41,6 +41,9 @@ export const AdminPinAuthModal: React.FC<AdminPinAuthModalProps> = ({
   if (!isOpen) return null;
 
   const expectedPin = companyConfig.securitySettings?.adminPin || '2026';
+  const activeAdmins = (companyConfig.allowedGoogleAdmins || []).filter(
+    (a) => a.status === 'active'
+  );
 
   const handleVerifyPin = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -48,12 +51,15 @@ export const AdminPinAuthModal: React.FC<AdminPinAuthModalProps> = ({
 
     const trimmed = pin.trim();
     if (!trimmed) {
-      setErrorMessage('Silakan masukkan PIN keamanan');
+      setErrorMessage('Silakan masukkan PIN Keamanan Panel Admin HR');
       return;
     }
 
-    // Verify against expected PIN (or fallback 2026 / 123456)
-    if (trimmed === expectedPin || trimmed === '2026' || trimmed === '123456') {
+    const matchedAdminAccount = activeAdmins.find(
+      (adm) => (adm.accessPin || expectedPin) === trimmed
+    );
+
+    if (trimmed === expectedPin || Boolean(matchedAdminAccount)) {
       setSuccessAnimation(true);
       setTimeout(() => {
         setSuccessAnimation(false);
@@ -61,7 +67,9 @@ export const AdminPinAuthModal: React.FC<AdminPinAuthModalProps> = ({
         onSuccess();
       }, 600);
     } else {
-      setErrorMessage('PIN Keamanan salah. Silakan coba lagi (Default: 2026).');
+      setErrorMessage(
+        'PIN Keamanan Admin HR salah! PIN Portal Karyawan tidak dapat digunakan untuk membuka Panel Admin HR.'
+      );
     }
   };
 
@@ -248,11 +256,9 @@ export const AdminPinAuthModal: React.FC<AdminPinAuthModalProps> = ({
                 </button>
               </div>
 
-              <div className="flex items-center justify-center gap-1.5 mt-2 text-[11px] text-slate-500">
-                <Sparkles className="w-3.5 h-3.5 text-purple-600" />
-                <span>
-                  PIN Standar: <strong className="text-slate-800 font-mono">2026</strong> (atau 123456)
-                </span>
+              <div className="flex items-center justify-center gap-1.5 mt-2 text-[11px] text-slate-400">
+                <ShieldCheck className="w-3.5 h-3.5 text-slate-400" />
+                <span>Masukkan kode PIN khusus Admin HR yang terdaftar</span>
               </div>
             </div>
 

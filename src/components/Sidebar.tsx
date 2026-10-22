@@ -163,10 +163,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
     },
     {
       id: 'settings' as ActiveTab,
-      label: 'Pengaturan Sistem',
+      label: 'Setting PIN & Sistem',
       icon: Settings,
-      badge: 'RBAC',
-      badgeColor: 'bg-indigo-100 text-indigo-800',
+      badge: 'PIN Akun',
+      badgeColor: 'bg-purple-100 text-purple-800',
       path: 'settings',
     },
   ];

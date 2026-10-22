@@ -52,6 +52,7 @@ export interface Employee {
     relation: string;
     phone: string;
   };
+  accessPin?: string; // PIN / Password khusus untuk login Portal Karyawan per akun
 }
 
 export interface PayrollRecord {
@@ -138,6 +139,7 @@ export interface GoogleAdminAccount {
   phone?: string;
   notes?: string;
   department?: string;
+  accessPin?: string; // PIN / Password khusus per akun Admin HR / Finance
 }
 
 export interface GoogleAdminUser {
@@ -366,6 +368,9 @@ export interface CompanyConfig {
   securitySettings?: {
     adminPin?: string;
     requirePinForAdminMode?: boolean;
+    webAccessPin?: string;
+    requirePinForWebAccess?: boolean;
+    defaultEmployeePin?: string;
   };
 }
 

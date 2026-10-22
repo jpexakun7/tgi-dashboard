@@ -58,6 +58,7 @@ import { EmployeePortalView } from './components/EmployeePortalView';
 import { RoleManagementView } from './components/RoleManagementView';
 import { SupabaseSyncModal } from './components/SupabaseSyncModal';
 import { AdminPinAuthModal } from './components/AdminPinAuthModal';
+import { WebPinGatekeeper } from './components/WebPinGatekeeper';
 import {
   checkSupabaseStatus,
   autoSeedSupabaseIfEmpty,
@@ -83,6 +84,7 @@ import {
   SupabaseSyncStatus,
   dbToEmployee,
   dbToAsset,
+  dbToPayroll,
   dbToAttendance,
   dbToLeave,
   dbToOvertime,
@@ -554,9 +556,69 @@ export default function App() {
     }
   }, [payrolls]);
 
-  const [attendances, setAttendances] = useState<AttendanceRecord[]>(initialAttendanceRecords);
-  const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>(initialLeaveRequests);
-  const [overtimeRequests, setOvertimeRequests] = useState<OvertimeRequest[]>(initialOvertimeRequests);
+  const [attendances, setAttendances] = useState<AttendanceRecord[]>(() => {
+    try {
+      const saved = localStorage.getItem('tgi_attendances_data');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {
+      console.error('Failed to parse saved attendances', e);
+    }
+    return initialAttendanceRecords;
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('tgi_attendances_data', JSON.stringify(attendances));
+    } catch (e) {
+      console.error('Failed to save attendances to localStorage', e);
+    }
+  }, [attendances]);
+
+  const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>(() => {
+    try {
+      const saved = localStorage.getItem('tgi_leave_requests_data');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {
+      console.error('Failed to parse saved leave requests', e);
+    }
+    return initialLeaveRequests;
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('tgi_leave_requests_data', JSON.stringify(leaveRequests));
+    } catch (e) {
+      console.error('Failed to save leave requests to localStorage', e);
+    }
+  }, [leaveRequests]);
+
+  const [overtimeRequests, setOvertimeRequests] = useState<OvertimeRequest[]>(() => {
+    try {
+      const saved = localStorage.getItem('tgi_overtime_requests_data');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {
+      console.error('Failed to parse saved overtime requests', e);
+    }
+    return initialOvertimeRequests;
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('tgi_overtime_requests_data', JSON.stringify(overtimeRequests));
+    } catch (e) {
+      console.error('Failed to save overtime requests to localStorage', e);
+    }
+  }, [overtimeRequests]);
+
   const [reimbursements, setReimbursements] = useState<ReimbursementClaim[]>(() => {
     try {
       const saved = localStorage.getItem('tgi_reimbursements_data');
@@ -651,6 +713,15 @@ export default function App() {
   const pendingOvertimes = overtimeRequests.filter((o) => o.status === 'Menunggu Persetujuan');
   const pendingReimbursements = reimbursements.filter((r) => r.status === 'Menunggu Persetujuan');
 
+  // Web Gatekeeper PIN Unlock State (controls initial entry into the web app)
+  const [isWebPinUnlocked, setIsWebPinUnlocked] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem('tgi_web_pin_unlocked') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
   // Admin PIN / Security Unlock State (controls access to HR & Payroll Admin mode)
   const [isAdminUnlocked, setIsAdminUnlocked] = useState<boolean>(() => {
     try {
@@ -663,7 +734,6 @@ export default function App() {
   const [isAdminAuthModalOpen, setIsAdminAuthModalOpen] = useState(false);
 
   // Mode Dashboard: 'admin' (Panel Admin) atau 'employee' (Portal Karyawan Self-Service)
-  // KEAMANAN PRIVASI: Pengguna baru / karyawan membuka link selalu mulai di mode 'employee'
   const [dashboardMode, setDashboardMode] = useState<'admin' | 'employee'>(() => {
     try {
       const unlocked = sessionStorage.getItem('tgi_admin_unlocked') === 'true';
@@ -682,6 +752,67 @@ export default function App() {
       console.error('Failed to save dashboard mode', e);
     }
   }, [dashboardMode]);
+
+  const handleUnlockWeb = (options: {
+    mode: 'admin' | 'employee';
+    employeeId?: string;
+    unlockAdmin?: boolean;
+    adminEmail?: string;
+  }) => {
+    setIsWebPinUnlocked(true);
+    try {
+      sessionStorage.setItem('tgi_web_pin_unlocked', 'true');
+    } catch (e) {
+      console.error(e);
+    }
+
+    if (options.unlockAdmin) {
+      setIsAdminUnlocked(true);
+      try {
+        sessionStorage.setItem('tgi_admin_unlocked', 'true');
+      } catch (e) {
+        console.error(e);
+      }
+      if (options.adminEmail) {
+        const matchedAdm = (companyConfig.allowedGoogleAdmins || []).find(
+          (a) => a.email.toLowerCase() === options.adminEmail!.toLowerCase()
+        );
+        if (matchedAdm) {
+          const nextAdminUser: GoogleAdminUser = {
+            id: matchedAdm.id,
+            email: matchedAdm.email,
+            name: matchedAdm.name,
+            picture: matchedAdm.avatarUrl,
+            role: matchedAdm.role,
+            lastLogin: new Date().toLocaleTimeString('id-ID', {
+              hour: '2-digit',
+              minute: '2-digit',
+            }),
+            phone: matchedAdm.phone,
+          };
+          setAdminUser(nextAdminUser);
+          try {
+            localStorage.setItem('tgi_admin_google_user', JSON.stringify(nextAdminUser));
+          } catch (e) {
+            console.error(e);
+          }
+        }
+      }
+      setDashboardMode('admin');
+    } else {
+      // Strictly lock Admin mode when entering via Employee PIN
+      setIsAdminUnlocked(false);
+      try {
+        sessionStorage.removeItem('tgi_admin_unlocked');
+      } catch (e) {
+        console.error(e);
+      }
+      if (options.employeeId) {
+        setActiveEmployeeId(options.employeeId);
+      }
+      setDashboardMode('employee');
+    }
+  };
 
   const handleAdminUnlockSuccess = () => {
     setIsAdminUnlocked(true);
@@ -702,8 +833,10 @@ export default function App() {
 
   const handleLockAdmin = () => {
     setIsAdminUnlocked(false);
+    setIsWebPinUnlocked(false);
     try {
       sessionStorage.removeItem('tgi_admin_unlocked');
+      sessionStorage.removeItem('tgi_web_pin_unlocked');
     } catch (e) {
       console.error(e);
     }
@@ -711,7 +844,7 @@ export default function App() {
     logActivity(
       'LOGIN_ACTIVITY',
       'Autentikasi',
-      'Mengunci akses Admin dan kembali ke mode Portal Karyawan.',
+      'Mengunci layar keamanan web dan mengakhiri sesi Admin.',
       { severity: 'info' }
     );
   };
@@ -888,6 +1021,27 @@ export default function App() {
             const oldId = (payload.old as any)?.id;
             if (oldId) {
               setAssets((prev) => prev.filter((a) => a.id !== oldId));
+            }
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'payrolls' },
+        (payload: any) => {
+          if (payload.eventType === 'INSERT') {
+            const newPay = dbToPayroll(payload.new);
+            setPayrolls((prev) => {
+              if (prev.some((p) => p.id === newPay.id)) return prev;
+              return [newPay, ...prev];
+            });
+          } else if (payload.eventType === 'UPDATE') {
+            const updatedPay = dbToPayroll(payload.new);
+            setPayrolls((prev) => prev.map((p) => (p.id === updatedPay.id ? updatedPay : p)));
+          } else if (payload.eventType === 'DELETE') {
+            const oldId = (payload.old as any)?.id;
+            if (oldId) {
+              setPayrolls((prev) => prev.filter((p) => p.id !== oldId));
             }
           }
         }
@@ -1162,7 +1316,13 @@ export default function App() {
 
   // Handlers for Attendance
   const handleAddAttendance = (att: AttendanceRecord) => {
-    setAttendances((prev) => [att, ...prev]);
+    setAttendances((prev) => {
+      const exists = prev.some((a) => a.id === att.id);
+      if (exists) {
+        return prev.map((a) => (a.id === att.id ? att : a));
+      }
+      return [att, ...prev];
+    });
     upsertAttendanceToSupabase(att);
   };
 
@@ -1414,6 +1574,7 @@ export default function App() {
 
   const handleImportReimbursements = (claims: ReimbursementClaim[]) => {
     setReimbursements((prev) => [...claims, ...prev]);
+    claims.forEach((claim) => upsertReimbursementToSupabase(claim));
   };
 
   // Handlers for Asset Management
@@ -1937,6 +2098,17 @@ export default function App() {
     }
   }, [adminUser, currentRole, userAllowedModules, activeTab]);
 
+  // Full-Screen Web Access PIN Gatekeeper (Before entering the web app)
+  if ((companyConfig.securitySettings?.requirePinForWebAccess ?? true) && !isWebPinUnlocked) {
+    return (
+      <WebPinGatekeeper
+        companyConfig={companyConfig}
+        employees={employees}
+        onUnlockWeb={handleUnlockWeb}
+      />
+    );
+  }
+
   // Gatekeeper: If not logged in as Admin and not in employee mode, show Google Login Gateway
   if (!adminUser && dashboardMode !== 'employee') {
     return (
@@ -1959,6 +2131,10 @@ export default function App() {
 
   // View: Mode Portal Layanan Mandiri Karyawan (Self-Service)
   if (dashboardMode === 'employee') {
+    const safePayrolls = isAdminUnlocked
+      ? payrolls
+      : payrolls.filter((p) => p.employeeId === currentEmployee?.id);
+
     return (
       <div className="min-h-screen bg-slate-100 flex flex-col antialiased font-sans text-slate-800">
         <Header
@@ -1975,7 +2151,7 @@ export default function App() {
           onLogout={handleLogout}
           onSwitchAdminUser={handleSwitchAdminUser}
           dashboardMode={dashboardMode}
-          onToggleDashboardMode={() => setDashboardMode('admin')}
+          onToggleDashboardMode={handleToggleDashboardMode}
           currentEmployeeName={currentEmployee?.fullName}
           currentEmployee={currentEmployee}
           notifications={notifications}
@@ -1984,14 +2160,21 @@ export default function App() {
           onDeleteNotification={handleDeleteNotification}
           onClearAllNotifications={handleClearAllNotifications}
           onNavigateNotificationAction={handleNavigateNotificationAction}
+          supabaseStatus={supabaseStatus}
+          onOpenSupabaseModal={() => setIsSupabaseModalOpen(true)}
+          isAdminUnlocked={isAdminUnlocked}
+          onRequestAdminLogin={() => setIsAdminAuthModalOpen(true)}
+          onLockAdmin={handleLockAdmin}
         />
 
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">
           <EmployeePortalView
             currentEmployee={currentEmployee}
             allEmployees={employees}
-            payrollRecord={payrolls.find((p) => p.employeeId === currentEmployee.id) || null}
-            allPayrolls={payrolls}
+            payrollRecord={safePayrolls.find((p) => p.employeeId === currentEmployee?.id) || null}
+            allPayrolls={safePayrolls}
+            attendances={attendances}
+            onAddAttendance={handleAddAttendance}
             leaveRequests={leaveRequests}
             overtimeRequests={overtimeRequests}
             reimbursements={reimbursements}
@@ -2005,8 +2188,11 @@ export default function App() {
             onApplyReimbursement={handleAddReimbursement}
             onUpdateProfile={handleUpdateEmployee}
             onOpenPayslip={handleOpenPayslip}
-            onSwitchToAdminMode={() => setDashboardMode('admin')}
+            onSwitchToAdminMode={handleToggleDashboardMode}
             onSelectEmployee={(empId) => setActiveEmployeeId(empId)}
+            isAdminUnlocked={isAdminUnlocked}
+            onRequestAdminAccess={() => setIsAdminAuthModalOpen(true)}
+            onLockAdmin={handleLockAdmin}
             onReportAssetIssue={(assetId, notes) => {
               const targetAsset = assets.find((a) => a.id === assetId);
               logActivity(
@@ -2030,6 +2216,26 @@ export default function App() {
           employee={selectedEmployeeForPayslip}
           companyConfig={companyConfig}
           onClose={() => setSelectedPayslip(null)}
+        />
+
+        {/* Admin PIN & Supabase Auth Modal */}
+        <AdminPinAuthModal
+          isOpen={isAdminAuthModalOpen}
+          onClose={() => setIsAdminAuthModalOpen(false)}
+          onSuccess={handleAdminUnlockSuccess}
+          companyConfig={companyConfig}
+        />
+
+        {/* Supabase Cloud Database & SQL Schema Modal */}
+        <SupabaseSyncModal
+          isOpen={isSupabaseModalOpen}
+          onClose={() => setIsSupabaseModalOpen(false)}
+          syncStatus={supabaseStatus}
+          onRefreshStatus={refreshSupabaseStatus}
+          onTriggerSeed={handleTriggerSeed}
+          isSeeding={isSeedingSupabase}
+          employeeCount={employees.length}
+          assetCount={assets.length}
         />
       </div>
     );
@@ -2087,6 +2293,11 @@ export default function App() {
             onDeleteNotification={handleDeleteNotification}
             onClearAllNotifications={handleClearAllNotifications}
             onNavigateNotificationAction={handleNavigateNotificationAction}
+            supabaseStatus={supabaseStatus}
+            onOpenSupabaseModal={() => setIsSupabaseModalOpen(true)}
+            isAdminUnlocked={isAdminUnlocked}
+            onRequestAdminLogin={() => setIsAdminAuthModalOpen(true)}
+            onLockAdmin={handleLockAdmin}
             onQuickBroadcastReminder={() =>
               handleSendDeadlineReminder({
                 period: companyConfig.currentPayrollPeriod,
@@ -2153,6 +2364,7 @@ export default function App() {
                 onAddAttendance={handleAddAttendance}
                 onApplyImportedAttendance={(importedAttendances) => {
                   setAttendances((prev) => [...importedAttendances, ...prev]);
+                  importedAttendances.forEach((att) => upsertAttendanceToSupabase(att));
                 }}
               />
             )}
@@ -2398,6 +2610,7 @@ export default function App() {
                   }
                 }}
                 employees={employees}
+                onUpdateEmployee={handleUpdateEmployee}
                 onLogAudit={logActivity}
                 onSendNotification={sendNotification}
                 adminUser={adminUser}
@@ -2415,6 +2628,14 @@ export default function App() {
         employee={selectedEmployeeForPayslip}
         companyConfig={companyConfig}
         onClose={() => setSelectedPayslip(null)}
+      />
+
+      {/* Admin PIN & Supabase Auth Modal */}
+      <AdminPinAuthModal
+        isOpen={isAdminAuthModalOpen}
+        onClose={() => setIsAdminAuthModalOpen(false)}
+        onSuccess={handleAdminUnlockSuccess}
+        companyConfig={companyConfig}
       />
 
       {/* Supabase Cloud Database & SQL Schema Modal */}
