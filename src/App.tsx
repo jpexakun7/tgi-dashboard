@@ -532,6 +532,25 @@ export default function App() {
         }
         if (!parsed.workShifts || !Array.isArray(parsed.workShifts) || parsed.workShifts.length === 0) {
           parsed.workShifts = DEFAULT_WORK_SHIFTS;
+        } else {
+          parsed.workShifts = parsed.workShifts.map((sh: WorkShift) => {
+            if (
+              !sh.location ||
+              sh.location.includes('Hayam Wuruk') ||
+              sh.location.includes('Gudang Kapuk') ||
+              sh.location.includes('Showroom Grosir') ||
+              sh.location.includes('Gudang Bongkar Muat')
+            ) {
+              return {
+                ...sh,
+                location: 'Jl. Sumber Mas I Blok C No. 191, Tangerang, Banten, ID',
+              };
+            }
+            return sh;
+          });
+        }
+        if (!parsed.address || parsed.address.includes('Hayam Wuruk')) {
+          parsed.address = 'Jl. Sumber Mas I Blok C No. 191, Tangerang, Banten, ID';
         }
         return parsed;
       }
