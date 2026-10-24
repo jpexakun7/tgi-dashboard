@@ -1099,17 +1099,25 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                         <td className="py-3 px-4">
                           <div className="flex items-center gap-3">
                             <img
-                              src={emp?.avatarUrl}
+                              src={
+                                emp?.avatarUrl ||
+                                'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=256&h=256&q=80'
+                              }
                               alt={emp?.fullName}
-                              className="w-8 h-8 rounded-full object-cover shrink-0"
+                              className="w-8 h-8 rounded-full object-cover shrink-0 ring-1 ring-emerald-500/30"
                             />
                             <div>
                               <span className="font-semibold text-slate-900 block text-xs">
                                 {emp?.fullName}
                               </span>
-                              <span className="text-[11px] text-slate-500 font-mono">
+                              <span className="text-[11px] text-slate-500 font-mono block">
                                 {emp?.nik} • {emp?.department}
                               </span>
+                              {emp?.ktpNumber && (
+                                <span className="text-[10px] text-indigo-700 font-mono font-semibold block">
+                                  NIK KTP: {emp.ktpNumber}
+                                </span>
+                              )}
                             </div>
                           </div>
                         </td>
@@ -1214,30 +1222,42 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
           </div>
 
           {/* Modal Preview Foto Wajah & Lokasi GPS di Admin Panel */}
-          {previewPhotoRecord && (
-            <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
-              <div className="bg-white rounded-2xl max-w-2xl w-full overflow-hidden shadow-2xl border border-slate-200">
-                <div className="px-5 py-4 bg-slate-900 text-white flex items-center justify-between">
-                  <div>
-                    <h4 className="text-sm font-bold flex items-center gap-2">
-                      <Camera className="w-4 h-4 text-emerald-400" />
-                      <span>Verifikasi Foto Wajah & Titik GPS HP ({formatIndoDate(previewPhotoRecord.date)})</span>
-                    </h4>
-                    <p className="text-[11px] text-slate-300 mt-0.5">
-                      {employees.find((e) => e.id === previewPhotoRecord.employeeId)?.fullName} •{' '}
-                      {previewPhotoRecord.shiftName}
-                    </p>
+          {previewPhotoRecord && (() => {
+            const previewEmp = employees.find((e) => e.id === previewPhotoRecord.employeeId);
+            return (
+              <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4">
+                <div className="bg-white rounded-2xl max-w-2xl w-full overflow-hidden shadow-2xl border border-slate-200">
+                  <div className="px-5 py-4 bg-slate-900 text-white flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      {previewEmp?.avatarUrl && (
+                        <img
+                          src={previewEmp.avatarUrl}
+                          alt={previewEmp.fullName}
+                          className="w-10 h-10 rounded-full object-cover ring-2 ring-emerald-400 shrink-0"
+                        />
+                      )}
+                      <div>
+                        <h4 className="text-sm font-bold flex items-center gap-2">
+                          <Camera className="w-4 h-4 text-emerald-400" />
+                          <span>Verifikasi Foto Wajah & Titik GPS HP ({formatIndoDate(previewPhotoRecord.date)})</span>
+                        </h4>
+                        <p className="text-[11px] text-slate-300 mt-0.5">
+                          {previewEmp?.fullName} ({previewEmp?.nik})
+                          {previewEmp?.ktpNumber ? ` • NIK KTP: ${previewEmp.ktpNumber}` : ''} •{' '}
+                          {previewPhotoRecord.shiftName}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setPreviewPhotoRecord(null)}
+                      className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setPreviewPhotoRecord(null)}
-                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
 
-                <div className="p-5 space-y-4 max-h-[82vh] overflow-y-auto text-xs">
+                  <div className="p-5 space-y-4 max-h-[82vh] overflow-y-auto text-xs">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     {previewPhotoRecord.facePhotoSnapshot && (
                       <div className="space-y-1.5">
@@ -1292,7 +1312,8 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                 </div>
               </div>
             </div>
-          )}
+            );
+          })()}
         </div>
       )}
 

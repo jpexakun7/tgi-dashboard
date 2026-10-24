@@ -19,6 +19,10 @@ import {
   Target,
   Award,
   Receipt,
+  Eye,
+  X,
+  Download,
+  FileCheck2,
 } from 'lucide-react';
 import {
   Employee,
@@ -29,7 +33,13 @@ import {
   CompanyConfig,
   ReimbursementClaim,
 } from '../types';
-import { formatRupiah, formatIndoDate } from '../utils/formatters';
+import {
+  formatRupiah,
+  formatIndoDate,
+  calculatePayroll,
+  getOvertimeMinutes,
+  getContractValidityInfo,
+} from '../utils/formatters';
 import { EmployeeDemographicsCharts } from './EmployeeDemographicsCharts';
 import { PayrollTrendChart } from './PayrollTrendChart';
 
@@ -64,38 +74,124 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   onApproveOvertime,
   onRejectOvertime,
 }) => {
-  // Aggregate Metrics
-  const totalEmployees = employees.filter((e) => e.isActive).length;
-  const permanentCount = employees.filter((e) => e.employmentStatus === 'PKWTT (Tetap)').length;
-  const contractCount = employees.filter((e) => e.employmentStatus === 'PKWT (Kontrak)').length;
+  const [previewLeaveAttachment, setPreviewLeaveAttachment] = React.useState<{
+    title: string;
+    subtitle: string;
+    imageUrl: string;
+    fileName?: string;
+  } | null>(null);
 
-  const totalTakeHomePay = payrolls.reduce((acc, curr) => acc + curr.takeHomePay, 0);
-  const totalGrossPayroll = payrolls.reduce((acc, curr) => acc + curr.totalGrossSalary, 0);
-  const totalPph21 = payrolls.reduce((acc, curr) => acc + curr.pph21TER, 0);
-  const totalBpjsDeduction = payrolls.reduce(
-    (acc, curr) => acc + curr.bpjsKesehatanEmployee + curr.bpjsJhtEmployee + curr.bpjsJpEmployee,
+  // Active employees list
+  const activeEmployees = React.useMemo(() => {
+    return employees.filter((e) => e.isActive !== false);
+  }, [employees]);
+
+  const expiringContractEmployees = React.useMemo(() => {
+    return activeEmployees
+      .map((emp) => ({ emp, info: getContractValidityInfo(emp) }))
+      .filter(({ info }) => !info.isPermanent && (info.isExpiringSoon || info.isExpired));
+  }, [activeEmployees]);
+
+  const activeEmployeeIdSet = React.useMemo(
+    () => new Set(activeEmployees.map((e) => e.id)),
+    [activeEmployees]
+  );
+
+  // Synchronized Payroll Records: Automatically computes payroll & PPh 21 TER 2026 + BPJS
+  // for every active employee so cards never display Rp 0 when active employees exist
+  const syncedActivePayrolls = React.useMemo(() => {
+    return activeEmployees.map((emp) => {
+      const existing = payrolls.find((p) => p.employeeId === emp.id);
+      if (existing && existing.totalGrossSalary > 0 && existing.takeHomePay > 0) {
+        return existing;
+      }
+
+      const approvedOtMinutes = overtimeRequests
+        .filter((o) => o.employeeId === emp.id && o.status === 'Disetujui')
+        .reduce((sum, o) => sum + getOvertimeMinutes(o), 0);
+
+      const empLateMinutes = attendances
+        .filter((a) => a.employeeId === emp.id)
+        .reduce((sum, a) => sum + (a.lateMinutes || 0), 0);
+
+      return calculatePayroll(
+        emp,
+        companyConfig.currentPayrollPeriod,
+        approvedOtMinutes,
+        existing?.bonus || 0,
+        empLateMinutes,
+        existing?.cashAdvanceDeduction || 0,
+        existing?.cashAdvanceNotes
+      );
+    });
+  }, [
+    activeEmployees,
+    payrolls,
+    overtimeRequests,
+    attendances,
+    companyConfig.currentPayrollPeriod,
+  ]);
+
+  // Aggregate Metrics
+  const totalEmployees = activeEmployees.length;
+  const permanentCount = activeEmployees.filter(
+    (e) => e.employmentStatus === 'PKWTT (Tetap)'
+  ).length;
+  const contractCount = activeEmployees.filter(
+    (e) => e.employmentStatus === 'PKWT (Kontrak)'
+  ).length;
+  const probationCount = activeEmployees.filter(
+    (e) => e.employmentStatus === 'Probation' || e.employmentStatus === 'Internship'
+  ).length;
+
+  const totalTakeHomePay = syncedActivePayrolls.reduce(
+    (acc, curr) => acc + curr.takeHomePay,
+    0
+  );
+  const totalGrossPayroll = syncedActivePayrolls.reduce(
+    (acc, curr) => acc + curr.totalGrossSalary,
+    0
+  );
+  const totalPph21 = syncedActivePayrolls.reduce((acc, curr) => acc + curr.pph21TER, 0);
+  const totalBpjsDeduction = syncedActivePayrolls.reduce(
+    (acc, curr) =>
+      acc + curr.bpjsKesehatanEmployee + curr.bpjsJhtEmployee + curr.bpjsJpEmployee,
     0
   );
 
-  // Attendance metrics today
-  const totalPresent = attendances.filter(
+  // Attendance metrics today (filtered strictly to active employees)
+  const validAttendances = React.useMemo(
+    () => attendances.filter((a) => activeEmployeeIdSet.has(a.employeeId)),
+    [attendances, activeEmployeeIdSet]
+  );
+  const totalPresent = validAttendances.filter(
     (a) => a.status === 'Hadir Tepat Waktu' || a.status === 'Terlambat'
   ).length;
-  const onTimeCount = attendances.filter((a) => a.status === 'Hadir Tepat Waktu').length;
-  const lateCount = attendances.filter((a) => a.status === 'Terlambat').length;
-  const sickLeaveCount = attendances.filter((a) => a.status === 'Sakit' || a.status === 'Cuti').length;
-  const attendanceRate = totalEmployees > 0 ? Math.round((totalPresent / totalEmployees) * 100) : 0;
+  const onTimeCount = validAttendances.filter((a) => a.status === 'Hadir Tepat Waktu').length;
+  const lateCount = validAttendances.filter((a) => a.status === 'Terlambat').length;
+  const sickLeaveCount = validAttendances.filter(
+    (a) => a.status === 'Sakit' || a.status === 'Cuti'
+  ).length;
+  const attendanceRate =
+    totalEmployees > 0 ? Math.min(100, Math.round((totalPresent / totalEmployees) * 100)) : 0;
 
-  // Pending Approvals
-  const pendingLeaves = leaveRequests.filter((l) => l.status === 'Menunggu Persetujuan');
-  const pendingOvertimes = overtimeRequests.filter((o) => o.status === 'Menunggu Persetujuan');
-  const pendingReimbursements = reimbursements.filter((r) => r.status === 'Menunggu Persetujuan');
-  const totalPendingActions = pendingLeaves.length + pendingOvertimes.length + pendingReimbursements.length;
+  // Pending Approvals (filtered strictly to active employees)
+  const pendingLeaves = leaveRequests.filter(
+    (l) => l.status === 'Menunggu Persetujuan' && activeEmployeeIdSet.has(l.employeeId)
+  );
+  const pendingOvertimes = overtimeRequests.filter(
+    (o) => o.status === 'Menunggu Persetujuan' && activeEmployeeIdSet.has(o.employeeId)
+  );
+  const pendingReimbursements = reimbursements.filter(
+    (r) => r.status === 'Menunggu Persetujuan' && activeEmployeeIdSet.has(r.employeeId)
+  );
+  const totalPendingActions =
+    pendingLeaves.length + pendingOvertimes.length + pendingReimbursements.length;
 
   // Department cost breakdown
   const deptCostMap: { [key: string]: number } = {};
-  payrolls.forEach((p) => {
-    const emp = employees.find((e) => e.id === p.employeeId);
+  syncedActivePayrolls.forEach((p) => {
+    const emp = activeEmployees.find((e) => e.id === p.employeeId);
     const dept = emp ? emp.department : 'Lainnya';
     deptCostMap[dept] = (deptCostMap[dept] || 0) + p.takeHomePay;
   });
@@ -168,7 +264,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             </h3>
             <div className="flex items-center gap-1.5 mt-1.5 text-xs text-slate-500">
               <span className="text-emerald-600 font-semibold flex items-center">
-                <TrendingUp className="w-3.5 h-3.5 mr-0.5" /> {payrolls.length} Karyawan
+                <TrendingUp className="w-3.5 h-3.5 mr-0.5" /> {syncedActivePayrolls.length} Karyawan
               </span>
               <span>• Total Bruto {formatRupiah(totalGrossPayroll)}</span>
             </div>
@@ -189,7 +285,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
               <span className="text-xs font-normal text-slate-500">orang</span>
             </h3>
             <p className="mt-1.5 text-xs text-slate-500">
-              {permanentCount} Tetap • {contractCount} Kontrak • 1 Probation
+              {permanentCount} Tetap • {contractCount} Kontrak • {probationCount} Probation/Harian
             </p>
           </div>
         </div>
@@ -242,7 +338,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
 
       {/* Visualisasi Tren Total Biaya Gaji Bulanan (Recharts 6 Bulan Terakhir) */}
       <PayrollTrendChart
-        currentPayrolls={payrolls}
+        currentPayrolls={syncedActivePayrolls}
         employees={employees}
         companyConfig={companyConfig}
         onNavigatePayroll={() => onNavigateTab('payroll')}
@@ -333,11 +429,30 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                           className="w-8 h-8 rounded-full object-cover shrink-0"
                         />
                         <div>
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <span className="font-semibold text-slate-900">{emp?.fullName}</span>
                             <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 font-semibold text-[10px]">
                               {leave.type}
                             </span>
+                            {leave.attachmentUrl && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setPreviewLeaveAttachment({
+                                    title: `Bukti Pendukung Cuti / Izin — ${leave.type}`,
+                                    subtitle: `${emp?.fullName || 'Karyawan'} • ${formatIndoDate(
+                                      leave.startDate
+                                    )} s/d ${formatIndoDate(leave.endDate)}`,
+                                    imageUrl: leave.attachmentUrl!,
+                                    fileName: leave.attachmentName || `Bukti-Cuti-${leave.id}.jpg`,
+                                  })
+                                }
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-indigo-100 hover:bg-indigo-200 text-indigo-800 font-bold text-[10px] cursor-pointer"
+                              >
+                                <Eye className="w-3 h-3" />
+                                <span>Lihat Bukti</span>
+                              </button>
+                            )}
                           </div>
                           <p className="text-slate-600 mt-0.5">
                             {formatIndoDate(leave.startDate)} s/d {formatIndoDate(leave.endDate)} ({leave.totalDays} Hari)
@@ -438,7 +553,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {attendances.slice(0, 5).map((att) => {
+                  {validAttendances.slice(0, 5).map((att) => {
                     const emp = employees.find((e) => e.id === att.employeeId);
                     return (
                       <tr key={att.id} className="hover:bg-slate-50/60 transition-colors">
@@ -572,12 +687,28 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                 </div>
               </div>
 
+              {expiringContractEmployees.length > 0 && (
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 flex items-start gap-2.5">
+                  <FileCheck2 className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-bold text-amber-900 block">
+                      Peringatan Kontrak Akan Berakhir ({expiringContractEmployees.length} Staf)
+                    </span>
+                    <p className="text-amber-800 text-[11px] mt-0.5">
+                      {expiringContractEmployees
+                        .map(({ emp, info }) => `${emp.fullName} (${info.badgeText})`)
+                        .join(', ')}
+                    </p>
+                  </div>
+                </div>
+              )}
+
               <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80 flex items-start gap-2.5">
                 <Clock className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
                 <div>
-                  <span className="font-semibold text-slate-800 block">Review Probation</span>
+                  <span className="font-semibold text-slate-800 block">Review Probation &amp; Kontrak</span>
                   <p className="text-slate-600 text-[11px] mt-0.5">
-                    Fajar Nugroho (UI/UX Developer) masuk bulan ke-3 probation pada 31 Oktober 2026.
+                    Pantau masa berlaku kontrak PKWT/Probation dan unggah dokumen kontrak kerja di menu Data Karyawan.
                   </p>
                 </div>
               </div>
@@ -605,7 +736,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             </div>
             <div>
               <h3 className="font-bold text-sm text-slate-800">
-                Statistik & Diagram Demografi Karyawan (Pria, Wanita & Jabatan)
+                Statistik &amp; Diagram Demografi Karyawan (Pria, Wanita &amp; Jabatan)
               </h3>
               <p className="text-xs text-slate-500">
                 Analisis komposisi gender, perbandingan jenis kelamin, dan distribusi posisi kerja PT Tas Grosir Import.
@@ -627,6 +758,51 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
           onSelectDepartment={() => onNavigateTab('employees')}
         />
       </div>
+
+      {/* Modal Pratinjau Bukti Cuti dari Dashboard */}
+      {previewLeaveAttachment && (
+        <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-5 shadow-2xl border border-slate-200 space-y-3.5">
+            <div className="flex items-start justify-between gap-3 pb-2.5 border-b border-slate-100">
+              <div>
+                <h4 className="font-bold text-slate-900 text-sm">{previewLeaveAttachment.title}</h4>
+                <p className="text-[11px] text-slate-500 mt-0.5">{previewLeaveAttachment.subtitle}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPreviewLeaveAttachment(null)}
+                className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="rounded-xl overflow-hidden bg-slate-900 border border-slate-200 flex items-center justify-center max-h-[65vh]">
+              <img
+                src={previewLeaveAttachment.imageUrl}
+                alt={previewLeaveAttachment.title}
+                className="w-full max-h-[62vh] object-contain"
+              />
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <a
+                href={previewLeaveAttachment.imageUrl}
+                download={previewLeaveAttachment.fileName || 'Bukti-Cuti.jpg'}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl transition-colors"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Unduh Bukti</span>
+              </a>
+              <button
+                type="button"
+                onClick={() => setPreviewLeaveAttachment(null)}
+                className="px-4 py-2 text-xs font-bold bg-slate-800 hover:bg-slate-900 text-white rounded-xl cursor-pointer"
+              >
+                Tutup
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

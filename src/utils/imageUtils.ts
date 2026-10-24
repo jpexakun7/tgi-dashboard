@@ -28,14 +28,15 @@ export function validateImageFile(file: File): ImageValidationResult {
 }
 
 /**
- * Compresses and scales an image down to optimal avatar dimensions (default 400x400)
- * to keep memory and localStorage usage minimal while maintaining sharp visual quality.
+ * Compresses and scales an image down to a maximum width/height (default 800px)
+ * in JPEG format (default quality 0.8) to keep storage and database usage minimal
+ * while maintaining clear visual readability for profile photos and KTP scans.
  */
 export function compressImage(
   file: File,
-  maxWidth = 400,
-  maxHeight = 400,
-  quality = 0.85
+  maxWidth = 800,
+  maxHeight = 800,
+  quality = 0.8
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -47,17 +48,14 @@ export function compressImage(
         let width = img.width;
         let height = img.height;
 
-        // Calculate aspect-ratio scaling
-        if (width > height) {
-          if (width > maxWidth) {
-            height = Math.round((height * maxWidth) / width);
-            width = maxWidth;
-          }
-        } else {
-          if (height > maxHeight) {
-            width = Math.round((width * maxHeight) / height);
-            height = maxHeight;
-          }
+        // Calculate aspect-ratio scaling capped at maxWidth and maxHeight (default 800px)
+        if (width > maxWidth) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        }
+        if (height > maxHeight) {
+          width = Math.round((width * maxHeight) / height);
+          height = maxHeight;
         }
 
         const canvas = document.createElement('canvas');
@@ -70,12 +68,16 @@ export function compressImage(
           return;
         }
 
+        // Fill white background for transparent PNGs before converting to JPEG
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, width, height);
+
         // Smooth rendering
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
         ctx.drawImage(img, 0, 0, width, height);
 
-        // Convert to compressed JPEG data URL
+        // Convert to compressed JPEG data URL (quality 0.8)
         const dataUrl = canvas.toDataURL('image/jpeg', quality);
         resolve(dataUrl);
       };
@@ -94,3 +96,45 @@ export function compressImage(
     reader.readAsDataURL(file);
   });
 }
+
+/**
+ * Captures and compresses a video frame into JPEG format with maximum width 800px and quality 0.8.
+ */
+export function compressVideoFrame(
+  video: HTMLVideoElement,
+  maxWidth = 800,
+  maxHeight = 800,
+  quality = 0.8,
+  mirror = false
+): string {
+  let width = video.videoWidth || 640;
+  let height = video.videoHeight || 480;
+
+  if (width > maxWidth) {
+    height = Math.round((height * maxWidth) / width);
+    width = maxWidth;
+  }
+  if (height > maxHeight) {
+    width = Math.round((width * maxHeight) / height);
+    height = maxHeight;
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return '';
+
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+
+  if (mirror) {
+    ctx.translate(width, 0);
+    ctx.scale(-1, 1);
+  }
+  ctx.drawImage(video, 0, 0, width, height);
+
+  return canvas.toDataURL('image/jpeg', quality);
+}
+

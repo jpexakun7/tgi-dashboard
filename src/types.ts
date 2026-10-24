@@ -19,6 +19,16 @@ export interface Employee {
   phone: string;
   avatarUrl: string;
   facePhotoUrl?: string; // Foto referensi wajah untuk verifikasi face recognition
+  ktpPhotoUrl?: string; // Foto / Scan KTP Karyawan dari Portal Karyawan / Admin
+  ktpNumber?: string; // Nomor NIK KTP (16 Digit)
+  ktpUploadedAt?: string; // Timestamp unggah KTP terakhir
+  profilePhotoUpdatedAt?: string; // Timestamp update Foto Profil terakhir
+  contractStartDate?: string; // Tanggal Mulai Kontrak Kerja (PKWT / PKWTT)
+  contractEndDate?: string; // Tanggal Berakhir Kontrak Kerja (PKWT / Probation)
+  contractDocumentNumber?: string; // Nomor Dokumen Surat Perjanjian Kerja
+  contractDocumentUrl?: string; // File / Foto Dokumen Kontrak Kerja (Base64 JPEG / PDF Data URL)
+  contractDocumentName?: string; // Nama File Dokumen Kontrak Kerja
+  contractUpdatedAt?: string; // Waktu terakhir dokumen/masa kontrak diperbarui
   role: string;
   department: Department;
   employmentStatus: EmploymentStatus;
@@ -197,6 +207,9 @@ export interface LeaveRequest {
   status: 'Menunggu Persetujuan' | 'Disetujui' | 'Ditolak';
   appliedAt: string;
   approvedBy?: string;
+  attachmentUrl?: string; // Foto / Gambar Bukti Pendukung Cuti & Izin (Surat Dokter, Bukti Izin, dll)
+  attachmentName?: string; // Nama file gambar bukti
+  attachmentUploadedAt?: string; // Timestamp unggah bukti
 }
 
 export interface OvertimeRequest {

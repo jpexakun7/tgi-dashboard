@@ -52,7 +52,7 @@ export function employeeToDb(emp: Employee) {
     google_email: emp.googleEmail || null,
     phone: emp.phone || null,
     avatar_url: emp.avatarUrl || null,
-    face_photo_url: emp.facePhotoUrl || null,
+    face_photo_url: emp.facePhotoUrl || emp.avatarUrl || null,
     role: emp.role || 'Staff',
     gender: emp.gender || 'Laki-laki',
     department: emp.department || 'Operasional',
@@ -65,6 +65,18 @@ export function employeeToDb(emp: Employee) {
       meal: Number(rawAllowances.meal) || 0,
       communication: Number(rawAllowances.communication) || 0,
       _accessPin: effectivePin,
+      _ktpPhotoUrl: emp.ktpPhotoUrl || undefined,
+      _ktpNumber: emp.ktpNumber || undefined,
+      _ktpUploadedAt: emp.ktpUploadedAt || undefined,
+      _profilePhotoUpdatedAt: emp.profilePhotoUpdatedAt || undefined,
+      _contractStartDate: emp.contractStartDate || undefined,
+      _contractEndDate: emp.contractEndDate || undefined,
+      _contractDocumentNumber: emp.contractDocumentNumber || undefined,
+      _contractDocumentUrl: emp.contractDocumentUrl || undefined,
+      _contractDocumentName: emp.contractDocumentName || undefined,
+      _contractUpdatedAt: emp.contractUpdatedAt || undefined,
+      _address: emp.address || undefined,
+      _emergencyContact: emp.emergencyContact || undefined,
     },
     bank_name: emp.bankName || 'BCA',
     bank_account_number: emp.bankAccountNumber || '',
@@ -95,7 +107,22 @@ export function dbToEmployee(row: any): Employee {
     googleEmail: row.google_email || undefined,
     phone: row.phone || '',
     avatarUrl: row.avatar_url || '',
-    facePhotoUrl: row.face_photo_url || undefined,
+    facePhotoUrl: row.face_photo_url || row.avatar_url || undefined,
+    ktpPhotoUrl: row.ktp_photo_url || rawAllowances._ktpPhotoUrl || undefined,
+    ktpNumber: row.ktp_number || rawAllowances._ktpNumber || undefined,
+    ktpUploadedAt: rawAllowances._ktpUploadedAt || undefined,
+    profilePhotoUpdatedAt: rawAllowances._profilePhotoUpdatedAt || undefined,
+    contractStartDate: row.contract_start_date || rawAllowances._contractStartDate || undefined,
+    contractEndDate: row.contract_end_date || rawAllowances._contractEndDate || undefined,
+    contractDocumentNumber:
+      row.contract_document_number || rawAllowances._contractDocumentNumber || undefined,
+    contractDocumentUrl:
+      row.contract_document_url || rawAllowances._contractDocumentUrl || undefined,
+    contractDocumentName:
+      row.contract_document_name || rawAllowances._contractDocumentName || undefined,
+    contractUpdatedAt: row.contract_updated_at || rawAllowances._contractUpdatedAt || undefined,
+    address: row.address || rawAllowances._address || undefined,
+    emergencyContact: rawAllowances._emergencyContact || undefined,
     role: row.role || 'Staff',
     gender: row.gender || 'Laki-laki',
     department: row.department || 'Operasional',
@@ -114,7 +141,7 @@ export function dbToEmployee(row: any): Employee {
     npwp: row.npwp || '00.000.000.0-000.000',
     ptkpStatus: row.ptkp_status || 'TK/0',
     bpjsKesehatanNo: row.bpjs_kesehatan_no || '0001000000000',
-    bpjsKetenagakerjaanNo: row.bpjsKetenagakerjaanNo || '00000000000',
+    bpjsKetenagakerjaanNo: row.bpjsKetenagakerjaanNo || row.bpjs_ketenagakerjaan_no || '00000000000',
     remainingLeaveDays: Number(row.remaining_leave_days) ?? 12,
     isActive: row.is_active ?? true,
     approvalStatus: row.approval_status || 'approved',
@@ -297,12 +324,80 @@ export async function checkSupabaseStatus(): Promise<SupabaseSyncStatus> {
   }
 }
 
+export const DELETED_EMPLOYEE_IDS_KEY = 'deleted_employee_ids';
+export const EMPLOYEES_MODIFIED_KEY = 'tgi_employees_modified';
+
+export function getDeletedEmployeeIds(): string[] {
+  try {
+    const raw = localStorage.getItem(DELETED_EMPLOYEE_IDS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed)
+      ? parsed.filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+export function addDeletedEmployeeId(id: string): string[] {
+  if (!id) return getDeletedEmployeeIds();
+  try {
+    const current = new Set(getDeletedEmployeeIds());
+    current.add(id);
+    const next = Array.from(current);
+    localStorage.setItem(DELETED_EMPLOYEE_IDS_KEY, JSON.stringify(next));
+    localStorage.setItem(EMPLOYEES_MODIFIED_KEY, 'true');
+    return next;
+  } catch {
+    return [id];
+  }
+}
+
+export function removeDeletedEmployeeId(id: string): void {
+  if (!id) return;
+  try {
+    const next = getDeletedEmployeeIds().filter((item) => item !== id);
+    localStorage.setItem(DELETED_EMPLOYEE_IDS_KEY, JSON.stringify(next));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+export function markEmployeesModified(): void {
+  try {
+    localStorage.setItem(EMPLOYEES_MODIFIED_KEY, 'true');
+  } catch {
+    // ignore storage errors
+  }
+}
+
+export function isEmployeesModified(): boolean {
+  try {
+    if (localStorage.getItem(EMPLOYEES_MODIFIED_KEY) === 'true') return true;
+    if (getDeletedEmployeeIds().length > 0) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 export async function autoSeedSupabaseIfEmpty(
   mockEmployees: Employee[],
   mockAssets: CompanyAsset[],
-  mockPayrolls: PayrollRecord[]
+  mockPayrolls: PayrollRecord[],
+  forceManual = false
 ): Promise<{ seeded: boolean; message: string }> {
   try {
+    // Guard: Never auto-seed or re-insert default dummy employees if the user has already modified or deleted employee data
+    const deletedIds = new Set(getDeletedEmployeeIds());
+    if (!forceManual && (isEmployeesModified() || deletedIds.size > 0)) {
+      return {
+        seeded: false,
+        message: 'Auto-seed dimatikan karena data karyawan sudah pernah diubah atau dihapus.',
+      };
+    }
+
     const { count, error: empCountError } = await supabase
       .from('employees')
       .select('id', { count: 'exact', head: true });
@@ -315,8 +410,19 @@ export async function autoSeedSupabaseIfEmpty(
       return { seeded: false, message: `Database telah berisi ${count} karyawan.` };
     }
 
+    // Filter out any deleted employee IDs so they are never re-inserted
+    const filteredMockEmployees = mockEmployees.filter((e) => !deletedIds.has(e.id));
+    const filteredMockPayrolls = mockPayrolls.filter((p) => !deletedIds.has(p.employeeId));
+
+    if (filteredMockEmployees.length === 0) {
+      return {
+        seeded: false,
+        message: 'Tidak ada data karyawan untuk di-seed (seluruh data telah dihapus).',
+      };
+    }
+
     // Seed employees
-    const mappedEmps = mockEmployees.map(employeeToDb);
+    const mappedEmps = filteredMockEmployees.map(employeeToDb);
     const { error: seedEmpErr } = await supabase.from('employees').insert(mappedEmps);
     if (seedEmpErr) {
       return { seeded: false, message: seedEmpErr.message };
@@ -329,12 +435,15 @@ export async function autoSeedSupabaseIfEmpty(
     }
 
     // Seed payrolls
-    if (mockPayrolls.length > 0) {
-      const mappedPayrolls = mockPayrolls.map(payrollToDb);
+    if (filteredMockPayrolls.length > 0) {
+      const mappedPayrolls = filteredMockPayrolls.map(payrollToDb);
       await supabase.from('payrolls').insert(mappedPayrolls);
     }
 
-    return { seeded: true, message: `Berhasil mengunggah ${mockEmployees.length} karyawan dan ${mockAssets.length} aset awal ke Supabase!` };
+    return {
+      seeded: true,
+      message: `Berhasil mengunggah ${filteredMockEmployees.length} karyawan dan ${mockAssets.length} aset awal ke Supabase!`,
+    };
   } catch (err: any) {
     return { seeded: false, message: err?.message || 'Gagal seeding' };
   }
@@ -348,7 +457,21 @@ export async function fetchEmployeesFromSupabase(): Promise<Employee[] | null> {
       .order('created_at', { ascending: false });
 
     if (error || !data) return null;
-    return data.map(dbToEmployee);
+
+    const deletedIds = new Set(getDeletedEmployeeIds());
+    const allMapped = data.map(dbToEmployee);
+
+    // Purge any rows in Supabase that are marked in deleted_employee_ids so they never come back
+    if (deletedIds.size > 0) {
+      const lingeringDeleted = allMapped.filter((e) => deletedIds.has(e.id));
+      if (lingeringDeleted.length > 0) {
+        lingeringDeleted.forEach((emp) => {
+          deleteEmployeeFromSupabase(emp.id);
+        });
+      }
+    }
+
+    return allMapped.filter((emp) => !deletedIds.has(emp.id));
   } catch {
     return null;
   }
@@ -356,6 +479,8 @@ export async function fetchEmployeesFromSupabase(): Promise<Employee[] | null> {
 
 export async function insertEmployeeToSupabase(emp: Employee): Promise<boolean> {
   try {
+    removeDeletedEmployeeId(emp.id);
+    markEmployeesModified();
     const row = employeeToDb(emp);
     const { error } = await supabase.from('employees').insert([row]);
     if (error) {
@@ -371,6 +496,7 @@ export async function insertEmployeeToSupabase(emp: Employee): Promise<boolean> 
 
 export async function updateEmployeeInSupabase(emp: Employee): Promise<boolean> {
   try {
+    markEmployeesModified();
     const row = employeeToDb(emp);
     const { error } = await supabase.from('employees').update(row).eq('id', emp.id);
     if (error) {
@@ -385,7 +511,29 @@ export async function updateEmployeeInSupabase(emp: Employee): Promise<boolean> 
 }
 
 export async function deleteEmployeeFromSupabase(id: string): Promise<boolean> {
+  if (!id) return false;
+  // Always record in deleted_employee_ids first so it never gets restored on page refresh
+  addDeletedEmployeeId(id);
+
   try {
+    // Delete dependent child records first so foreign key constraints never block DELETE FROM employees WHERE id = ...
+    await Promise.allSettled([
+      supabase.from('payrolls').delete().eq('employee_id', id),
+      supabase.from('attendances').delete().eq('employee_id', id),
+      supabase.from('leave_requests').delete().eq('employee_id', id),
+      supabase.from('overtime_requests').delete().eq('employee_id', id),
+      supabase.from('reimbursements').delete().eq('employee_id', id),
+      supabase
+        .from('company_assets')
+        .update({
+          assigned_to_employee_id: null,
+          assigned_to_employee_name: null,
+          assigned_to_employee_nik: null,
+          status: 'Tersedia',
+        })
+        .eq('assigned_to_employee_id', id),
+    ]);
+
     const { error } = await supabase.from('employees').delete().eq('id', id);
     if (error) {
       console.warn('Supabase delete employee error:', error.message);
@@ -464,7 +612,8 @@ export async function fetchPayrollsFromSupabase(): Promise<PayrollRecord[] | nul
       .order('created_at', { ascending: false });
 
     if (error || !data) return null;
-    return data.map(dbToPayroll);
+    const deletedIds = new Set(getDeletedEmployeeIds());
+    return data.map(dbToPayroll).filter((p) => !deletedIds.has(p.employeeId));
   } catch {
     return null;
   }
@@ -539,7 +688,8 @@ export async function fetchAttendancesFromSupabase(): Promise<AttendanceRecord[]
       .order('date', { ascending: false });
 
     if (error || !data) return null;
-    return data.map(dbToAttendance);
+    const deletedIds = new Set(getDeletedEmployeeIds());
+    return data.map(dbToAttendance).filter((a) => !deletedIds.has(a.employeeId));
   } catch {
     return null;
   }
@@ -561,9 +711,52 @@ export async function upsertAttendanceToSupabase(att: AttendanceRecord): Promise
 }
 
 // -----------------------------------------------------------------------------
-// LEAVE REQUESTS (Cuti & Izin)
+// LEAVE REQUESTS (Cuti & Izin + Bukti Gambar Pendukung)
 // -----------------------------------------------------------------------------
-export function leaveToDb(leave: LeaveRequest) {
+const LEAVE_ATTACHMENTS_STORAGE_KEY = 'tgi_leave_attachments_map';
+
+function saveLeaveAttachmentCache(
+  id: string,
+  meta?: { attachmentUrl?: string; attachmentName?: string; attachmentUploadedAt?: string }
+) {
+  try {
+    if (!meta?.attachmentUrl) return;
+    const raw = localStorage.getItem(LEAVE_ATTACHMENTS_STORAGE_KEY);
+    const map = raw ? JSON.parse(raw) : {};
+    map[id] = meta;
+    localStorage.setItem(LEAVE_ATTACHMENTS_STORAGE_KEY, JSON.stringify(map));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function getLeaveAttachmentCache(id: string): {
+  attachmentUrl?: string;
+  attachmentName?: string;
+  attachmentUploadedAt?: string;
+} {
+  try {
+    const raw = localStorage.getItem(LEAVE_ATTACHMENTS_STORAGE_KEY);
+    if (!raw) return {};
+    const map = JSON.parse(raw);
+    return map[id] || {};
+  } catch {
+    return {};
+  }
+}
+
+const LEAVE_ATTACHMENT_MARKER = '\n__TGI_LEAVE_ATTACHMENT__:';
+
+export function leaveToDb(leave: LeaveRequest, includeAttachmentInReasonFallback = false) {
+  let reasonField = leave.reason || '';
+  if (includeAttachmentInReasonFallback && leave.attachmentUrl) {
+    const payload = JSON.stringify({
+      u: leave.attachmentUrl,
+      n: leave.attachmentName || 'Bukti_Cuti_Izin.jpg',
+      t: leave.attachmentUploadedAt || '',
+    });
+    reasonField = `${reasonField}${LEAVE_ATTACHMENT_MARKER}${payload}`;
+  }
   return {
     id: leave.id,
     employee_id: leave.employeeId,
@@ -571,7 +764,7 @@ export function leaveToDb(leave: LeaveRequest) {
     start_date: leave.startDate,
     end_date: leave.endDate,
     total_days: Number(leave.totalDays) || 1,
-    reason: leave.reason || '',
+    reason: reasonField,
     status: leave.status || 'Menunggu Persetujuan',
     applied_at: leave.appliedAt || new Date().toISOString(),
     approved_by: leave.approvedBy || null,
@@ -580,6 +773,34 @@ export function leaveToDb(leave: LeaveRequest) {
 }
 
 export function dbToLeave(row: any): LeaveRequest {
+  let cleanReason = row.reason || '';
+  let embeddedUrl: string | undefined;
+  let embeddedName: string | undefined;
+  let embeddedTime: string | undefined;
+
+  if (typeof cleanReason === 'string' && cleanReason.includes(LEAVE_ATTACHMENT_MARKER)) {
+    const parts = cleanReason.split(LEAVE_ATTACHMENT_MARKER);
+    cleanReason = parts[0] || '';
+    try {
+      const parsed = JSON.parse(parts[1] || '{}');
+      embeddedUrl = parsed.u || undefined;
+      embeddedName = parsed.n || undefined;
+      embeddedTime = parsed.t || undefined;
+    } catch {
+      // ignore parse error
+    }
+  }
+
+  const cached = getLeaveAttachmentCache(row.id);
+  const attachmentUrl = row.attachment_url || embeddedUrl || cached.attachmentUrl || undefined;
+  const attachmentName = row.attachment_name || embeddedName || cached.attachmentName || undefined;
+  const attachmentUploadedAt =
+    row.attachment_uploaded_at || embeddedTime || cached.attachmentUploadedAt || undefined;
+
+  if (attachmentUrl) {
+    saveLeaveAttachmentCache(row.id, { attachmentUrl, attachmentName, attachmentUploadedAt });
+  }
+
   return {
     id: row.id,
     employeeId: row.employee_id,
@@ -587,10 +808,13 @@ export function dbToLeave(row: any): LeaveRequest {
     startDate: row.start_date,
     endDate: row.end_date,
     totalDays: Number(row.total_days) || 1,
-    reason: row.reason || '',
+    reason: cleanReason,
     status: row.status || 'Menunggu Persetujuan',
     appliedAt: row.applied_at || new Date().toISOString(),
     approvedBy: row.approved_by || undefined,
+    attachmentUrl,
+    attachmentName,
+    attachmentUploadedAt,
   };
 }
 
@@ -602,7 +826,8 @@ export async function fetchLeaveRequestsFromSupabase(): Promise<LeaveRequest[] |
       .order('applied_at', { ascending: false });
 
     if (error || !data) return null;
-    return data.map(dbToLeave);
+    const deletedIds = new Set(getDeletedEmployeeIds());
+    return data.map(dbToLeave).filter((l) => !deletedIds.has(l.employeeId));
   } catch {
     return null;
   }
@@ -610,7 +835,15 @@ export async function fetchLeaveRequestsFromSupabase(): Promise<LeaveRequest[] |
 
 export async function upsertLeaveRequestToSupabase(req: LeaveRequest): Promise<boolean> {
   try {
-    const row = leaveToDb(req);
+    if (req.attachmentUrl) {
+      saveLeaveAttachmentCache(req.id, {
+        attachmentUrl: req.attachmentUrl,
+        attachmentName: req.attachmentName,
+        attachmentUploadedAt: req.attachmentUploadedAt,
+      });
+    }
+    // Use embedded attachment marker inside reason column so it works on all Supabase schemas without requiring manual DDL
+    const row = leaveToDb(req, Boolean(req.attachmentUrl));
     const { error } = await supabase.from('leave_requests').upsert(row, { onConflict: 'id' });
     if (error) {
       console.warn('Supabase upsert leave request error:', error.message);
@@ -670,7 +903,8 @@ export async function fetchOvertimeRequestsFromSupabase(): Promise<OvertimeReque
       .order('date', { ascending: false });
 
     if (error || !data) return null;
-    return data.map(dbToOvertime);
+    const deletedIds = new Set(getDeletedEmployeeIds());
+    return data.map(dbToOvertime).filter((o) => !deletedIds.has(o.employeeId));
   } catch {
     return null;
   }
@@ -749,7 +983,8 @@ export async function fetchReimbursementsFromSupabase(): Promise<ReimbursementCl
       .order('applied_at', { ascending: false });
 
     if (error || !data) return null;
-    return data.map(dbToReimbursement);
+    const deletedIds = new Set(getDeletedEmployeeIds());
+    return data.map(dbToReimbursement).filter((r) => !deletedIds.has(r.employeeId));
   } catch {
     return null;
   }

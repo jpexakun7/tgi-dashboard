@@ -10,6 +10,12 @@ import {
   ShieldCheck,
   Calendar,
   Calculator,
+  Eye,
+  Upload,
+  Trash2,
+  X,
+  Download,
+  CheckCircle2,
 } from 'lucide-react';
 import { Employee, LeaveRequest, OvertimeRequest } from '../types';
 import {
@@ -21,6 +27,7 @@ import {
   formatOvertimeMinutes,
   calculateMinutesBetweenTimes,
 } from '../utils/formatters';
+import { validateImageFile, compressImage } from '../utils/imageUtils';
 
 interface LeaveAndOvertimeProps {
   employees: Employee[];
@@ -56,6 +63,15 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
   const [leaveEnd, setLeaveEnd] = useState(new Date().toISOString().split('T')[0]);
   const [leaveDays, setLeaveDays] = useState(1);
   const [leaveReason, setLeaveReason] = useState('');
+  const [leaveAttachmentUrl, setLeaveAttachmentUrl] = useState('');
+  const [leaveAttachmentName, setLeaveAttachmentName] = useState('');
+  const [isCompressingAttachment, setIsCompressingAttachment] = useState(false);
+  const [previewEvidenceModal, setPreviewEvidenceModal] = useState<{
+    title: string;
+    subtitle: string;
+    imageUrl: string;
+    fileName?: string;
+  } | null>(null);
 
   // Overtime Form State (Hitungan Per Menit)
   const [otEmpId, setOtEmpId] = useState(employees[0]?.id || '');
@@ -78,8 +94,35 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
     }
   };
 
+  const handleUploadEvidenceFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const validation = validateImageFile(file);
+    if (!validation.valid) {
+      e.target.value = '';
+      return;
+    }
+    try {
+      setIsCompressingAttachment(true);
+      const compressed = await compressImage(file, 800, 800, 0.8);
+      setLeaveAttachmentUrl(compressed);
+      setLeaveAttachmentName(file.name.replace(/\.[^/.]+$/, '') + '.jpg');
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsCompressingAttachment(false);
+      e.target.value = '';
+    }
+  };
+
   const handleSaveLeave = (e: React.FormEvent) => {
     e.preventDefault();
+    const nowTimestamp = `${new Date().toLocaleDateString('id-ID', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    })} • ${new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} WIB`;
+
     const newReq: LeaveRequest = {
       id: `leave-${Date.now()}`,
       employeeId: leaveEmpId,
@@ -90,10 +133,15 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
       reason: leaveReason || 'Keperluan pribadi',
       status: 'Menunggu Persetujuan',
       appliedAt: new Date().toISOString().split('T')[0],
+      attachmentUrl: leaveAttachmentUrl || undefined,
+      attachmentName: leaveAttachmentName || undefined,
+      attachmentUploadedAt: leaveAttachmentUrl ? nowTimestamp : undefined,
     };
     onAddLeave(newReq);
     setIsLeaveModalOpen(false);
     setLeaveReason('');
+    setLeaveAttachmentUrl('');
+    setLeaveAttachmentName('');
   };
 
   const handleSaveOvertime = (e: React.FormEvent) => {
@@ -223,6 +271,7 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
                     <th className="py-3 px-4">Periode Tanggal</th>
                     <th className="py-3 px-4">Durasi</th>
                     <th className="py-3 px-4">Alasan</th>
+                    <th className="py-3 px-4">Bukti / Lampiran</th>
                     <th className="py-3 px-4 text-center">Status</th>
                     <th className="py-3 px-4 text-center">Aksi / Verifikator</th>
                   </tr>
@@ -256,8 +305,31 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
                         <td className="py-3 px-4 font-semibold text-slate-800">
                           {leave.totalDays} Hari
                         </td>
-                        <td className="py-3 px-4 text-slate-600 max-w-[200px] truncate">
+                        <td className="py-3 px-4 text-slate-600 max-w-[200px] truncate" title={leave.reason}>
                           {leave.reason}
+                        </td>
+                        <td className="py-3 px-4 whitespace-nowrap">
+                          {leave.attachmentUrl ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPreviewEvidenceModal({
+                                  title: `Bukti Pendukung Cuti / Izin — ${leave.type}`,
+                                  subtitle: `${emp?.fullName || 'Karyawan'} • ${formatIndoDate(
+                                    leave.startDate
+                                  )} s/d ${formatIndoDate(leave.endDate)} (${leave.totalDays} Hari)`,
+                                  imageUrl: leave.attachmentUrl!,
+                                  fileName: leave.attachmentName || `Bukti-Cuti-${leave.id}.jpg`,
+                                })
+                              }
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-[11px] font-bold transition-colors cursor-pointer"
+                            >
+                              <Eye className="w-3.5 h-3.5 text-indigo-600" />
+                              <span>Lihat Bukti</span>
+                            </button>
+                          ) : (
+                            <span className="text-[11px] text-slate-400 italic">Tanpa Lampiran</span>
+                          )}
                         </td>
                         <td className="py-3 px-4 text-center">
                           <span
@@ -506,6 +578,52 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
                 />
               </div>
 
+              <div className="space-y-1.5">
+                <label className="block text-slate-600">
+                  Upload Gambar Bukti Pendukung (Surat Dokter / Bukti Izin)
+                </label>
+                {leaveAttachmentUrl ? (
+                  <div className="p-2.5 rounded-xl bg-indigo-50/70 border border-indigo-200 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <img
+                        src={leaveAttachmentUrl}
+                        alt="Pratinjau Bukti"
+                        className="w-10 h-10 rounded-lg object-cover border border-indigo-300 shrink-0"
+                      />
+                      <span className="text-xs font-bold text-slate-800 truncate">
+                        {leaveAttachmentName || 'Bukti-Cuti.jpg'}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLeaveAttachmentUrl('');
+                        setLeaveAttachmentName('');
+                      }}
+                      className="p-1.5 rounded-lg bg-white text-rose-600 border border-rose-200 hover:bg-rose-50 cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <label className="flex flex-col items-center justify-center p-3 border-2 border-dashed border-slate-300 hover:border-emerald-500 rounded-xl bg-slate-50 hover:bg-emerald-50/40 cursor-pointer transition-colors">
+                    <Upload className="w-4 h-4 text-emerald-600 mb-1" />
+                    <span className="text-xs font-semibold text-slate-700">
+                      {isCompressingAttachment
+                        ? 'Mengompresi gambar...'
+                        : 'Pilih Foto Surat Dokter / Bukti Izin (Otomatis Kompresi)'}
+                    </span>
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,image/jpg"
+                      onChange={handleUploadEvidenceFile}
+                      disabled={isCompressingAttachment}
+                      className="hidden"
+                    />
+                  </label>
+                )}
+              </div>
+
               <div className="pt-4 border-t border-slate-200 flex justify-end gap-2">
                 <button
                   type="button"
@@ -516,7 +634,8 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl cursor-pointer"
+                  disabled={isCompressingAttachment}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl cursor-pointer disabled:opacity-50"
                 >
                   Kirim Pengajuan
                 </button>
@@ -666,6 +785,57 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Pratinjau / Zoom Bukti Cuti & Izin */}
+      {previewEvidenceModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-5 shadow-2xl border border-slate-200 space-y-3.5">
+            <div className="flex items-start justify-between gap-3 pb-2.5 border-b border-slate-100">
+              <div>
+                <h4 className="font-bold text-slate-900 text-sm">{previewEvidenceModal.title}</h4>
+                <p className="text-[11px] text-slate-500 mt-0.5">{previewEvidenceModal.subtitle}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPreviewEvidenceModal(null)}
+                className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="rounded-xl overflow-hidden bg-slate-900 border border-slate-200 flex items-center justify-center max-h-[65vh]">
+              <img
+                src={previewEvidenceModal.imageUrl}
+                alt={previewEvidenceModal.title}
+                className="w-full max-h-[62vh] object-contain"
+              />
+            </div>
+            <div className="flex items-center justify-between gap-2 pt-1 flex-wrap">
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                Tersinkronisasi dari Portal Karyawan
+              </span>
+              <div className="flex items-center gap-2">
+                <a
+                  href={previewEvidenceModal.imageUrl}
+                  download={previewEvidenceModal.fileName || 'Bukti-Cuti-Izin.jpg'}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl transition-colors"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Unduh Bukti</span>
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setPreviewEvidenceModal(null)}
+                  className="px-4 py-2 text-xs font-bold bg-slate-800 hover:bg-slate-900 text-white rounded-xl cursor-pointer"
+                >
+                  Tutup
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

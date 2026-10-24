@@ -23,6 +23,7 @@ export default defineConfig(() => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
+        injectRegister: false,
         manifestFilename: 'manifest.json',
         includeAssets: [
           'icon.svg',
@@ -112,8 +113,7 @@ export default defineConfig(() => {
           ],
         },
         devOptions: {
-          enabled: true,
-          type: 'module',
+          enabled: false,
         },
       }),
     ],

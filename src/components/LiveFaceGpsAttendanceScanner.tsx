@@ -237,18 +237,21 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const watchIdRef = useRef<number | null>(null);
   const avatarImgRef = useRef<HTMLImageElement | null>(null);
   const gpsHistoryRef = useRef<GpsTelemetrySample[]>([]);
 
   // Real-time ticking clock (updated every second)
   const [nowDate, setNowDate] = useState<Date>(() => new Date());
 
-  // Camera state - opens immediately when component mounts
+  // Camera state - opens immediately when component mounts and auto-reconnects from background on iOS Safari / PWA
   const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
   const [isStartingCamera, setIsStartingCamera] = useState<boolean>(true);
+  const [isReconnectingCamera, setIsReconnectingCamera] = useState<boolean>(false);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
   const [cameraFallbackReason, setCameraFallbackReason] = useState<string | null>(null);
   const [isCapturing, setIsCapturing] = useState<boolean>(false);
+  const [isRefreshingGps, setIsRefreshingGps] = useState<boolean>(false);
 
   // Real-Time GPS state read strictly from real device GPS hardware (No Fake Fallback!)
   const [gpsStatus, setGpsStatus] = useState<'searching' | 'locked' | 'denied' | 'unsupported'>(
@@ -425,8 +428,30 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
     [reverseGeocodeCoords]
   );
 
-  // 3. Start & Watch Live Phone GPS (Standard GPS Coordinate Reading without Satellite Accuracy Restrictions)
+  // 3. Start & Watch Live Phone GPS (with iOS Safari / PWA manual Refresh GPS support)
+  const startGpsWatcher = useCallback(() => {
+    if (!('geolocation' in navigator)) return;
+    if (watchIdRef.current !== null) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
+    }
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      (pos) => {
+        processIncomingPosition(pos, false);
+      },
+      () => {
+        // Keep current state if watch encounters transient error
+      },
+      {
+        enableHighAccuracy: true,
+        maximumAge: 3000,
+        timeout: 15000,
+      }
+    );
+  }, [processIncomingPosition]);
+
   const refreshPhoneGps = useCallback(() => {
+    setIsRefreshingGps(true);
     setGpsStatus('searching');
     setGpsErrorMessage(null);
 
@@ -434,6 +459,7 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
       setGpsStatus('unsupported');
       setGpsCoords(null);
       setDistanceFromOffice(null);
+      setIsRefreshingGps(false);
       setGpsErrorMessage(
         'Perangkat atau browser ini tidak mendukung fitur lokasi GPS. Silakan buka menggunakan HP atau browser yang mendukung GPS.'
       );
@@ -441,21 +467,25 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
       return;
     }
 
+    // Restart continuous GPS watcher so iOS Safari / PWA gets a fresh location stream
+    startGpsWatcher();
+
     const handleGpsError = (err: GeolocationPositionError) => {
+      setIsRefreshingGps(false);
       setGpsStatus('denied');
       setGpsCoords(null);
       setDistanceFromOffice(null);
       if (err.code === 1) {
         setGpsErrorMessage(
-          'Izin lokasi GPS ditolak! Silakan izinkan akses Lokasi (GPS) pada HP/Browser untuk melakukan absen dalam radius maksimal 25 meter dari titik koordinat kantor.'
+          'Izin lokasi GPS ditolak! Silakan izinkan akses Lokasi (GPS) pada Pengaturan Safari / Chrome HP untuk melakukan absen dalam radius maksimal 25 meter dari titik koordinat kantor.'
         );
       } else if (err.code === 2) {
         setGpsErrorMessage(
-          'Titik lokasi GPS belum terbaca. Pastikan fitur Lokasi / GPS pada HP Anda aktif.'
+          'Titik lokasi GPS belum terbaca. Pastikan fitur Lokasi / GPS pada HP Anda aktif lalu tekan tombol "Refresh GPS".'
         );
       } else {
         setGpsErrorMessage(
-          'Waktu pembacaan GPS habis. Klik tombol "Perbarui GPS HP" untuk membaca ulang titik koordinat.'
+          'Waktu pembacaan GPS habis. Tekan tombol "Refresh GPS" untuk membaca ulang titik koordinat.'
         );
       }
       setGpsDetailedAddress(
@@ -465,20 +495,22 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
 
     navigator.geolocation.getCurrentPosition(
       (pos) => {
+        setIsRefreshingGps(false);
         processIncomingPosition(pos, true);
       },
       (err) => {
-        // Fallback to standard GPS (enableHighAccuracy: false) if high accuracy times out indoors
+        // Fallback to standard GPS (enableHighAccuracy: false) if high accuracy times out indoors on iOS/Android
         if (err.code !== 1) {
           navigator.geolocation.getCurrentPosition(
             (posFallback) => {
+              setIsRefreshingGps(false);
               processIncomingPosition(posFallback, true);
             },
             handleGpsError,
             {
               enableHighAccuracy: false,
               timeout: 10000,
-              maximumAge: 15000,
+              maximumAge: 0,
             }
           );
         } else {
@@ -488,42 +520,29 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
       {
         enableHighAccuracy: true,
         timeout: 7000,
-        maximumAge: 5000,
+        maximumAge: 0,
       }
     );
-  }, [processIncomingPosition]);
+  }, [processIncomingPosition, startGpsWatcher]);
 
   useEffect(() => {
     refreshPhoneGps();
-
-    let watchId: number | null = null;
-    if ('geolocation' in navigator) {
-      watchId = navigator.geolocation.watchPosition(
-        (pos) => {
-          processIncomingPosition(pos, false);
-        },
-        () => {
-          // Keep current state if watch encounters transient error
-        },
-        {
-          enableHighAccuracy: false,
-          maximumAge: 5000,
-          timeout: 15000,
-        }
-      );
-    }
-
     return () => {
-      if (watchId !== null && 'geolocation' in navigator) {
-        navigator.geolocation.clearWatch(watchId);
+      if (watchIdRef.current !== null && 'geolocation' in navigator) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
       }
     };
-  }, [refreshPhoneGps, processIncomingPosition]);
+  }, [refreshPhoneGps]);
 
-  // 4. Directly Open Camera on Mount or Mode Change
+  // 4. Directly Open Camera on Mount, Mode Change, or Auto-Reconnect on iOS Safari / PWA Foreground Resume
   const startLiveCamera = useCallback(
-    async (mode: 'user' | 'environment' = facingMode) => {
-      setIsStartingCamera(true);
+    async (mode: 'user' | 'environment' = facingMode, isAutoReconnect = false) => {
+      if (isAutoReconnect) {
+        setIsReconnectingCamera(true);
+      } else {
+        setIsStartingCamera(true);
+      }
       setCameraFallbackReason(null);
 
       // Stop existing tracks first
@@ -535,6 +554,7 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         setIsCameraActive(false);
         setIsStartingCamera(false);
+        setIsReconnectingCamera(false);
         setCameraFallbackReason(
           'Browser tidak mendukung akses kamera langsung. Mode pratinjau sensor wajah aktif.'
         );
@@ -542,25 +562,52 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
       }
 
       try {
-        const mediaStream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: mode,
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-          },
-          audio: false,
-        });
+        let mediaStream: MediaStream;
+        try {
+          // Primary HD constraint
+          mediaStream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              facingMode: { ideal: mode },
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+            },
+            audio: false,
+          });
+        } catch {
+          // iOS Safari / older mobile fallback constraint
+          mediaStream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: mode },
+            audio: false,
+          });
+        }
 
         streamRef.current = mediaStream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = mediaStream;
-          await videoRef.current.play().catch(() => {});
+
+        // Listen for iOS Safari / PWA background track termination so we can auto-reconnect
+        const videoTracks = mediaStream.getVideoTracks();
+        if (videoTracks.length > 0) {
+          videoTracks[0].onended = () => {
+            if (document.visibilityState === 'visible') {
+              startLiveCamera(mode, true);
+            }
+          };
+        }
+
+        const videoEl = videoRef.current;
+        if (videoEl) {
+          videoEl.setAttribute('playsinline', 'true');
+          videoEl.setAttribute('webkit-playsinline', 'true');
+          videoEl.muted = true;
+          videoEl.srcObject = mediaStream;
+          await videoEl.play().catch(() => {});
         }
         setIsCameraActive(true);
         setIsStartingCamera(false);
+        setIsReconnectingCamera(false);
       } catch {
         setIsCameraActive(false);
         setIsStartingCamera(false);
+        setIsReconnectingCamera(false);
         setCameraFallbackReason(
           'Akses kamera fisik belum diizinkan pada perangkat ini — menggunakan tangkapan layar biometrik karyawan dengan watermark GPS & Jam Real-Time.'
         );
@@ -579,10 +626,70 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
     };
   }, [facingMode, startLiveCamera]);
 
+  // iOS Safari & Standalone PWA Auto-Reconnect when returning from background / lock screen
+  useEffect(() => {
+    const checkAndReconnectCameraAndGps = () => {
+      if (document.visibilityState !== 'visible') return;
+
+      const activeStream = streamRef.current;
+      const videoTrack = activeStream?.getVideoTracks()?.[0];
+      const videoEl = videoRef.current;
+
+      const isStreamDead =
+        !activeStream ||
+        !activeStream.active ||
+        !videoTrack ||
+        videoTrack.readyState === 'ended' ||
+        videoTrack.muted;
+
+      const isVideoFrozen = Boolean(
+        videoEl && (videoEl.paused || videoEl.ended || videoEl.readyState < 2)
+      );
+
+      if (isStreamDead) {
+        startLiveCamera(facingMode, true);
+      } else if (isVideoFrozen && videoEl) {
+        videoEl.play().catch(() => {
+          startLiveCamera(facingMode, true);
+        });
+      }
+    };
+
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible') {
+        checkAndReconnectCameraAndGps();
+        refreshPhoneGps();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    window.addEventListener('pageshow', handleVisibilityOrFocus);
+    window.addEventListener('focus', checkAndReconnectCameraAndGps);
+
+    // Health check interval for iOS PWA camera stream freeze
+    const healthTimer = window.setInterval(checkAndReconnectCameraAndGps, 4000);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+      window.removeEventListener('pageshow', handleVisibilityOrFocus);
+      window.removeEventListener('focus', checkAndReconnectCameraAndGps);
+      window.clearInterval(healthTimer);
+    };
+  }, [facingMode, startLiveCamera, refreshPhoneGps]);
+
   const handleToggleFacingMode = () => {
     const nextMode = facingMode === 'user' ? 'environment' : 'user';
     setFacingMode(nextMode);
   };
+
+  // Strict Anti-Duplicate Attendance Flags (Max 1x Check-In & 1x Check-Out per Shift/Day)
+  const hasCheckedInToday = Boolean(
+    todayAttendance?.checkIn && todayAttendance.checkIn.trim() !== '' && todayAttendance.checkIn !== '-'
+  );
+  const hasCheckedOutToday = Boolean(
+    todayAttendance?.checkOut && todayAttendance.checkOut.trim() !== '' && todayAttendance.checkOut !== '-'
+  );
+  const isShiftAttendanceCompletedToday = hasCheckedInToday && hasCheckedOutToday;
 
   // Geofence <= 25m and Anti-Fake GPS Eligibility Evaluation
   const isGpsLocked = gpsStatus === 'locked' && gpsCoords !== null && distanceFromOffice !== null;
@@ -766,12 +873,34 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
     return canvas.toDataURL('image/jpeg', 0.9);
   };
 
-  // 6. Trigger Photo Capture & Submit Check-In or Check-Out (Strictly Enforcing <= 15m & Anti-Fake GPS)
+  // 6. Trigger Photo Capture & Submit Check-In or Check-Out (Strictly Enforcing 1x Check-In & 1x Check-Out, <= 25m & Anti-Fake GPS)
   const handleCaptureAndSubmit = (mode: 'check_in' | 'check_out') => {
+    // Hard Guard 0: Anti-Duplicate Attendance Validation (Max 1x Check-In & 1x Check-Out per Shift/Day)
+    if (mode === 'check_in' && hasCheckedInToday) {
+      setBlockedAttemptAlert(
+        `ABSEN MASUK DITOLAK (ANTI-DUPLIKAT): Anda sudah melakukan Check-In pada shift hari ini pukul ${todayAttendance?.checkIn} WIB. Setiap karyawan hanya dapat melakukan 1 kali Check-In per shift/hari.`
+      );
+      return;
+    }
+
+    if (mode === 'check_out' && !hasCheckedInToday) {
+      setBlockedAttemptAlert(
+        'ABSEN PULANG DITOLAK: Anda belum melakukan Check-In pada shift hari ini. Silakan lakukan Check-In terlebih dahulu.'
+      );
+      return;
+    }
+
+    if (mode === 'check_out' && hasCheckedOutToday) {
+      setBlockedAttemptAlert(
+        `ABSEN PULANG DITOLAK (ANTI-DUPLIKAT): Anda sudah melakukan Check-Out pada shift hari ini pukul ${todayAttendance?.checkOut} WIB. Setiap karyawan hanya dapat melakukan 1 kali Check-Out per shift/hari.`
+      );
+      return;
+    }
+
     // Hard Guard 1: Real GPS must be locked
     if (!isGpsLocked || !gpsCoords || distanceFromOffice === null) {
       setBlockedAttemptAlert(
-        'ABSEN DITOLAK: Sinyal GPS HP asli belum terkunci. Pastikan GPS Akurasi Tinggi aktif pada HP Anda.'
+        'ABSEN DITOLAK: Sinyal GPS HP asli belum terkunci. Tekan tombol "Refresh GPS" dan pastikan Lokasi/GPS aktif pada HP Anda.'
       );
       return;
     }
@@ -976,22 +1105,32 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
 
           <button
             type="button"
-            onClick={() => startLiveCamera(facingMode)}
+            onClick={() => startLiveCamera(facingMode, false)}
             className="min-h-[38px] px-2.5 sm:px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-[11px] sm:text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
-            title="Muat Ulang Kamera"
+            title="Muat Ulang Kamera (iOS Safari / PWA)"
           >
-            <RefreshCw className={`w-3.5 h-3.5 text-teal-400 shrink-0 ${isStartingCamera ? 'animate-spin' : ''}`} />
-            <span className="truncate">Segarkan Kamera</span>
+            <RefreshCw
+              className={`w-3.5 h-3.5 text-teal-400 shrink-0 ${
+                isStartingCamera || isReconnectingCamera ? 'animate-spin' : ''
+              }`}
+            />
+            <span className="truncate">
+              {isReconnectingCamera ? 'Menyambung Kamera...' : 'Segarkan Kamera'}
+            </span>
           </button>
 
           <button
             type="button"
             onClick={refreshPhoneGps}
-            className="min-h-[38px] px-2.5 sm:px-3 py-1.5 rounded-xl bg-emerald-950/90 hover:bg-emerald-900 text-emerald-300 border border-emerald-700/60 text-[11px] sm:text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
-            title="Perbarui Titik Koordinat GPS HP"
+            className="min-h-[38px] px-2.5 sm:px-3 py-1.5 rounded-xl bg-emerald-950/90 hover:bg-emerald-900 text-emerald-300 border border-emerald-500/60 text-[11px] sm:text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors shadow-xs"
+            title="Refresh Titik Koordinat GPS HP (iOS Safari / Android PWA)"
           >
-            <Navigation className={`w-3.5 h-3.5 text-emerald-400 shrink-0 ${gpsStatus === 'searching' ? 'animate-bounce' : ''}`} />
-            <span className="truncate">Perbarui GPS HP</span>
+            <RefreshCw
+              className={`w-3.5 h-3.5 text-emerald-400 shrink-0 ${
+                gpsStatus === 'searching' || isRefreshingGps ? 'animate-spin' : ''
+              }`}
+            />
+            <span className="truncate">Refresh GPS</span>
           </button>
         </div>
       </div>
@@ -1189,78 +1328,131 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
           <div className="flex flex-col space-y-3.5">
             {/* Primary Shutter Buttons: Placed First on Mobile (order-1 lg:order-4) for One-Handed Ergonomics */}
             <div className="order-1 lg:order-4 space-y-2.5 pt-1 lg:pt-0">
+              {/* Anti-Duplicate Attendance Status Banner */}
+              {isShiftAttendanceCompletedToday ? (
+                <div className="p-3 rounded-xl bg-emerald-950/80 border border-emerald-500/50 text-xs text-emerald-200 flex items-start gap-2.5">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-extrabold text-white">
+                      Presensi Shift Hari Ini Selesai (1x Masuk &amp; 1x Pulang Tercatat)
+                    </p>
+                    <p className="text-[11px] text-emerald-300 mt-0.5">
+                      Check-In: <strong>{todayAttendance?.checkIn} WIB</strong> • Check-Out:{' '}
+                      <strong>{todayAttendance?.checkOut} WIB</strong>. Sistem mengunci absensi duplikat pada hari yang sama.
+                    </p>
+                  </div>
+                </div>
+              ) : hasCheckedInToday ? (
+                <div className="p-2.5 rounded-xl bg-indigo-950/75 border border-indigo-500/40 text-[11px] text-indigo-200 flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-1.5 font-semibold">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                    <span>
+                      Check-In Tercatat Pukul <strong>{todayAttendance?.checkIn} WIB</strong> (Terkunci 1x/Hari)
+                    </span>
+                  </span>
+                  <span className="px-2 py-0.5 rounded bg-indigo-500/30 text-indigo-200 font-bold text-[10px] shrink-0">
+                    Siap Check-Out
+                  </span>
+                </div>
+              ) : null}
+
               {/* Optional Attendance Notes Input */}
               <div>
-                <label className="block text-[11px] font-bold text-slate-300 mb-1">
-                  Catatan Presensi / Keterangan Lokasi (Opsional)
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-[11px] font-bold text-slate-300">
+                    Catatan Presensi / Keterangan Lokasi (Opsional)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={refreshPhoneGps}
+                    className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-400 hover:text-emerald-300 cursor-pointer"
+                  >
+                    <RefreshCw
+                      className={`w-3 h-3 ${
+                        gpsStatus === 'searching' || isRefreshingGps ? 'animate-spin' : ''
+                      }`}
+                    />
+                    <span>Refresh GPS</span>
+                  </button>
+                </div>
                 <input
                   type="text"
                   value={clockInNotes}
+                  disabled={isShiftAttendanceCompletedToday}
                   onChange={(e) => onChangeNotes(e.target.value)}
                   placeholder={`Hadir ${activeShift.name} di ${OFFICE_REFERENCE_COORDS.shortAddress}...`}
-                  className="w-full px-3.5 py-2.5 text-xs bg-slate-800 border border-slate-700 rounded-xl text-white placeholder:text-slate-500 focus:outline-hidden focus:border-emerald-500"
+                  className="w-full px-3.5 py-2.5 text-xs bg-slate-800 border border-slate-700 rounded-xl text-white placeholder:text-slate-500 focus:outline-hidden focus:border-emerald-500 disabled:opacity-50"
                 />
               </div>
 
+              {/* 1x Check-In Button */}
               <button
                 type="button"
-                disabled={isCapturing || !canSubmitAttendance}
+                disabled={hasCheckedInToday || isCapturing || !canSubmitAttendance}
                 onClick={() => handleCaptureAndSubmit('check_in')}
                 className={`w-full min-h-[48px] py-3.5 px-4 rounded-xl text-xs sm:text-sm font-extrabold flex items-center justify-center gap-2 transition-all text-center ${
-                  canSubmitAttendance
+                  hasCheckedInToday
+                    ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-500/40 cursor-not-allowed'
+                    : canSubmitAttendance
                     ? 'bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white shadow-lg shadow-emerald-600/25 cursor-pointer active:scale-[0.99]'
                     : 'bg-slate-800 text-slate-400 border border-rose-500/30 cursor-not-allowed'
                 }`}
               >
-                {canSubmitAttendance ? (
+                {hasCheckedInToday ? (
+                  <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5 shrink-0 text-emerald-400" />
+                ) : canSubmitAttendance ? (
                   <Camera className="w-4 h-4 sm:w-5 sm:h-5 shrink-0" />
                 ) : (
                   <Lock className="w-4 h-4 shrink-0 text-rose-400" />
                 )}
                 <span className="leading-snug">
-                  {!canSubmitAttendance
+                  {hasCheckedInToday
+                    ? `Sudah Check-In Hari Ini (${todayAttendance?.checkIn} WIB — Maks 1x/Shift)`
+                    : !canSubmitAttendance
                     ? isFakeGpsDetected
                       ? 'Absen Masuk Diblokir (Fake GPS Terdeteksi)'
                       : distanceFromOffice !== null && distanceFromOffice > 25
                       ? `Tidak Bisa Absen Masuk (Jarak ${distanceFromOffice}m > 25m)`
                       : 'Menunggu Kunci GPS HP (Wajib Radius ≤ 25m)'
-                    : todayAttendance?.checkIn
-                    ? `Foto Ulang Wajah & Perbarui Absen Masuk (${
-                        useCustomClockTime ? customClockInTime : shortHourMinStr
-                      } WIB)`
                     : `Jepret Foto Wajah & Absen Masuk (${
                         useCustomClockTime ? customClockInTime : shortHourMinStr
                       } WIB)`}
                 </span>
               </button>
 
+              {/* 1x Check-Out Button */}
               <button
                 type="button"
-                disabled={!todayAttendance?.checkIn || isCapturing || !canSubmitAttendance}
+                disabled={
+                  !hasCheckedInToday || hasCheckedOutToday || isCapturing || !canSubmitAttendance
+                }
                 onClick={() => handleCaptureAndSubmit('check_out')}
                 className={`w-full min-h-[46px] py-3 px-4 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-all text-center ${
-                  todayAttendance?.checkIn && canSubmitAttendance
+                  hasCheckedOutToday
+                    ? 'bg-indigo-950/60 text-indigo-300 border border-indigo-500/40 cursor-not-allowed'
+                    : hasCheckedInToday && canSubmitAttendance
                     ? 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-md cursor-pointer active:scale-[0.99]'
                     : 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
                 }`}
               >
-                {todayAttendance?.checkIn && canSubmitAttendance ? (
+                {hasCheckedOutToday ? (
+                  <CheckCircle2 className="w-4 h-4 shrink-0 text-indigo-400" />
+                ) : hasCheckedInToday && canSubmitAttendance ? (
                   <LogOut className="w-4 h-4 shrink-0" />
                 ) : (
                   <Lock className="w-4 h-4 shrink-0" />
                 )}
                 <span className="leading-snug">
-                  {!canSubmitAttendance
+                  {hasCheckedOutToday
+                    ? `Sudah Check-Out Hari Ini (${todayAttendance?.checkOut} WIB — Maks 1x/Shift)`
+                    : !hasCheckedInToday
+                    ? 'Wajib Check-In Terlebih Dahulu Sebelum Check-Out'
+                    : !canSubmitAttendance
                     ? isFakeGpsDetected
                       ? 'Absen Pulang Diblokir (Fake GPS Terdeteksi)'
                       : distanceFromOffice !== null && distanceFromOffice > 25
                       ? `Tidak Bisa Absen Pulang (Jarak ${distanceFromOffice}m > 25m)`
                       : 'Absen Pulang Wajib di Dalam Radius ≤ 25m Kantor'
-                    : todayAttendance?.checkOut
-                    ? `Foto Ulang Wajah & Perbarui Absen Pulang (${
-                        useCustomClockTime ? customClockOutTime : shortHourMinStr
-                      } WIB)`
                     : `Jepret Foto Wajah & Absen Pulang (${
                         useCustomClockTime ? customClockOutTime : shortHourMinStr
                       } WIB)`}

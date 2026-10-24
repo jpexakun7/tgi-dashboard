@@ -334,27 +334,29 @@ export const Header: React.FC<HeaderProps> = ({
           {/* PWA Install App Button (Mobile & Desktop) */}
           <PWAInstallButton />
 
-          {/* Mode Tampilan Switcher (Panel Admin vs Portal Karyawan) */}
+          {/* Mode Tampilan Switcher: Hanya tampil jika sesi Admin terbuka (isAdminUnlocked). Jika karyawan login dengan NIK & PIN (!isAdminUnlocked), seluruh navigasi ke Dashboard Admin HR disembunyikan! */}
           {dashboardMode === 'employee' ? (
-            <button
-              onClick={() => {
-                if (isAdminUnlocked) {
-                  onToggleDashboardMode?.();
-                } else if (onRequestAdminLogin) {
-                  onRequestAdminLogin();
-                } else {
-                  onToggleDashboardMode?.();
-                }
-              }}
-              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs border bg-purple-50 text-purple-900 border-purple-200 hover:bg-purple-100 hover:border-purple-300 shrink-0 whitespace-nowrap"
-              title="Masuk ke Mode HR & Payroll Admin (Perlu PIN Keamanan)"
-            >
-              <Lock className="w-3.5 h-3.5 text-purple-600 shrink-0" />
-              <span className="hidden sm:inline">Panel Admin</span>
-              <span className="text-[10px] text-purple-700 bg-purple-200/60 px-1.5 py-0.2 rounded font-semibold">
-                PIN
-              </span>
-            </button>
+            isAdminUnlocked ? (
+              <button
+                onClick={onToggleDashboardMode}
+                className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs border bg-purple-50 text-purple-900 border-purple-200 hover:bg-purple-100 hover:border-purple-300 shrink-0 whitespace-nowrap"
+                title="Kembali ke Mode HR & Payroll Admin"
+              >
+                <Shield className="w-3.5 h-3.5 text-purple-600 shrink-0" />
+                <span className="hidden sm:inline">Kembali ke Panel Admin</span>
+              </button>
+            ) : (
+              onLockAdmin && (
+                <button
+                  onClick={onLockAdmin}
+                  className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs border bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100 shrink-0 whitespace-nowrap"
+                  title="Keluar Sesi Portal Karyawan (Logout)"
+                >
+                  <LogOut className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                  <span className="hidden sm:inline">Keluar Sesi</span>
+                </button>
+              )
+            )
           ) : (
             <div className="flex items-center gap-1.5 shrink-0">
               <button
@@ -362,7 +364,15 @@ export const Header: React.FC<HeaderProps> = ({
                 className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs border bg-indigo-50 text-indigo-800 border-indigo-200 hover:bg-indigo-100 whitespace-nowrap"
                 title="Beralih ke Portal Layanan Mandiri Karyawan"
               >
-                <User className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                {currentEmployee?.avatarUrl ? (
+                  <img
+                    src={currentEmployee.avatarUrl}
+                    alt={currentEmployee.fullName}
+                    className="w-4 h-4 rounded-full object-cover ring-1 ring-indigo-400 shrink-0"
+                  />
+                ) : (
+                  <User className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                )}
                 <span className="hidden md:inline">Portal Karyawan</span>
                 <span className="text-[10px] text-indigo-700 bg-indigo-100 px-1.5 py-0.2 rounded font-semibold">
                   Buka
@@ -373,10 +383,10 @@ export const Header: React.FC<HeaderProps> = ({
                 <button
                   onClick={onLockAdmin}
                   className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs border bg-slate-50 text-slate-700 border-slate-200 hover:bg-rose-50 hover:text-rose-700 hover:border-rose-200 shrink-0 whitespace-nowrap"
-                  title="Kunci Akses Admin dan Kembali ke Portal Karyawan"
+                  title="Kunci & Keluar Sesi Admin"
                 >
                   <Lock className="w-3.5 h-3.5 text-slate-500 hover:text-rose-600 shrink-0" />
-                  <span className="hidden 2xl:inline text-[11px]">Kunci</span>
+                  <span className="hidden 2xl:inline text-[11px]">Kunci Sesi</span>
                 </button>
               )}
             </div>
@@ -406,8 +416,8 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           )}
 
-          {/* Quick Button: Supabase Cloud Status */}
-          {onOpenSupabaseModal && (
+          {/* Quick Button: Supabase Cloud Status (Admin Only) */}
+          {dashboardMode === 'admin' && onOpenSupabaseModal && (
             <button
               onClick={onOpenSupabaseModal}
               className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-xl transition-all cursor-pointer border shadow-2xs shrink-0 whitespace-nowrap ${
@@ -529,11 +539,19 @@ export const Header: React.FC<HeaderProps> = ({
                       {currentEmployee.role}
                     </span>
                   </div>
+                  <div className="flex items-center justify-between text-[10px] pt-1 border-t border-emerald-200/40 text-slate-600">
+                    <span>NIK KTP (16 Digit):</span>
+                    {currentEmployee.ktpNumber && /^\d{16}$/.test(currentEmployee.ktpNumber) ? (
+                      <strong className="font-mono text-indigo-700">{currentEmployee.ktpNumber}</strong>
+                    ) : (
+                      <span className="font-bold text-amber-700">Belum dilengkapi</span>
+                    )}
+                  </div>
                 </div>
 
                 {/* Actions */}
                 <div className="mt-2.5 pt-2 border-t border-slate-100 space-y-1">
-                  {onToggleDashboardMode && (
+                  {isAdminUnlocked && onToggleDashboardMode && (
                     <button
                       onClick={() => {
                         onToggleDashboardMode();
@@ -543,22 +561,26 @@ export const Header: React.FC<HeaderProps> = ({
                     >
                       <span className="flex items-center gap-2">
                         <Shield className="w-4 h-4 text-indigo-600" />
-                        <span>Beralih ke Panel Admin</span>
+                        <span>Kembali ke Panel Admin</span>
                       </span>
                       <ChevronDown className="w-3.5 h-3.5 -rotate-90" />
                     </button>
                   )}
 
-                  {onLogout && (
+                  {(onLockAdmin || onLogout) && (
                     <button
                       onClick={() => {
                         setShowUserMenu(false);
-                        onLogout();
+                        if (onLockAdmin) {
+                          onLockAdmin();
+                        } else if (onLogout) {
+                          onLogout();
+                        }
                       }}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-xs text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer text-left font-medium"
+                      className="w-full flex items-center gap-2 px-3 py-2 text-xs text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer text-left font-bold"
                     >
                       <LogOut className="w-3.5 h-3.5" />
-                      <span>Keluar (Logout)</span>
+                      <span>Keluar Sesi (Logout)</span>
                     </button>
                   )}
                 </div>

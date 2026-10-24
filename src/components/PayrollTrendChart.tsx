@@ -84,17 +84,18 @@ export const PayrollTrendChart: React.FC<PayrollTrendChartProps> = ({
       0
     );
     const totalDeductions = currentPayrolls.reduce((sum, p) => sum + p.totalDeductions, 0);
-    const employeeCount = currentPayrolls.length || employees.filter((e) => e.isActive).length || 8;
+    const activeEmployeesCount = employees.filter((e) => e.isActive !== false).length;
+    const employeeCount = activeEmployeesCount > 0 ? activeEmployeesCount : currentPayrolls.length;
     const avgTHP = employeeCount > 0 ? Math.round(totalTHP / employeeCount) : 0;
 
     return {
-      totalTHP: totalTHP || 92450000,
-      totalGross: totalGross || 101850000,
-      baseSalary: baseSalary || 76500000,
-      allowanceAndOvertime: allowanceAndOvertime || 25350000,
-      totalDeductions: totalDeductions || 9400000,
+      totalTHP,
+      totalGross,
+      baseSalary,
+      allowanceAndOvertime,
+      totalDeductions,
       employeeCount,
-      avgTHP: avgTHP || 11556250,
+      avgTHP,
     };
   }, [currentPayrolls, employees]);
 

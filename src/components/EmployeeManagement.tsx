@@ -31,10 +31,18 @@ import {
   Boxes,
   Award,
   Star,
+  FileCheck2,
+  Calendar,
 } from 'lucide-react';
 import { Employee, Department, EmploymentStatus, PTKPStatus, CompanyAsset, PerformanceReview } from '../types';
-import { formatRupiah, formatIndoDate } from '../utils/formatters';
-import { validateImageFile, compressImage } from '../utils/imageUtils';
+import {
+  formatRupiah,
+  formatIndoDate,
+  formatNpwpInput,
+  getNpwpStatusInfo,
+  getContractValidityInfo,
+} from '../utils/formatters';
+import { validateImageFile, compressImage, compressVideoFrame } from '../utils/imageUtils';
 import { EmployeeDemographicsCharts } from './EmployeeDemographicsCharts';
 
 const SAMPLE_PHOTOS = [
@@ -92,6 +100,83 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
   const [isFormCameraActive, setIsFormCameraActive] = useState(false);
   const formVideoRef = useRef<HTMLVideoElement | null>(null);
   const formStreamRef = useRef<MediaStream | null>(null);
+  const [adminPreviewDoc, setAdminPreviewDoc] = useState<{
+    title: string;
+    subtitle: string;
+    imageUrl: string;
+    downloadFileName?: string;
+  } | null>(null);
+  const [isUploadingContract, setIsUploadingContract] = useState(false);
+
+  // Sync viewingEmployee automatically when employees list updates from Portal Karyawan
+  useEffect(() => {
+    if (viewingEmployee) {
+      const updated = employees.find((e) => e.id === viewingEmployee.id);
+      if (updated) {
+        setViewingEmployee(updated);
+      }
+    }
+  }, [employees]);
+
+  const handleAdminContractUpload = async (emp: Employee, file: File) => {
+    const validation = validateImageFile(file);
+    if (!validation.valid) {
+      showToast(validation.error || 'Format gambar dokumen kontrak tidak didukung.');
+      return;
+    }
+    try {
+      setIsUploadingContract(true);
+      const compressedContract = await compressImage(file, 1000, 1400, 0.82);
+      const nowTimestamp = `${new Date().toLocaleDateString('id-ID', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+      })} • ${new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} WIB`;
+      const updated: Employee = {
+        ...emp,
+        contractDocumentUrl: compressedContract,
+        contractDocumentName: file.name.replace(/\.[^/.]+$/, '') + '.jpg',
+        contractUpdatedAt: nowTimestamp,
+      };
+      onUpdateEmployee(updated);
+      setViewingEmployee(updated);
+      showToast(
+        `Dokumen Kontrak Kerja untuk ${emp.fullName} berhasil diunggah & disinkronkan ke Portal Karyawan!`
+      );
+    } catch (err: any) {
+      showToast(err?.message || 'Gagal memproses dokumen kontrak kerja.');
+    } finally {
+      setIsUploadingContract(false);
+    }
+  };
+
+  const handleFormContractUpload = async (file: File) => {
+    const validation = validateImageFile(file);
+    if (!validation.valid) {
+      setFormError(validation.error || 'Format gambar dokumen kontrak tidak didukung.');
+      return;
+    }
+    try {
+      setIsUploadingContract(true);
+      const compressedContract = await compressImage(file, 1000, 1400, 0.82);
+      const nowTimestamp = `${new Date().toLocaleDateString('id-ID', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+      })} • ${new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} WIB`;
+      setFormData((prev) => ({
+        ...prev,
+        contractDocumentUrl: compressedContract,
+        contractDocumentName: file.name.replace(/\.[^/.]+$/, '') + '.jpg',
+        contractUpdatedAt: nowTimestamp,
+      }));
+      showToast('Dokumen Kontrak Kerja berhasil dikompresi & siap disimpan!');
+    } catch (err: any) {
+      setFormError(err?.message || 'Gagal memproses gambar dokumen kontrak.');
+    } finally {
+      setIsUploadingContract(false);
+    }
+  };
 
   // Clean up media streams on unmount
   useEffect(() => {
@@ -144,26 +229,15 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
 
   const captureFormCamera = () => {
     if (!formVideoRef.current) return;
-    const video = formVideoRef.current;
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth || 480;
-    canvas.height = video.videoHeight || 480;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    // Draw mirrored image
-    ctx.translate(canvas.width, 0);
-    ctx.scale(-1, 1);
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.88);
+    const dataUrl = compressVideoFrame(formVideoRef.current, 800, 800, 0.8, true);
+    if (!dataUrl) return;
     setFormData((prev) => ({
       ...prev,
       avatarUrl: dataUrl,
       facePhotoUrl: dataUrl,
     }));
     stopFormCamera();
-    showToast('Foto berhasil dijepret dari kamera!');
+    showToast('Foto berhasil dijepret dari kamera (JPEG 800px)!');
   };
 
   const handleFormPhotoUpload = async (file: File) => {
@@ -176,13 +250,13 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
 
     try {
       setIsCompressingForm(true);
-      const compressedDataUrl = await compressImage(file, 400, 400, 0.85);
+      const compressedDataUrl = await compressImage(file, 800, 800, 0.8);
       setFormData((prev) => ({
         ...prev,
         avatarUrl: compressedDataUrl,
         facePhotoUrl: compressedDataUrl,
       }));
-      showToast('Pas foto real karyawan berhasil dimuat!');
+      showToast('Pas foto real karyawan berhasil dimuat (JPEG 800px)!');
     } catch (err: any) {
       console.error(err);
       setFormPhotoError(err.message || 'Gagal memproses file gambar.');
@@ -241,22 +315,11 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
 
   const captureQuickCamera = () => {
     if (!quickVideoRef.current) return;
-    const video = quickVideoRef.current;
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth || 480;
-    canvas.height = video.videoHeight || 480;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    // Draw mirrored
-    ctx.translate(canvas.width, 0);
-    ctx.scale(-1, 1);
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.88);
+    const dataUrl = compressVideoFrame(quickVideoRef.current, 800, 800, 0.8, true);
+    if (!dataUrl) return;
     setQuickPhotoPreview(dataUrl);
     stopQuickCamera();
-    showToast('Foto dari kamera siap disimpan!');
+    showToast('Foto dari kamera siap disimpan (JPEG 800px)!');
   };
 
   const handleQuickPhotoUpload = async (file: File) => {
@@ -269,9 +332,9 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
 
     try {
       setIsCompressingQuick(true);
-      const compressedDataUrl = await compressImage(file, 400, 400, 0.85);
+      const compressedDataUrl = await compressImage(file, 800, 800, 0.8);
       setQuickPhotoPreview(compressedDataUrl);
-      showToast('Pratinjau foto baru siap disimpan!');
+      showToast('Pratinjau foto baru siap disimpan (JPEG 800px)!');
     } catch (err: any) {
       console.error(err);
       setQuickPhotoError(err.message || 'Gagal memproses file gambar.');
@@ -335,6 +398,8 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
       setFormPhotoError(null);
       const currentYear = new Date().getFullYear();
       const nextNum = employees.length + 1;
+      const todayIso = new Date().toISOString().split('T')[0];
+      const nextYearIso = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
       setFormData({
         nik: `TGI-${currentYear}-${String(nextNum).padStart(3, '0')}`,
         fullName: '',
@@ -345,7 +410,12 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         gender: 'Laki-laki',
         department: 'Operasional',
         employmentStatus: 'PKWT (Kontrak)',
-        joinDate: new Date().toISOString().split('T')[0],
+        joinDate: todayIso,
+        contractStartDate: todayIso,
+        contractEndDate: nextYearIso,
+        contractDocumentNumber: `PKWT/TKB/${currentYear}/${String(nextNum).padStart(3, '0')}`,
+        contractDocumentUrl: '',
+        contractDocumentName: '',
         baseSalary: 6500000,
         allowances: {
           position: 500000,
@@ -373,6 +443,8 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
     setFormPhotoError(null);
     const currentYear = new Date().getFullYear();
     const nextNum = employees.length + 1;
+    const todayIso = new Date().toISOString().split('T')[0];
+    const nextYearIso = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     setFormData({
       nik: `TGI-${currentYear}-${String(nextNum).padStart(3, '0')}`,
       fullName: '',
@@ -383,7 +455,12 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
       gender: 'Laki-laki',
       department: 'Operasional',
       employmentStatus: 'PKWT (Kontrak)',
-      joinDate: new Date().toISOString().split('T')[0],
+      joinDate: todayIso,
+      contractStartDate: todayIso,
+      contractEndDate: nextYearIso,
+      contractDocumentNumber: `PKWT/TKB/${currentYear}/${String(nextNum).padStart(3, '0')}`,
+      contractDocumentUrl: '',
+      contractDocumentName: '',
       baseSalary: 6500000,
       allowances: {
         position: 500000,
@@ -450,6 +527,17 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         fullName: fullNameTrimmed,
         nik: nikTrimmed,
         email: emailTrimmed,
+        ktpNumber: formData.ktpNumber?.replace(/\D/g, '').slice(0, 16) || editingEmployee.ktpNumber,
+        npwp: formData.npwp?.trim() || editingEmployee.npwp,
+        contractStartDate: formData.contractStartDate || formData.joinDate || editingEmployee.contractStartDate,
+        contractEndDate:
+          formData.employmentStatus === 'PKWTT (Tetap)'
+            ? undefined
+            : formData.contractEndDate || editingEmployee.contractEndDate,
+        contractDocumentNumber: formData.contractDocumentNumber?.trim() || editingEmployee.contractDocumentNumber,
+        contractDocumentUrl: formData.contractDocumentUrl || editingEmployee.contractDocumentUrl,
+        contractDocumentName: formData.contractDocumentName || editingEmployee.contractDocumentName,
+        contractUpdatedAt: formData.contractUpdatedAt || editingEmployee.contractUpdatedAt,
         baseSalary: Number(formData.baseSalary) || editingEmployee.baseSalary || 5000000,
         allowances: {
           position: Number(formData.allowances?.position) || 0,
@@ -461,11 +549,13 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         facePhotoUrl: formData.facePhotoUrl || formData.avatarUrl || editingEmployee.facePhotoUrl,
       };
       onUpdateEmployee(updated);
-      showToast(`Data karyawan ${updated.fullName} berhasil diperbarui!`);
+      showToast(`Data karyawan ${updated.fullName} berhasil diperbarui & tersinkronisasi!`);
     } else {
+      const joinDt = formData.joinDate || new Date().toISOString().split('T')[0];
       const newEmp: Employee = {
         id: `emp-${Date.now()}`,
         nik: nikTrimmed,
+        ktpNumber: formData.ktpNumber?.replace(/\D/g, '').slice(0, 16) || undefined,
         fullName: fullNameTrimmed,
         email: emailTrimmed,
         phone: formData.phone?.trim() || '0812-0000-0000',
@@ -477,7 +567,14 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         gender: formData.gender || 'Laki-laki',
         department: (formData.department as Department) || 'Operasional',
         employmentStatus: (formData.employmentStatus as EmploymentStatus) || 'PKWT (Kontrak)',
-        joinDate: formData.joinDate || new Date().toISOString().split('T')[0],
+        joinDate: joinDt,
+        contractStartDate: formData.contractStartDate || joinDt,
+        contractEndDate:
+          formData.employmentStatus === 'PKWTT (Tetap)' ? undefined : formData.contractEndDate,
+        contractDocumentNumber: formData.contractDocumentNumber?.trim() || undefined,
+        contractDocumentUrl: formData.contractDocumentUrl || undefined,
+        contractDocumentName: formData.contractDocumentName || undefined,
+        contractUpdatedAt: formData.contractUpdatedAt || undefined,
         baseSalary: Number(formData.baseSalary) || 5000000,
         allowances: {
           position: Number(formData.allowances?.position) || 0,
@@ -567,6 +664,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
     const matchSearch =
       emp.fullName.toLowerCase().includes(search.toLowerCase()) ||
       emp.nik.toLowerCase().includes(search.toLowerCase()) ||
+      (emp.ktpNumber || '').toLowerCase().includes(search.toLowerCase()) ||
       emp.role.toLowerCase().includes(search.toLowerCase()) ||
       emp.department.toLowerCase().includes(search.toLowerCase());
 
@@ -697,16 +795,19 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
             <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
               <tr>
                 <th className="py-3 px-4">Karyawan</th>
-                <th className="py-3 px-4">NIK & Dept</th>
-                <th className="py-3 px-4">Status & Cuti</th>
+                <th className="py-3 px-4">NIK &amp; NIK KTP</th>
+                <th className="py-3 px-4">Status &amp; Masa Kontrak</th>
                 <th className="py-3 px-4">Gaji Pokok (IDR)</th>
                 <th className="py-3 px-4">Rekening Bank</th>
-                <th className="py-3 px-4">PTKP / Pajak</th>
+                <th className="py-3 px-4">PTKP / NPWP Pajak</th>
                 <th className="py-3 px-4 text-center">Aksi</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filtered.map((emp) => (
+              {filtered.map((emp) => {
+                const contractInfo = getContractValidityInfo(emp);
+                const npwpInfo = getNpwpStatusInfo(emp.npwp, emp.ktpNumber);
+                return (
                 <tr key={emp.id} className="hover:bg-slate-50/70 transition-colors">
                   <td className="py-3 px-4">
                     <div className="flex items-center gap-3">
@@ -755,6 +856,27 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                               Foto Real
                             </span>
                           )}
+                          {emp.contractDocumentUrl && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setAdminPreviewDoc({
+                                  title: `Dokumen Kontrak Kerja — ${emp.fullName}`,
+                                  subtitle: `${emp.contractDocumentNumber || emp.employmentStatus} • Masa Aktif: ${
+                                    emp.contractStartDate || emp.joinDate
+                                  } s/d ${emp.contractEndDate || 'Tetap (PKWTT)'}`,
+                                  imageUrl: emp.contractDocumentUrl!,
+                                  downloadFileName:
+                                    emp.contractDocumentName || `Kontrak-Kerja-${emp.nik}.jpg`,
+                                })
+                              }
+                              title="Klik untuk melihat Dokumen Kontrak Kerja"
+                              className="px-1.5 py-0.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded text-[9px] font-bold cursor-pointer inline-flex items-center gap-1"
+                            >
+                              <FileCheck2 className="w-2.5 h-2.5" />
+                              <span>Lihat Kontrak</span>
+                            </button>
+                          )}
                         </div>
                         <span className="text-[11px] text-slate-500 flex items-center gap-1">
                           <Mail className="w-3 h-3 text-slate-400" />
@@ -767,25 +889,54 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                     <span className="font-mono text-[11px] text-slate-700 font-semibold block">
                       {emp.nik}
                     </span>
-                    <span className="text-[11px] font-medium text-slate-900 block">
+                    {emp.ktpNumber ? (
+                      <span className="font-mono text-[10px] text-indigo-700 font-semibold block">
+                        NIK KTP: {emp.ktpNumber}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-amber-600 font-semibold block">
+                        NIK KTP: Belum dilengkapi
+                      </span>
+                    )}
+                    <span className="text-[11px] font-medium text-slate-900 block mt-0.5">
                       {emp.role}
                     </span>
                     <span className="text-[10px] text-slate-500">{emp.department}</span>
                   </td>
                   <td className="py-3 px-4">
-                    <span
-                      className={`inline-block px-2 py-0.5 rounded text-[10px] font-semibold mb-1 ${
-                        emp.employmentStatus === 'PKWTT (Tetap)'
-                          ? 'bg-emerald-100 text-emerald-800'
-                          : emp.employmentStatus === 'PKWT (Kontrak)'
-                          ? 'bg-blue-100 text-blue-800'
-                          : 'bg-amber-100 text-amber-800'
-                      }`}
-                    >
-                      {emp.employmentStatus}
-                    </span>
-                    <span className="block text-[11px] text-slate-500">
-                      Cuti: {emp.remainingLeaveDays} hari
+                    <div className="flex flex-wrap items-center gap-1 mb-1">
+                      <span
+                        className={`inline-block px-2 py-0.5 rounded text-[10px] font-semibold ${
+                          emp.employmentStatus === 'PKWTT (Tetap)'
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : emp.employmentStatus === 'PKWT (Kontrak)'
+                            ? 'bg-blue-100 text-blue-800'
+                            : 'bg-amber-100 text-amber-800'
+                        }`}
+                      >
+                        {emp.employmentStatus}
+                      </span>
+                      <span
+                        className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold ${
+                          contractInfo.isPermanent
+                            ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                            : contractInfo.isExpired
+                            ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                            : contractInfo.isExpiringSoon
+                            ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                            : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                        }`}
+                      >
+                        {contractInfo.badgeText}
+                      </span>
+                    </div>
+                    {!contractInfo.isPermanent && emp.contractEndDate && (
+                      <span className="block text-[10px] text-slate-500 font-mono">
+                        s/d {emp.contractEndDate}
+                      </span>
+                    )}
+                    <span className="block text-[10px] text-slate-400">
+                      Sisa Cuti: {emp.remainingLeaveDays} hari
                     </span>
                   </td>
                   <td className="py-3 px-4">
@@ -803,10 +954,19 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                     <span className="text-[10px] text-slate-400">a/n {emp.bankAccountHolder}</span>
                   </td>
                   <td className="py-3 px-4">
-                    <span className="px-1.5 py-0.5 bg-slate-100 text-slate-700 rounded font-semibold text-[10px]">
-                      {emp.ptkpStatus}
+                    <div className="flex items-center gap-1 flex-wrap">
+                      <span className="px-1.5 py-0.5 bg-slate-100 text-slate-700 rounded font-semibold text-[10px]">
+                        {emp.ptkpStatus}
+                      </span>
+                      {npwpInfo.isNikMatched && (
+                        <span className="px-1.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded font-bold text-[9px]">
+                          NIK-NPWP
+                        </span>
+                      )}
+                    </div>
+                    <span className="block text-[10px] font-mono text-slate-600 mt-0.5">
+                      {emp.npwp || '-'}
                     </span>
-                    <span className="block text-[10px] text-slate-400 mt-0.5">{emp.npwp}</span>
                   </td>
                   <td className="py-3 px-4 text-center">
                     <div className="flex items-center justify-center gap-1.5">
@@ -841,7 +1001,8 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                     </div>
                   </td>
                 </tr>
-              ))}
+              );
+              })}
               {filtered.length === 0 && (
                   <tr>
                     <td colSpan={7} className="py-12 text-center text-slate-500">
@@ -911,14 +1072,39 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                       </span>
                     )}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => openQuickPhotoModal(viewingEmployee)}
-                    className="mt-1 inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-700 hover:text-emerald-800 hover:underline cursor-pointer"
-                  >
-                    <Upload className="w-3 h-3" />
-                    Upload / Ganti Foto Real Karyawan
-                  </button>
+                  <div className="mt-1 flex items-center gap-3 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => openQuickPhotoModal(viewingEmployee)}
+                      className="inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-700 hover:text-emerald-800 hover:underline cursor-pointer"
+                    >
+                      <Upload className="w-3 h-3" />
+                      Upload / Ganti Foto Real Karyawan
+                    </button>
+                    {viewingEmployee.contractDocumentUrl && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setAdminPreviewDoc({
+                            title: `Dokumen Kontrak Kerja — ${viewingEmployee.fullName}`,
+                            subtitle: `${
+                              viewingEmployee.contractDocumentNumber || viewingEmployee.employmentStatus
+                            } • Masa Aktif: ${
+                              viewingEmployee.contractStartDate || viewingEmployee.joinDate
+                            } s/d ${viewingEmployee.contractEndDate || 'Tetap (PKWTT)'}`,
+                            imageUrl: viewingEmployee.contractDocumentUrl!,
+                            downloadFileName:
+                              viewingEmployee.contractDocumentName ||
+                              `Kontrak-Kerja-${viewingEmployee.nik}.jpg`,
+                          })
+                        }
+                        className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-[11px] font-bold cursor-pointer"
+                      >
+                        <FileCheck2 className="w-3 h-3" />
+                        <span>Lihat Dokumen Kontrak</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
               <button
@@ -931,8 +1117,16 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-5 text-xs">
               <div className="p-3.5 bg-slate-50 rounded-xl space-y-2 border border-slate-100">
-                <span className="font-semibold text-slate-700 block border-b pb-1">Data Pekerjaan</span>
-                <div className="flex justify-between"><span className="text-slate-500">NIK:</span><span className="font-mono font-medium">{viewingEmployee.nik}</span></div>
+                <span className="font-semibold text-slate-700 block border-b pb-1">Data Pekerjaan &amp; Identitas</span>
+                <div className="flex justify-between"><span className="text-slate-500">NIK Karyawan:</span><span className="font-mono font-medium">{viewingEmployee.nik}</span></div>
+                <div className="flex justify-between items-center gap-2">
+                  <span className="text-slate-500">Nomor NIK KTP (16 Digit):</span>
+                  {viewingEmployee.ktpNumber ? (
+                    <span className="font-mono font-bold text-indigo-700">{viewingEmployee.ktpNumber}</span>
+                  ) : (
+                    <span className="font-semibold text-amber-600">Belum dilengkapi</span>
+                  )}
+                </div>
                 <div className="flex justify-between"><span className="text-slate-500">Status Kontrak:</span><span className="font-medium">{viewingEmployee.employmentStatus}</span></div>
                 <div className="flex justify-between"><span className="text-slate-500">Tgl Bergabung:</span><span className="font-medium">{formatIndoDate(viewingEmployee.joinDate)}</span></div>
                 <div className="flex justify-between"><span className="text-slate-500">Jenis Kelamin:</span><span className="font-medium text-slate-800">{viewingEmployee.gender || 'Laki-laki'}</span></div>
@@ -940,7 +1134,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
               </div>
 
               <div className="p-3.5 bg-slate-50 rounded-xl space-y-2 border border-slate-100">
-                <span className="font-semibold text-slate-700 block border-b pb-1">Kontak & Rekening</span>
+                <span className="font-semibold text-slate-700 block border-b pb-1">Kontak &amp; Rekening</span>
                 <div className="flex justify-between"><span className="text-slate-500">Email:</span><span className="font-medium">{viewingEmployee.email}</span></div>
                 <div className="flex justify-between"><span className="text-slate-500">Telepon:</span><span className="font-medium">{viewingEmployee.phone}</span></div>
                 <div className="flex justify-between"><span className="text-slate-500">Bank:</span><span className="font-medium">{viewingEmployee.bankName} - {viewingEmployee.bankAccountNumber}</span></div>
@@ -948,7 +1142,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
               </div>
 
               <div className="p-3.5 bg-emerald-50/60 rounded-xl space-y-2 border border-emerald-100">
-                <span className="font-semibold text-emerald-900 block border-b border-emerald-200 pb-1">Struktur Gaji & Tunjangan</span>
+                <span className="font-semibold text-emerald-900 block border-b border-emerald-200 pb-1">Struktur Gaji &amp; Tunjangan</span>
                 <div className="flex justify-between"><span className="text-slate-600">Gaji Pokok:</span><span className="font-bold text-slate-900">{formatRupiah(viewingEmployee.baseSalary)}</span></div>
                 <div className="flex justify-between"><span className="text-slate-600">Tunj. Jabatan:</span><span>{formatRupiah(viewingEmployee.allowances.position)}</span></div>
                 <div className="flex justify-between"><span className="text-slate-600">Tunj. Transport:</span><span>{formatRupiah(viewingEmployee.allowances.transport)}</span></div>
@@ -957,13 +1151,278 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
               </div>
 
               <div className="p-3.5 bg-purple-50/60 rounded-xl space-y-2 border border-purple-100">
-                <span className="font-semibold text-purple-900 block border-b border-purple-200 pb-1">Pajak (PPh 21) & BPJS</span>
+                <span className="font-semibold text-purple-900 block border-b border-purple-200 pb-1">Pajak (PPh 21) &amp; BPJS</span>
                 <div className="flex justify-between"><span className="text-slate-600">Status PTKP:</span><span className="font-bold text-purple-800">{viewingEmployee.ptkpStatus}</span></div>
-                <div className="flex justify-between"><span className="text-slate-600">NPWP:</span><span className="font-mono">{viewingEmployee.npwp}</span></div>
+                <div className="flex justify-between items-center gap-2">
+                  <span className="text-slate-600">Nomor NPWP:</span>
+                  <span className="font-mono font-bold text-slate-900">{viewingEmployee.npwp || '-'}</span>
+                </div>
+                <div className="flex justify-between items-center gap-2">
+                  <span className="text-slate-600">Status Padan NIK-NPWP:</span>
+                  <span className="font-semibold text-[11px] text-emerald-700">
+                    {getNpwpStatusInfo(viewingEmployee.npwp, viewingEmployee.ktpNumber).label}
+                  </span>
+                </div>
                 <div className="flex justify-between"><span className="text-slate-600">BPJS Kesehatan:</span><span className="font-mono">{viewingEmployee.bpjsKesehatanNo}</span></div>
                 <div className="flex justify-between"><span className="text-slate-600">BPJS Ketenagakerjaan:</span><span className="font-mono">{viewingEmployee.bpjsKetenagakerjaanNo}</span></div>
               </div>
             </div>
+
+            {/* Seksi Masa Aktif Kontrak & Upload Dokumen Kontrak Kerja (PKWT / PKWTT) */}
+            {(() => {
+              const contractInfo = getContractValidityInfo(viewingEmployee);
+              return (
+                <div className="mt-4 p-4 bg-gradient-to-br from-indigo-50/60 via-white to-emerald-50/50 rounded-xl border border-indigo-200 space-y-3.5 text-xs">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-indigo-200/80 pb-2.5">
+                    <div>
+                      <span className="font-bold text-slate-900 flex items-center gap-1.5 text-xs">
+                        <FileCheck2 className="w-4 h-4 text-indigo-600" />
+                        Masa Aktif Kontrak &amp; Dokumen Kontrak Kerja ({viewingEmployee.employmentStatus})
+                      </span>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        Atur tanggal mulai/berakhir kontrak dan unggah dokumen kontrak kerja (langsung tampil di Portal Karyawan)
+                      </p>
+                    </div>
+                    <span
+                      className={`text-[10px] font-bold px-2.5 py-1 rounded-full shrink-0 ${
+                        contractInfo.isPermanent
+                          ? 'bg-indigo-100 text-indigo-800 border border-indigo-200'
+                          : contractInfo.isExpired
+                          ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                          : contractInfo.isExpiringSoon
+                          ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                          : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                      }`}
+                    >
+                      {contractInfo.badgeText}
+                    </span>
+                  </div>
+
+                  {/* Quick Edit Masa Aktif Kontrak */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-white p-3 rounded-xl border border-slate-200">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                        Tanggal Mulai Kontrak
+                      </label>
+                      <input
+                        type="date"
+                        value={viewingEmployee.contractStartDate || viewingEmployee.joinDate}
+                        onChange={(e) => {
+                          const updated: Employee = {
+                            ...viewingEmployee,
+                            contractStartDate: e.target.value,
+                            contractUpdatedAt: new Date().toLocaleDateString('id-ID'),
+                          };
+                          onUpdateEmployee(updated);
+                          setViewingEmployee(updated);
+                          showToast('Tanggal mulai kontrak berhasil diperbarui!');
+                        }}
+                        className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                        Tanggal Berakhir Kontrak
+                      </label>
+                      <input
+                        type="date"
+                        disabled={viewingEmployee.employmentStatus === 'PKWTT (Tetap)'}
+                        value={
+                          viewingEmployee.employmentStatus === 'PKWTT (Tetap)'
+                            ? ''
+                            : viewingEmployee.contractEndDate || ''
+                        }
+                        onChange={(e) => {
+                          const updated: Employee = {
+                            ...viewingEmployee,
+                            contractEndDate: e.target.value || undefined,
+                            contractUpdatedAt: new Date().toLocaleDateString('id-ID'),
+                          };
+                          onUpdateEmployee(updated);
+                          setViewingEmployee(updated);
+                          showToast('Tanggal berakhir kontrak berhasil diperbarui!');
+                        }}
+                        className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 disabled:opacity-50"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                        Nomor Dokumen Kontrak / SK
+                      </label>
+                      <input
+                        type="text"
+                        value={viewingEmployee.contractDocumentNumber || ''}
+                        onChange={(e) => {
+                          const updated: Employee = {
+                            ...viewingEmployee,
+                            contractDocumentNumber: e.target.value,
+                          };
+                          onUpdateEmployee(updated);
+                          setViewingEmployee(updated);
+                        }}
+                        placeholder="PKWT/TKB/2026/001"
+                        className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono text-slate-800"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Kartu Dokumen Kontrak & Photo Profil */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                    {/* Kartu 1: Dokumen Kontrak Kerja */}
+                    <div className="bg-white p-3 rounded-xl border border-slate-200 flex items-center gap-3">
+                      {viewingEmployee.contractDocumentUrl ? (
+                        <img
+                          src={viewingEmployee.contractDocumentUrl}
+                          alt={`Kontrak ${viewingEmployee.fullName}`}
+                          onClick={() =>
+                            setAdminPreviewDoc({
+                              title: `Dokumen Kontrak Kerja — ${viewingEmployee.fullName}`,
+                              subtitle: `${
+                                viewingEmployee.contractDocumentNumber || viewingEmployee.employmentStatus
+                              } • ${viewingEmployee.contractStartDate || viewingEmployee.joinDate} s/d ${
+                                viewingEmployee.contractEndDate || 'Tetap (PKWTT)'
+                              }`,
+                              imageUrl: viewingEmployee.contractDocumentUrl!,
+                              downloadFileName:
+                                viewingEmployee.contractDocumentName ||
+                                `Kontrak-Kerja-${viewingEmployee.nik}.jpg`,
+                            })
+                          }
+                          className="w-20 h-16 rounded-xl object-cover ring-2 ring-indigo-500 shrink-0 cursor-pointer"
+                        />
+                      ) : (
+                        <div className="w-20 h-16 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 flex flex-col items-center justify-center text-slate-400 shrink-0">
+                          <FileCheck2 className="w-5 h-5" />
+                          <span className="text-[9px] mt-0.5">Belum Ada</span>
+                        </div>
+                      )}
+
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-bold text-slate-900 text-xs">Dokumen Kontrak Kerja</span>
+                          {viewingEmployee.contractDocumentUrl ? (
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-indigo-100 text-indigo-800">
+                              ✓ Terunggah
+                            </span>
+                          ) : (
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-amber-100 text-amber-800">
+                              Belum Upload
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[10px] text-slate-500 truncate">
+                          {viewingEmployee.contractDocumentName ||
+                            viewingEmployee.contractDocumentNumber ||
+                            'Unggah foto/scan PKWT atau SK PKWTT'}
+                        </p>
+                        <div className="flex items-center gap-2 pt-0.5 flex-wrap">
+                          {viewingEmployee.contractDocumentUrl && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setAdminPreviewDoc({
+                                  title: `Dokumen Kontrak Kerja — ${viewingEmployee.fullName}`,
+                                  subtitle: `${
+                                    viewingEmployee.contractDocumentNumber ||
+                                    viewingEmployee.employmentStatus
+                                  } • ${
+                                    viewingEmployee.contractStartDate || viewingEmployee.joinDate
+                                  } s/d ${viewingEmployee.contractEndDate || 'Tetap (PKWTT)'}`,
+                                  imageUrl: viewingEmployee.contractDocumentUrl!,
+                                  downloadFileName:
+                                    viewingEmployee.contractDocumentName ||
+                                    `Kontrak-Kerja-${viewingEmployee.nik}.jpg`,
+                                })
+                              }
+                              className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] cursor-pointer flex items-center gap-1 shadow-2xs"
+                            >
+                              <Eye className="w-3 h-3" />
+                              <span>Lihat</span>
+                            </button>
+                          )}
+                          <label className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-[10px] cursor-pointer inline-flex items-center gap-1">
+                            <Upload className="w-3 h-3" />
+                            <span>
+                              {isUploadingContract
+                                ? 'Mengunggah...'
+                                : viewingEmployee.contractDocumentUrl
+                                ? 'Ganti Kontrak'
+                                : 'Upload Kontrak'}
+                            </span>
+                            <input
+                              type="file"
+                              accept="image/jpeg,image/png,image/webp,image/jpg"
+                              className="hidden"
+                              disabled={isUploadingContract}
+                              onChange={(e) => {
+                                const f = e.target.files?.[0];
+                                if (f) handleAdminContractUpload(viewingEmployee, f);
+                                e.target.value = '';
+                              }}
+                            />
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Kartu 2: Photo Profil Karyawan */}
+                    <div className="bg-white p-3 rounded-xl border border-slate-200 flex items-center gap-3">
+                      <img
+                        src={viewingEmployee.avatarUrl}
+                        alt={viewingEmployee.fullName}
+                        onClick={() =>
+                          setAdminPreviewDoc({
+                            title: `Photo Profil — ${viewingEmployee.fullName}`,
+                            subtitle: `NIK: ${viewingEmployee.nik} • ${viewingEmployee.role}`,
+                            imageUrl: viewingEmployee.avatarUrl,
+                            downloadFileName: `Foto-Profil-${viewingEmployee.nik}.jpg`,
+                          })
+                        }
+                        className="w-16 h-16 rounded-xl object-cover ring-2 ring-emerald-500 shrink-0 cursor-pointer"
+                      />
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-bold text-slate-900 text-xs">Photo Profil Karyawan</span>
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-100 text-emerald-800">
+                            Aktif
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-slate-500 truncate">
+                          {viewingEmployee.profilePhotoUpdatedAt
+                            ? `Diupdate: ${viewingEmployee.profilePhotoUpdatedAt}`
+                            : 'Tersinkronisasi dengan Portal Karyawan'}
+                        </p>
+                        <div className="flex items-center gap-2 pt-0.5">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setAdminPreviewDoc({
+                                title: `Photo Profil — ${viewingEmployee.fullName}`,
+                                subtitle: `NIK: ${viewingEmployee.nik} • ${viewingEmployee.role}`,
+                                imageUrl: viewingEmployee.avatarUrl,
+                                downloadFileName: `Foto-Profil-${viewingEmployee.nik}.jpg`,
+                              })
+                            }
+                            className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-[10px] cursor-pointer flex items-center gap-1"
+                          >
+                            <Eye className="w-3 h-3" />
+                            <span>Perbesar</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openQuickPhotoModal(viewingEmployee)}
+                            className="px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-semibold text-[10px] cursor-pointer flex items-center gap-1"
+                          >
+                            <Upload className="w-3 h-3" />
+                            <span>Ganti</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Seksi Aset Kantor & Inventaris yang Ditugaskan */}
             {(() => {
@@ -1381,6 +1840,23 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                     />
                   </div>
                   <div>
+                    <label className="block text-slate-600 mb-1">Nomor NIK KTP (16 Digit)</label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={16}
+                      value={formData.ktpNumber || ''}
+                      onChange={(e) =>
+                        setFormData({
+                          ...formData,
+                          ktpNumber: e.target.value.replace(/\D/g, '').slice(0, 16),
+                        })
+                      }
+                      placeholder="16 digit angka sesuai KTP"
+                      className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg font-mono text-slate-800"
+                    />
+                  </div>
+                  <div>
                     <label className="block text-slate-600 mb-1">Nama Lengkap</label>
                     <input
                       type="text"
@@ -1492,6 +1968,130 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                       }
                       className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-800"
                     />
+                  </div>
+                </div>
+
+                {/* Sub-seksi Masa Aktif Kontrak & Upload Dokumen Kontrak Kerja */}
+                <div className="mt-3 p-3.5 bg-indigo-50/50 border border-indigo-200/80 rounded-xl space-y-3">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <span className="font-bold text-indigo-950 flex items-center gap-1.5 text-xs">
+                      <FileCheck2 className="w-4 h-4 text-indigo-600" />
+                      Masa Aktif Kontrak &amp; Upload Dokumen Kontrak Kerja (PKWT / PKWTT)
+                    </span>
+                    <span className="text-[10px] font-semibold text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded-full">
+                      Sinkron ke Portal Karyawan
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-slate-600 mb-1">Tanggal Mulai Kontrak</label>
+                      <input
+                        type="date"
+                        value={formData.contractStartDate || formData.joinDate || ''}
+                        onChange={(e) =>
+                          setFormData({ ...formData, contractStartDate: e.target.value })
+                        }
+                        className="w-full p-2 bg-white border border-slate-200 rounded-lg text-slate-800"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-slate-600 mb-1">
+                        Tanggal Berakhir Kontrak{' '}
+                        {formData.employmentStatus === 'PKWTT (Tetap)' && '(Tetap)'}
+                      </label>
+                      <input
+                        type="date"
+                        disabled={formData.employmentStatus === 'PKWTT (Tetap)'}
+                        value={
+                          formData.employmentStatus === 'PKWTT (Tetap)'
+                            ? ''
+                            : formData.contractEndDate || ''
+                        }
+                        onChange={(e) =>
+                          setFormData({ ...formData, contractEndDate: e.target.value })
+                        }
+                        className="w-full p-2 bg-white border border-slate-200 rounded-lg text-slate-800 disabled:opacity-50"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-slate-600 mb-1">Nomor Kontrak / SK Kerja</label>
+                      <input
+                        type="text"
+                        value={formData.contractDocumentNumber || ''}
+                        onChange={(e) =>
+                          setFormData({ ...formData, contractDocumentNumber: e.target.value })
+                        }
+                        placeholder="PKWT/TKB/2026/001"
+                        className="w-full p-2 bg-white border border-slate-200 rounded-lg font-mono text-slate-800"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-3 rounded-xl border border-slate-200">
+                    <div className="flex items-center gap-3 min-w-0">
+                      {formData.contractDocumentUrl ? (
+                        <img
+                          src={formData.contractDocumentUrl}
+                          alt="Pratinjau Kontrak"
+                          className="w-14 h-12 rounded-lg object-cover border border-indigo-300 shrink-0"
+                        />
+                      ) : (
+                        <div className="w-14 h-12 rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 flex items-center justify-center text-slate-400 shrink-0">
+                          <FileCheck2 className="w-4 h-4" />
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <p className="font-bold text-slate-800 text-xs truncate">
+                          {formData.contractDocumentUrl
+                            ? formData.contractDocumentName || 'Dokumen-Kontrak-Kerja.jpg'
+                            : 'Belum ada dokumen kontrak kerja diunggah'}
+                        </p>
+                        <p className="text-[10px] text-slate-500">
+                          Karyawan dapat melihat dan mengunduh dokumen kontrak ini langsung dari Portal Karyawan
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      <label className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs cursor-pointer inline-flex items-center gap-1.5 shadow-2xs">
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>
+                          {isUploadingContract
+                            ? 'Mengompresi...'
+                            : formData.contractDocumentUrl
+                            ? 'Ganti File Kontrak'
+                            : 'Upload Dokumen Kontrak'}
+                        </span>
+                        <input
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp,image/jpg"
+                          className="hidden"
+                          disabled={isUploadingContract}
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (f) handleFormContractUpload(f);
+                            e.target.value = '';
+                          }}
+                        />
+                      </label>
+                      {formData.contractDocumentUrl && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setFormData((prev) => ({
+                              ...prev,
+                              contractDocumentUrl: undefined,
+                              contractDocumentName: undefined,
+                            }))
+                          }
+                          className="p-1.5 rounded-xl bg-rose-50 text-rose-600 hover:bg-rose-100 border border-rose-200 cursor-pointer"
+                          title="Hapus Dokumen Kontrak"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1650,13 +2250,31 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                     </select>
                   </div>
                   <div>
-                    <label className="block text-slate-600 mb-1">NPWP Karyawan</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-slate-600">NPWP Karyawan (15 / 16 Digit)</label>
+                      {formData.ktpNumber && formData.ktpNumber.length === 16 && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setFormData({
+                              ...formData,
+                              npwp: formData.ktpNumber,
+                            })
+                          }
+                          className="text-[10px] font-bold text-indigo-600 hover:underline cursor-pointer"
+                        >
+                          Samakan = NIK
+                        </button>
+                      )}
+                    </div>
                     <input
                       type="text"
                       value={formData.npwp}
-                      onChange={(e) => setFormData({ ...formData, npwp: e.target.value })}
-                      placeholder="00.000.000.0-000.000"
-                      className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-800"
+                      onChange={(e) =>
+                        setFormData({ ...formData, npwp: formatNpwpInput(e.target.value) })
+                      }
+                      placeholder="12.345.678.9-012.000 atau 16 digit NIK"
+                      className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg font-mono text-slate-800"
                     />
                   </div>
                   <div>
@@ -1947,6 +2565,57 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                 >
                   <Check className="w-4 h-4" />
                   <span>Simpan Pas Foto Real</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL PRATINJAU DOKUMEN KTP / PHOTO PROFIL DI PORTAL ADMIN */}
+      {adminPreviewDoc && (
+        <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-5 shadow-2xl border border-slate-200 space-y-3.5">
+            <div className="flex items-start justify-between gap-3 pb-2.5 border-b border-slate-100">
+              <div>
+                <h4 className="font-bold text-slate-900 text-sm">{adminPreviewDoc.title}</h4>
+                <p className="text-[11px] text-slate-500 mt-0.5">{adminPreviewDoc.subtitle}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAdminPreviewDoc(null)}
+                className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="rounded-xl overflow-hidden bg-slate-900 border border-slate-200 flex items-center justify-center max-h-[65vh]">
+              <img
+                src={adminPreviewDoc.imageUrl}
+                alt={adminPreviewDoc.title}
+                className="w-full max-h-[62vh] object-contain"
+              />
+            </div>
+            <div className="flex items-center justify-between gap-2 pt-1 flex-wrap">
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                Terintegrasi dari Portal Karyawan &amp; Admin HR
+              </span>
+              <div className="flex items-center gap-2">
+                <a
+                  href={adminPreviewDoc.imageUrl}
+                  download={adminPreviewDoc.downloadFileName || 'Dokumen-Karyawan.jpg'}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl transition-colors"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Unduh Dokumen</span>
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setAdminPreviewDoc(null)}
+                  className="px-4 py-2 text-xs font-bold bg-slate-800 hover:bg-slate-900 text-white rounded-xl cursor-pointer"
+                >
+                  Tutup
                 </button>
               </div>
             </div>

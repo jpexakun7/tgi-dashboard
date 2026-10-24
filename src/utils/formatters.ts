@@ -480,3 +480,203 @@ export function calculatePayroll(
   };
 }
 
+// Helper format input NPWP (mendukung NPWP 15 digit berformat XX.XXX.XXX.X-XXX.XXX maupun NPWP 16 digit / Pemadanan NIK-NPWP Coretax DJP)
+export function formatNpwpInput(rawInput: string): string {
+  const digits = (rawInput || '').replace(/\D/g, '').slice(0, 16);
+  if (digits.length === 16) {
+    // Format NPWP 16 Digit / Pemadanan NIK-NPWP Coretax DJP 2026
+    return digits;
+  }
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 5) return `${digits.slice(0, 2)}.${digits.slice(2)}`;
+  if (digits.length <= 8) return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5)}`;
+  if (digits.length <= 9)
+    return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}.${digits.slice(8)}`;
+  if (digits.length <= 12)
+    return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}.${digits.slice(8, 9)}-${digits.slice(9)}`;
+  return `${digits.slice(0, 2)}.${digits.slice(2, 5)}.${digits.slice(5, 8)}.${digits.slice(8, 9)}-${digits.slice(9, 12)}.${digits.slice(12, 15)}`;
+}
+
+export function getNpwpStatusInfo(npwp?: string, ktpNumber?: string): {
+  isValid: boolean;
+  digitCount: number;
+  isNikMatched: boolean;
+  displayLabel: string;
+  label: string;
+} {
+  const digits = (npwp || '').replace(/\D/g, '');
+  const ktpDigits = (ktpNumber || '').replace(/\D/g, '');
+  const isZeroPlaceholder = /^0+$/.test(digits);
+  const isValid = !isZeroPlaceholder && (digits.length === 15 || digits.length === 16);
+  const isNikMatched = digits.length === 16 && ktpDigits.length === 16 && digits === ktpDigits;
+
+  let displayLabel = 'Belum Dilengkapi';
+  if (isNikMatched) {
+    displayLabel = 'NPWP 16 Digit (Padan NIK KTP)';
+  } else if (digits.length === 16 && !isZeroPlaceholder) {
+    displayLabel = 'NPWP 16 Digit (Coretax DJP)';
+  } else if (digits.length === 15 && !isZeroPlaceholder) {
+    displayLabel = 'NPWP 15 Digit Terdaftar';
+  }
+
+  return {
+    isValid,
+    digitCount: isZeroPlaceholder ? 0 : digits.length,
+    isNikMatched,
+    displayLabel,
+    label: displayLabel,
+  };
+}
+
+// Evaluasi Masa Aktif Kontrak Kerja (PKWT / PKWTT / Probation) & Indikator Sisa Hari
+export function getContractValidityInfo(employee?: Partial<Employee> | null): {
+  isPermanent: boolean;
+  isExpired: boolean;
+  isExpiringSoon: boolean;
+  startDate: string;
+  endDate: string;
+  remainingDays: number | null;
+  daysRemaining: number | null;
+  totalDurationDays: number | null;
+  progressPercent: number;
+  status: 'permanent' | 'active' | 'expiring_soon' | 'expired' | 'unset';
+  badgeText: string;
+  shortBadgeText: string;
+  badgeClass: string;
+  warningMessage: string | null;
+} {
+  const empStatus = employee?.employmentStatus || 'PKWT (Kontrak)';
+  const startDate = employee?.contractStartDate || employee?.joinDate || '';
+  const endDate = employee?.contractEndDate || '';
+  const isPermanent = empStatus === 'PKWTT (Tetap)' && !endDate;
+
+  if (isPermanent) {
+    return {
+      isPermanent: true,
+      isExpired: false,
+      isExpiringSoon: false,
+      startDate,
+      endDate: '',
+      remainingDays: null,
+      daysRemaining: null,
+      totalDurationDays: null,
+      progressPercent: 100,
+      status: 'permanent',
+      badgeText: 'Aktif Permanen (PKWTT / Karyawan Tetap)',
+      shortBadgeText: 'PKWTT Permanen',
+      badgeClass: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+      warningMessage: null,
+    };
+  }
+
+  if (!endDate) {
+    return {
+      isPermanent: false,
+      isExpired: false,
+      isExpiringSoon: false,
+      startDate,
+      endDate: '',
+      remainingDays: null,
+      daysRemaining: null,
+      totalDurationDays: null,
+      progressPercent: 0,
+      status: 'unset',
+      badgeText: 'Tanggal Berakhir Kontrak Belum Diatur',
+      shortBadgeText: 'Belum Diatur',
+      badgeClass: 'bg-slate-100 text-slate-600 border-slate-300',
+      warningMessage:
+        'Masa berakhir kontrak kerja belum diatur oleh Admin HR. Hubungi HRD untuk pembaruan periode kontrak.',
+    };
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const endObj = new Date(endDate);
+  endObj.setHours(0, 0, 0, 0);
+  const startObj = startDate ? new Date(startDate) : new Date(today);
+  startObj.setHours(0, 0, 0, 0);
+
+  if (isNaN(endObj.getTime())) {
+    return {
+      isPermanent: false,
+      isExpired: false,
+      isExpiringSoon: false,
+      startDate,
+      endDate,
+      remainingDays: null,
+      daysRemaining: null,
+      totalDurationDays: null,
+      progressPercent: 0,
+      status: 'unset',
+      badgeText: 'Format Tanggal Kontrak Tidak Valid',
+      shortBadgeText: 'Belum Valid',
+      badgeClass: 'bg-slate-100 text-slate-600 border-slate-300',
+      warningMessage: null,
+    };
+  }
+
+  const diffMs = endObj.getTime() - today.getTime();
+  const remainingDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+  const totalMs = Math.max(1, endObj.getTime() - startObj.getTime());
+  const totalDurationDays = Math.max(1, Math.ceil(totalMs / (1000 * 60 * 60 * 24)));
+  const elapsedDays = Math.max(0, totalDurationDays - Math.max(0, remainingDays));
+  const progressPercent = Math.min(100, Math.max(5, Math.round((elapsedDays / totalDurationDays) * 100)));
+
+  if (remainingDays < 0) {
+    const expiredDays = Math.abs(remainingDays);
+    return {
+      isPermanent: false,
+      isExpired: true,
+      isExpiringSoon: false,
+      startDate,
+      endDate,
+      remainingDays,
+      daysRemaining: remainingDays,
+      totalDurationDays,
+      progressPercent: 100,
+      status: 'expired',
+      badgeText: `Kontrak Telah Berakhir (${expiredDays} Hari Lalu)`,
+      shortBadgeText: `Habis (${expiredDays} hr lalu)`,
+      badgeClass: 'bg-rose-100 text-rose-800 border-rose-300',
+      warningMessage: `Masa aktif kontrak kerja telah berakhir pada ${formatIndoDate(endDate)} (${expiredDays} hari yang lalu). Harap segera proses pembaruan atau perpanjangan PKWT/PKWTT.`,
+    };
+  }
+
+  if (remainingDays <= 45) {
+    return {
+      isPermanent: false,
+      isExpired: false,
+      isExpiringSoon: true,
+      startDate,
+      endDate,
+      remainingDays,
+      daysRemaining: remainingDays,
+      totalDurationDays,
+      progressPercent,
+      status: 'expiring_soon',
+      badgeText: `Segera Berakhir (Sisa ${remainingDays} Hari)`,
+      shortBadgeText: `⚠️ Sisa ${remainingDays} Hari`,
+      badgeClass: 'bg-amber-100 text-amber-900 border-amber-300',
+      warningMessage: `Peringatan Masa Kontrak: Kontrak kerja akan berakhir dalam ${remainingDays} hari pada ${formatIndoDate(endDate)}. Segera koordinasikan evaluasi atau perpanjangan kontrak kerja.`,
+    };
+  }
+
+  return {
+    isPermanent: false,
+    isExpired: false,
+    isExpiringSoon: false,
+    startDate,
+    endDate,
+    remainingDays,
+    daysRemaining: remainingDays,
+    totalDurationDays,
+    progressPercent,
+    status: 'active',
+    badgeText: `Kontrak Aktif (Sisa ${remainingDays} Hari)`,
+    shortBadgeText: `Sisa ${remainingDays} Hari`,
+    badgeClass: 'bg-blue-100 text-blue-800 border-blue-200',
+    warningMessage: null,
+  };
+}
+
+

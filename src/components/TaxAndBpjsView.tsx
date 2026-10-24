@@ -14,6 +14,7 @@ import {
   formatRupiah,
   getTERCategory,
   getTERRate,
+  getNpwpStatusInfo,
 } from '../utils/formatters';
 
 interface TaxAndBpjsViewProps {
@@ -76,15 +77,15 @@ export const TaxAndBpjsView: React.FC<TaxAndBpjsViewProps> = ({
         <div>
           <h1 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
             <Percent className="w-6 h-6 text-purple-600" />
-            Pajak PPh 21 (Ketentuan Terbaru 2026) & BPJS
+            Pajak PPh 21 (Ketentuan Terbaru 2026) &amp; BPJS
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Kepatuhan perpajakan skema Tarif Efektif Rata-Rata (TER) Coretax DJP 2026 dan formulasi iuran jaminan sosial ketenagakerjaan.
+            Kepatuhan perpajakan skema Tarif Efektif Rata-Rata (TER) Coretax DJP 2026, pemadanan NIK-NPWP 16 digit, dan formulasi iuran jaminan sosial.
           </p>
         </div>
         <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-purple-50 text-purple-700 text-xs font-semibold border border-purple-200">
           <FileCheck2 className="w-4 h-4 text-purple-600" />
-          <span>Sesuai Sistem Coretax DJP & Ketentuan 2026</span>
+          <span>Sesuai Sistem Coretax DJP &amp; Ketentuan 2026</span>
         </div>
       </div>
 
@@ -122,7 +123,7 @@ export const TaxAndBpjsView: React.FC<TaxAndBpjsViewProps> = ({
             {formatRupiah(totalBpjsTkComp + totalBpjsTkEmp)}
           </h3>
           <p className="text-[11px] text-slate-500 mt-1">
-            JHT, JP, JKK, & JKM (Perusahaan: {formatRupiah(totalBpjsTkComp)})
+            JHT, JP, JKK, &amp; JKM (Perusahaan: {formatRupiah(totalBpjsTkComp)})
           </p>
         </div>
       </div>
@@ -131,7 +132,7 @@ export const TaxAndBpjsView: React.FC<TaxAndBpjsViewProps> = ({
       <div className="bg-gradient-to-br from-slate-900 to-purple-950 rounded-2xl p-6 text-white shadow-xl border border-slate-800">
         <div className="flex items-center gap-2 mb-4">
           <Calculator className="w-5 h-5 text-purple-400" />
-          <h3 className="text-base font-bold">Kalkulator Interaktif PPh 21 TER & BPJS Ketentuan 2026</h3>
+          <h3 className="text-base font-bold">Kalkulator Interaktif PPh 21 TER &amp; BPJS Ketentuan 2026</h3>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -254,7 +255,7 @@ export const TaxAndBpjsView: React.FC<TaxAndBpjsViewProps> = ({
       <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
         <div className="p-4 border-b border-slate-100 flex items-center justify-between">
           <h3 className="font-bold text-sm text-slate-800">
-            Tabel Rekap Pajak PPh 21 & BPJS Karyawan Bulan Ini
+            Tabel Rekap Pajak PPh 21, NIK-NPWP &amp; BPJS Karyawan Bulan Ini
           </h3>
           <span className="text-xs text-slate-500">{payrolls.length} Karyawan</span>
         </div>
@@ -263,7 +264,8 @@ export const TaxAndBpjsView: React.FC<TaxAndBpjsViewProps> = ({
             <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
               <tr>
                 <th className="py-3 px-4">Karyawan</th>
-                <th className="py-3 px-4">PTKP & Kategori</th>
+                <th className="py-3 px-4">NIK KTP (16 Digit) &amp; NPWP</th>
+                <th className="py-3 px-4">PTKP &amp; Kategori</th>
                 <th className="py-3 px-4">Penghasilan Bruto</th>
                 <th className="py-3 px-4">PPh 21 TER</th>
                 <th className="py-3 px-4">BPJS Kesehatan (1%)</th>
@@ -275,6 +277,7 @@ export const TaxAndBpjsView: React.FC<TaxAndBpjsViewProps> = ({
               {payrolls.map((p) => {
                 const emp = employees.find((e) => e.id === p.employeeId);
                 const category = emp ? getTERCategory(emp.ptkpStatus) : 'A';
+                const npwpInfo = getNpwpStatusInfo(emp?.npwp, emp?.ktpNumber);
                 const totalCompLiability =
                   p.bpjsKesehatanEmployer +
                   p.bpjsJhtEmployer +
@@ -293,9 +296,26 @@ export const TaxAndBpjsView: React.FC<TaxAndBpjsViewProps> = ({
                         />
                         <div>
                           <span className="font-semibold text-slate-900 block">{emp?.fullName}</span>
-                          <span className="text-[10px] text-slate-400">NPWP: {emp?.npwp}</span>
+                          <span className="text-[10px] font-mono text-slate-400">{emp?.nik}</span>
                         </div>
                       </div>
+                    </td>
+                    <td className="py-3 px-4">
+                      <span className="font-mono font-bold text-slate-800 block text-[11px]">
+                        NPWP: {emp?.npwp || '-'}
+                      </span>
+                      <span className="font-mono text-[10px] text-indigo-700 block">
+                        NIK: {emp?.ktpNumber || 'Belum dilengkapi'}
+                      </span>
+                      <span
+                        className={`inline-block mt-0.5 px-1.5 py-0.2 rounded text-[9px] font-bold ${
+                          npwpInfo.isValid
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            : 'bg-amber-50 text-amber-700 border border-amber-200'
+                        }`}
+                      >
+                        {npwpInfo.label}
+                      </span>
                     </td>
                     <td className="py-3 px-4">
                       <span className="font-bold text-purple-700">{emp?.ptkpStatus}</span>

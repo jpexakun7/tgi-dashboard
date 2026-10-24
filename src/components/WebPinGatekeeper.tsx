@@ -32,14 +32,23 @@ export const WebPinGatekeeper: React.FC<WebPinGatekeeperProps> = ({
 }) => {
   const [pin, setPin] = useState('');
   const [showPin, setShowPin] = useState(false);
-  const [targetMode, setTargetMode] = useState<'admin' | 'employee'>('admin');
+  const [targetMode, setTargetMode] = useState<'admin' | 'employee'>('employee');
   const [selectedAdminEmail, setSelectedAdminEmail] = useState<string>('MASTER');
   const [selectedEmpId, setSelectedEmpId] = useState<string>(employees[0]?.id || '');
+  const [nikInput, setNikInput] = useState<string>(employees[0]?.nik || '');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successAnimation, setSuccessAnimation] = useState(false);
 
   const activeEmpId = selectedEmpId || employees[0]?.id || '';
-  const selectedEmployee = employees.find((e) => e.id === activeEmpId) || employees[0];
+  const selectedEmployee =
+    employees.find(
+      (e) =>
+        nikInput.trim() &&
+        (e.nik.toLowerCase() === nikInput.trim().toLowerCase() ||
+          e.fullName.toLowerCase() === nikInput.trim().toLowerCase())
+    ) ||
+    employees.find((e) => e.id === activeEmpId) ||
+    employees[0];
 
   const masterAdminPin = companyConfig.securitySettings?.adminPin || '2026';
   const defaultEmployeePin = companyConfig.securitySettings?.defaultEmployeePin || '1234';
@@ -254,25 +263,58 @@ export const WebPinGatekeeper: React.FC<WebPinGatekeeperProps> = ({
             </select>
           </div>
         ) : (
-          <div className="mt-3 p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl">
-            <label className="block text-[11px] font-bold text-emerald-900 mb-1">
-              Pilih Akun Karyawan (Nama & NIK):
-            </label>
-            {employees.length > 0 ? (
-              <select
-                value={activeEmpId}
+          <div className="mt-3 p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl space-y-2.5">
+            <div>
+              <label className="block text-[11px] font-bold text-emerald-900 mb-1">
+                Masukkan NIK Karyawan atau Pilih Nama Anda:
+              </label>
+              <input
+                type="text"
+                value={nikInput}
                 onChange={(e) => {
-                  setSelectedEmpId(e.target.value);
+                  const val = e.target.value;
+                  setNikInput(val);
                   setErrorMessage(null);
+                  const matched = employees.find(
+                    (emp) =>
+                      emp.nik.toLowerCase() === val.trim().toLowerCase() ||
+                      emp.nik.toLowerCase().endsWith(val.trim().toLowerCase()) ||
+                      emp.fullName.toLowerCase().includes(val.trim().toLowerCase())
+                  );
+                  if (matched) {
+                    setSelectedEmpId(matched.id);
+                  }
                 }}
-                className="w-full px-3 py-2 text-xs font-semibold bg-white border border-emerald-300 rounded-lg text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
-              >
-                {employees.map((emp) => (
-                  <option key={emp.id} value={emp.id}>
-                    {emp.fullName} ({emp.nik} — {emp.department})
-                  </option>
-                ))}
-              </select>
+                placeholder="Ketik NIK (contoh: TGI-2021-001)..."
+                className="w-full px-3 py-2 text-xs font-mono font-bold bg-white border border-emerald-300 rounded-lg text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+              />
+            </div>
+
+            {employees.length > 0 ? (
+              <div>
+                <label className="block text-[10px] font-semibold text-emerald-800 mb-1">
+                  Daftar Karyawan Terdaftar (Sesi Terkunci per NIK):
+                </label>
+                <select
+                  value={selectedEmployee?.id || activeEmpId}
+                  onChange={(e) => {
+                    const nextId = e.target.value;
+                    setSelectedEmpId(nextId);
+                    const empObj = employees.find((emp) => emp.id === nextId);
+                    if (empObj) {
+                      setNikInput(empObj.nik);
+                    }
+                    setErrorMessage(null);
+                  }}
+                  className="w-full px-3 py-2 text-xs font-semibold bg-white border border-emerald-300 rounded-lg text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                >
+                  {employees.map((emp) => (
+                    <option key={emp.id} value={emp.id}>
+                      {emp.nik} — {emp.fullName} ({emp.department})
+                    </option>
+                  ))}
+                </select>
+              </div>
             ) : (
               <p className="text-xs text-emerald-800 font-medium">
                 Belum ada data karyawan di database. Masuk ke Panel Admin HR untuk menambah karyawan.

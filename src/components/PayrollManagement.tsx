@@ -132,9 +132,14 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
     showToast(`Berhasil menarik ${updatedCount} bonus kinerja (Total: ${formatRupiah(totalBonusAdded)}) ke payroll!`);
   };
 
+  // Only aggregate payrolls for employees that currently exist in the active directory
+  const validPayrolls = payrolls.filter((p) =>
+    employees.some((e) => e.id === p.employeeId && e.isActive !== false)
+  );
+
   // Aggregates
-  const totalBaseSalary = payrolls.reduce((acc, curr) => acc + curr.baseSalary, 0);
-  const totalAllowances = payrolls.reduce(
+  const totalBaseSalary = validPayrolls.reduce((acc, curr) => acc + curr.baseSalary, 0);
+  const totalAllowances = validPayrolls.reduce(
     (acc, curr) =>
       acc +
       curr.allowancePosition +
@@ -143,12 +148,12 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
       curr.allowanceCommunication,
     0
   );
-  const totalOvertime = payrolls.reduce((acc, curr) => acc + curr.overtimePay, 0);
-  const totalBonus = payrolls.reduce((acc, curr) => acc + curr.bonus, 0);
-  const totalGross = payrolls.reduce((acc, curr) => acc + curr.totalGrossSalary, 0);
-  const totalDeductions = payrolls.reduce((acc, curr) => acc + curr.totalDeductions, 0);
-  const totalTakeHomePay = payrolls.reduce((acc, curr) => acc + curr.takeHomePay, 0);
-  const totalPph21 = payrolls.reduce((acc, curr) => acc + curr.pph21TER, 0);
+  const totalOvertime = validPayrolls.reduce((acc, curr) => acc + curr.overtimePay, 0);
+  const totalBonus = validPayrolls.reduce((acc, curr) => acc + curr.bonus, 0);
+  const totalGross = validPayrolls.reduce((acc, curr) => acc + curr.totalGrossSalary, 0);
+  const totalDeductions = validPayrolls.reduce((acc, curr) => acc + curr.totalDeductions, 0);
+  const totalTakeHomePay = validPayrolls.reduce((acc, curr) => acc + curr.takeHomePay, 0);
+  const totalPph21 = validPayrolls.reduce((acc, curr) => acc + curr.pph21TER, 0);
 
   // Bank Transfer File Export (Format BCA Payroll CSV / Mandiri MCM)
   const handleDownloadBankTransferCSV = (bankType: 'BCA' | 'Mandiri') => {

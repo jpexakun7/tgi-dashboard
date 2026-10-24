@@ -99,6 +99,11 @@ import {
   dbToLeave,
   dbToOvertime,
   dbToReimbursement,
+  getDeletedEmployeeIds,
+  addDeletedEmployeeId,
+  removeDeletedEmployeeId,
+  markEmployeesModified,
+  isEmployeesModified,
 } from './services/supabaseService';
 import { supabase } from './lib/supabase';
 
@@ -569,37 +574,79 @@ export default function App() {
   }, [companyConfig]);
   const [employees, setEmployees] = useState<Employee[]>(() => {
     try {
-      const saved = localStorage.getItem('tgi_employees_data');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
+      // Reconcile any previously deleted employee IDs from system audit logs (excluding initial mock log-003)
+      const savedAuditRaw = localStorage.getItem('tgi_system_audit_logs');
+      if (savedAuditRaw) {
+        const parsedLogs = JSON.parse(savedAuditRaw);
+        if (Array.isArray(parsedLogs)) {
+          const createdIds = new Set(
+            parsedLogs
+              .filter((l: any) => l && l.actionType === 'EMPLOYEE_CREATE' && l.targetId)
+              .map((l: any) => l.targetId)
+          );
+          parsedLogs.forEach((l: any) => {
+            if (
+              l &&
+              l.actionType === 'EMPLOYEE_DELETE' &&
+              l.id !== 'log-003' &&
+              typeof l.targetId === 'string' &&
+              l.targetId.trim().length > 0 &&
+              !createdIds.has(l.targetId)
+            ) {
+              addDeletedEmployeeId(l.targetId);
+            }
+          });
+        }
       }
+
+      const deletedIds = new Set(getDeletedEmployeeIds());
+      const saved = localStorage.getItem('tgi_employees_data');
+      if (saved !== null) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          const filtered = parsed.filter((e: Employee) => e && !deletedIds.has(e.id));
+          if (filtered.length !== parsed.length) {
+            localStorage.setItem('tgi_employees_data', JSON.stringify(filtered));
+          }
+          // Do not re-seed initialEmployees if user has already saved or modified employee data
+          if (filtered.length > 0 || isEmployeesModified()) {
+            return filtered;
+          }
+        }
+      }
+      return initialEmployees.filter((e) => !deletedIds.has(e.id));
     } catch (e) {
       console.error('Failed to parse saved employees', e);
+      const deletedIds = new Set(getDeletedEmployeeIds());
+      return initialEmployees.filter((e) => !deletedIds.has(e.id));
     }
-    return initialEmployees;
   });
 
   // Keep employees in localStorage
   useEffect(() => {
     try {
-      localStorage.setItem('tgi_employees_data', JSON.stringify(employees));
+      const deletedIds = new Set(getDeletedEmployeeIds());
+      const cleanList = employees.filter((e) => !deletedIds.has(e.id));
+      localStorage.setItem('tgi_employees_data', JSON.stringify(cleanList));
     } catch (e) {
       console.error('Failed to save employees to localStorage', e);
     }
   }, [employees]);
 
   const [payrolls, setPayrolls] = useState<PayrollRecord[]>(() => {
+    const deletedIds = new Set(getDeletedEmployeeIds());
     try {
       const saved = localStorage.getItem('tgi_payrolls_data');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed)) {
+          return parsed.filter((p: PayrollRecord) => p && !deletedIds.has(p.employeeId));
+        }
       }
     } catch (e) {
       console.error('Failed to parse payrolls', e);
     }
-    return initialPayrollRecords;
+    return initialPayrollRecords.filter((p) => !deletedIds.has(p.employeeId));
   });
 
   useEffect(() => {
@@ -611,16 +658,19 @@ export default function App() {
   }, [payrolls]);
 
   const [attendances, setAttendances] = useState<AttendanceRecord[]>(() => {
+    const deletedIds = new Set(getDeletedEmployeeIds());
     try {
       const saved = localStorage.getItem('tgi_attendances_data');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed)) {
+          return parsed.filter((a: AttendanceRecord) => a && !deletedIds.has(a.employeeId));
+        }
       }
     } catch (e) {
       console.error('Failed to parse saved attendances', e);
     }
-    return initialAttendanceRecords;
+    return initialAttendanceRecords.filter((a) => !deletedIds.has(a.employeeId));
   });
 
   useEffect(() => {
@@ -632,16 +682,19 @@ export default function App() {
   }, [attendances]);
 
   const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>(() => {
+    const deletedIds = new Set(getDeletedEmployeeIds());
     try {
       const saved = localStorage.getItem('tgi_leave_requests_data');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed)) {
+          return parsed.filter((l: LeaveRequest) => l && !deletedIds.has(l.employeeId));
+        }
       }
     } catch (e) {
       console.error('Failed to parse saved leave requests', e);
     }
-    return initialLeaveRequests;
+    return initialLeaveRequests.filter((l) => !deletedIds.has(l.employeeId));
   });
 
   useEffect(() => {
@@ -653,16 +706,19 @@ export default function App() {
   }, [leaveRequests]);
 
   const [overtimeRequests, setOvertimeRequests] = useState<OvertimeRequest[]>(() => {
+    const deletedIds = new Set(getDeletedEmployeeIds());
     try {
       const saved = localStorage.getItem('tgi_overtime_requests_data');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed)) {
+          return parsed.filter((o: OvertimeRequest) => o && !deletedIds.has(o.employeeId));
+        }
       }
     } catch (e) {
       console.error('Failed to parse saved overtime requests', e);
     }
-    return initialOvertimeRequests;
+    return initialOvertimeRequests.filter((o) => !deletedIds.has(o.employeeId));
   });
 
   useEffect(() => {
@@ -674,16 +730,19 @@ export default function App() {
   }, [overtimeRequests]);
 
   const [reimbursements, setReimbursements] = useState<ReimbursementClaim[]>(() => {
+    const deletedIds = new Set(getDeletedEmployeeIds());
     try {
       const saved = localStorage.getItem('tgi_reimbursements_data');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed)) {
+          return parsed.filter((r: ReimbursementClaim) => r && !deletedIds.has(r.employeeId));
+        }
       }
     } catch (e) {
       console.error('Failed to parse saved reimbursements', e);
     }
-    return initialReimbursements;
+    return initialReimbursements.filter((r) => !deletedIds.has(r.employeeId));
   });
 
   useEffect(() => {
@@ -792,6 +851,14 @@ export default function App() {
           console.error(err);
         }
       }
+      if (e.key === 'tgi_employees_data' && e.newValue) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          if (Array.isArray(parsed)) setEmployees(parsed);
+        } catch (err) {
+          console.error(err);
+        }
+      }
     };
     window.addEventListener('storage', handleStorageSync);
     return () => window.removeEventListener('storage', handleStorageSync);
@@ -893,7 +960,7 @@ export default function App() {
       }
       setDashboardMode('admin');
     } else {
-      // Strictly lock Admin mode when entering via Employee PIN
+      // Strictly lock Admin mode when entering via Employee NIK & PIN
       setIsAdminUnlocked(false);
       try {
         sessionStorage.removeItem('tgi_admin_unlocked');
@@ -902,6 +969,12 @@ export default function App() {
       }
       if (options.employeeId) {
         setActiveEmployeeId(options.employeeId);
+        try {
+          sessionStorage.setItem('tgi_locked_employee_id', options.employeeId);
+          localStorage.setItem('tgi_active_employee_id', options.employeeId);
+        } catch (e) {
+          console.error(e);
+        }
       }
       setDashboardMode('employee');
     }
@@ -911,6 +984,7 @@ export default function App() {
     setIsAdminUnlocked(true);
     try {
       sessionStorage.setItem('tgi_admin_unlocked', 'true');
+      sessionStorage.removeItem('tgi_locked_employee_id');
     } catch (e) {
       console.error(e);
     }
@@ -930,6 +1004,7 @@ export default function App() {
     try {
       sessionStorage.removeItem('tgi_admin_unlocked');
       sessionStorage.removeItem('tgi_web_pin_unlocked');
+      sessionStorage.removeItem('tgi_locked_employee_id');
     } catch (e) {
       console.error(e);
     }
@@ -937,27 +1012,30 @@ export default function App() {
     logActivity(
       'LOGIN_ACTIVITY',
       'Autentikasi',
-      'Mengunci layar keamanan web dan mengakhiri sesi Admin.',
+      'Mengunci layar keamanan web dan mengakhiri sesi pengguna aktif.',
       { severity: 'info' }
     );
   };
 
   const handleToggleDashboardMode = () => {
     if (dashboardMode === 'employee') {
+      // Sesi Login Ketat: Hanya pengguna dengan sesi Admin terbuka yang dapat beralih ke Dashboard Admin HR
       if (isAdminUnlocked) {
         setDashboardMode('admin');
-      } else {
-        setIsAdminAuthModalOpen(true);
       }
     } else {
       setDashboardMode('employee');
     }
   };
 
-  // Selected Employee ID for Portal Karyawan
+  // Selected Employee ID for Portal Karyawan (Strictly locked to sessionStorage when logged in as Employee)
   const [activeEmployeeId, setActiveEmployeeId] = useState<string>(() => {
     try {
-      return localStorage.getItem('tgi_active_employee_id') || '';
+      return (
+        sessionStorage.getItem('tgi_locked_employee_id') ||
+        localStorage.getItem('tgi_active_employee_id') ||
+        ''
+      );
     } catch {
       return '';
     }
@@ -965,6 +1043,17 @@ export default function App() {
 
   // Determine current active employee in Portal Karyawan
   const currentEmployee = useMemo(() => {
+    if (!isAdminUnlocked) {
+      try {
+        const lockedId = sessionStorage.getItem('tgi_locked_employee_id');
+        if (lockedId) {
+          const lockedEmp = employees.find((e) => e.id === lockedId);
+          if (lockedEmp) return lockedEmp;
+        }
+      } catch {
+        // ignore
+      }
+    }
     if (activeEmployeeId) {
       const found = employees.find((e) => e.id === activeEmployeeId);
       if (found) return found;
@@ -978,7 +1067,7 @@ export default function App() {
       if (matched) return matched;
     }
     return employees[0] || initialEmployees[0];
-  }, [activeEmployeeId, employees, adminUser]);
+  }, [activeEmployeeId, employees, adminUser, isAdminUnlocked]);
 
   useEffect(() => {
     if (currentEmployee?.id && currentEmployee.id !== activeEmployeeId) {
@@ -991,6 +1080,40 @@ export default function App() {
     }
   }, [currentEmployee, activeEmployeeId]);
 
+  // Auto-sync Payrolls so every active employee always has a calculated PayrollRecord (THP, PPh 21 TER 2026 & BPJS)
+  const syncedPayrolls = useMemo(() => {
+    const deletedIds = new Set(getDeletedEmployeeIds());
+    const validEmployees = employees.filter((e) => !deletedIds.has(e.id));
+    const activeEmps = validEmployees.filter((e) => e.isActive !== false);
+
+    return activeEmps.map((emp) => {
+      const existing = payrolls.find((p) => p.employeeId === emp.id);
+      if (existing && existing.totalGrossSalary > 0 && existing.takeHomePay > 0) {
+        return existing;
+      }
+
+      const employeeOts = overtimeRequests.filter(
+        (o) => o.employeeId === emp.id && o.status === 'Disetujui'
+      );
+      const totalOtMinutes = employeeOts.reduce(
+        (acc, curr) => acc + getOvertimeMinutes(curr),
+        0
+      );
+      const empAtts = attendances.filter((a) => a.employeeId === emp.id);
+      const totalLateMinutes = empAtts.reduce((acc, curr) => acc + (curr.lateMinutes || 0), 0);
+
+      return calculatePayroll(
+        emp,
+        companyConfig.currentPayrollPeriod,
+        totalOtMinutes,
+        existing?.bonus || 0,
+        totalLateMinutes,
+        existing?.cashAdvanceDeduction || 0,
+        existing?.cashAdvanceNotes
+      );
+    });
+  }, [employees, payrolls, overtimeRequests, attendances, companyConfig.currentPayrollPeriod]);
+
   // -------------------------------------------------------------
   // Supabase Connection, Real-time Sync for 7 Tables
   // -------------------------------------------------------------
@@ -1000,46 +1123,103 @@ export default function App() {
       setSupabaseStatus(status);
 
       if (status.isTablesCreated) {
-        // 1. Fetch employees
-        const cloudEmps = await fetchEmployeesFromSupabase();
-        if (cloudEmps !== null) {
-          setEmployees(cloudEmps);
+        // Ensure any deleted_employee_ids are permanently deleted from Supabase before fetching
+        const deletedList = getDeletedEmployeeIds();
+        if (deletedList.length > 0) {
+          await Promise.allSettled(deletedList.map((delId) => deleteEmployeeFromSupabase(delId)));
         }
+        const deletedIds = new Set(getDeletedEmployeeIds());
 
-        // 2. Fetch assets
+        // 1. Fetch employees (already filtered against deleted_employee_ids in fetchEmployeesFromSupabase)
+        const cloudEmps = await fetchEmployeesFromSupabase();
+        let authoritativeEmployees = employees.filter((e) => !deletedIds.has(e.id));
+        if (cloudEmps !== null) {
+          const cleanCloudEmps = cloudEmps.filter((e) => !deletedIds.has(e.id));
+          if (cleanCloudEmps.length > 0 || isEmployeesModified()) {
+            authoritativeEmployees = cleanCloudEmps;
+            setEmployees(cleanCloudEmps);
+            try {
+              localStorage.setItem('tgi_employees_data', JSON.stringify(cleanCloudEmps));
+            } catch {
+              // ignore
+            }
+          }
+        }
+        const validEmpIds = new Set(authoritativeEmployees.map((e) => e.id));
+
+        // 2. Fetch assets (and unassign any asset linked to a deleted employee)
         const cloudAssets = await fetchAssetsFromSupabase();
         if (cloudAssets !== null) {
-          setAssets(cloudAssets);
+          const cleanedAssets = cloudAssets.map((a) =>
+            a.assignedToEmployeeId && deletedIds.has(a.assignedToEmployeeId)
+              ? {
+                  ...a,
+                  assignedToEmployeeId: null,
+                  assignedToEmployeeName: null,
+                  assignedToEmployeeNik: null,
+                  status: 'Tersedia' as const,
+                }
+              : a
+          );
+          setAssets(cleanedAssets);
         }
 
-        // 3. Fetch payrolls
+        // 3. Fetch payrolls & auto-generate missing payroll records only for active non-deleted employees
         const cloudPayrolls = await fetchPayrollsFromSupabase();
+        const activeEmpsList = authoritativeEmployees.filter(
+          (e) => e.isActive !== false && !deletedIds.has(e.id)
+        );
         if (cloudPayrolls !== null) {
-          setPayrolls(cloudPayrolls);
+          const mergedPayrolls = activeEmpsList.map((emp) => {
+            const found = cloudPayrolls.find((p) => p.employeeId === emp.id);
+            if (found && found.totalGrossSalary > 0 && found.takeHomePay > 0) {
+              return found;
+            }
+            const generated = calculatePayroll(emp, companyConfig.currentPayrollPeriod, 0, 0, 0);
+            upsertPayrollToSupabase(generated);
+            return generated;
+          });
+          setPayrolls(mergedPayrolls);
+        } else {
+          setPayrolls((prev) =>
+            prev.filter((p) => !deletedIds.has(p.employeeId) && validEmpIds.has(p.employeeId))
+          );
         }
 
         // 4. Fetch attendances (Presensi)
         const cloudAtts = await fetchAttendancesFromSupabase();
         if (cloudAtts !== null) {
-          setAttendances(cloudAtts);
+          setAttendances(
+            cloudAtts.filter((a) => !deletedIds.has(a.employeeId) && validEmpIds.has(a.employeeId))
+          );
         }
 
         // 5. Fetch leave requests (Cuti & Izin)
         const cloudLeaves = await fetchLeaveRequestsFromSupabase();
         if (cloudLeaves !== null) {
-          setLeaveRequests(cloudLeaves);
+          setLeaveRequests(
+            cloudLeaves.filter((l) => !deletedIds.has(l.employeeId) && validEmpIds.has(l.employeeId))
+          );
         }
 
         // 6. Fetch overtime requests (Lembur)
         const cloudOvertimes = await fetchOvertimeRequestsFromSupabase();
         if (cloudOvertimes !== null) {
-          setOvertimeRequests(cloudOvertimes);
+          setOvertimeRequests(
+            cloudOvertimes.filter(
+              (o) => !deletedIds.has(o.employeeId) && validEmpIds.has(o.employeeId)
+            )
+          );
         }
 
         // 7. Fetch reimbursements (Klaim Biaya)
         const cloudReimbursements = await fetchReimbursementsFromSupabase();
         if (cloudReimbursements !== null) {
-          setReimbursements(cloudReimbursements);
+          setReimbursements(
+            cloudReimbursements.filter(
+              (r) => !deletedIds.has(r.employeeId) && validEmpIds.has(r.employeeId)
+            )
+          );
         }
       }
     } catch (err) {
@@ -1050,10 +1230,18 @@ export default function App() {
   const handleTriggerSeed = async () => {
     setIsSeedingSupabase(true);
     try {
+      const deletedIds = new Set(getDeletedEmployeeIds());
+      const seedEmps = (employees.length > 0 ? employees : initialEmployees).filter(
+        (e) => !deletedIds.has(e.id)
+      );
+      const seedPayrolls = (payrolls.length > 0 ? payrolls : initialPayrollRecords).filter(
+        (p) => !deletedIds.has(p.employeeId)
+      );
       const res = await autoSeedSupabaseIfEmpty(
-        employees.length > 0 ? employees : initialEmployees,
+        seedEmps,
         assets.length > 0 ? assets : initialCompanyAssets,
-        payrolls.length > 0 ? payrolls : initialPayrollRecords
+        seedPayrolls,
+        true
       );
       if (res.seeded) {
         const freshEmps = await fetchEmployeesFromSupabase();
@@ -1080,19 +1268,28 @@ export default function App() {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'employees' },
         (payload: any) => {
+          const deletedIds = new Set(getDeletedEmployeeIds());
           if (payload.eventType === 'INSERT') {
             const newEmp = dbToEmployee(payload.new);
+            if (deletedIds.has(newEmp.id)) return;
             setEmployees((prev) => {
               if (prev.some((e) => e.id === newEmp.id)) return prev;
               return [newEmp, ...prev];
             });
           } else if (payload.eventType === 'UPDATE') {
             const updatedEmp = dbToEmployee(payload.new);
+            if (deletedIds.has(updatedEmp.id)) return;
             setEmployees((prev) => prev.map((e) => (e.id === updatedEmp.id ? updatedEmp : e)));
           } else if (payload.eventType === 'DELETE') {
             const oldId = (payload.old as any)?.id;
             if (oldId) {
+              addDeletedEmployeeId(oldId);
               setEmployees((prev) => prev.filter((e) => e.id !== oldId));
+              setPayrolls((prev) => prev.filter((p) => p.employeeId !== oldId));
+              setAttendances((prev) => prev.filter((a) => a.employeeId !== oldId));
+              setLeaveRequests((prev) => prev.filter((l) => l.employeeId !== oldId));
+              setOvertimeRequests((prev) => prev.filter((o) => o.employeeId !== oldId));
+              setReimbursements((prev) => prev.filter((r) => r.employeeId !== oldId));
             }
           }
         }
@@ -1122,14 +1319,17 @@ export default function App() {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'payrolls' },
         (payload: any) => {
+          const deletedIds = new Set(getDeletedEmployeeIds());
           if (payload.eventType === 'INSERT') {
             const newPay = dbToPayroll(payload.new);
+            if (deletedIds.has(newPay.employeeId)) return;
             setPayrolls((prev) => {
               if (prev.some((p) => p.id === newPay.id)) return prev;
               return [newPay, ...prev];
             });
           } else if (payload.eventType === 'UPDATE') {
             const updatedPay = dbToPayroll(payload.new);
+            if (deletedIds.has(updatedPay.employeeId)) return;
             setPayrolls((prev) => prev.map((p) => (p.id === updatedPay.id ? updatedPay : p)));
           } else if (payload.eventType === 'DELETE') {
             const oldId = (payload.old as any)?.id;
@@ -1143,14 +1343,17 @@ export default function App() {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'attendances' },
         (payload: any) => {
+          const deletedIds = new Set(getDeletedEmployeeIds());
           if (payload.eventType === 'INSERT') {
             const newAtt = dbToAttendance(payload.new);
+            if (deletedIds.has(newAtt.employeeId)) return;
             setAttendances((prev) => {
               if (prev.some((a) => a.id === newAtt.id)) return prev;
               return [newAtt, ...prev];
             });
           } else if (payload.eventType === 'UPDATE') {
             const updatedAtt = dbToAttendance(payload.new);
+            if (deletedIds.has(updatedAtt.employeeId)) return;
             setAttendances((prev) => prev.map((a) => (a.id === updatedAtt.id ? updatedAtt : a)));
           } else if (payload.eventType === 'DELETE') {
             const oldId = (payload.old as any)?.id;
@@ -1164,14 +1367,17 @@ export default function App() {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'leave_requests' },
         (payload: any) => {
+          const deletedIds = new Set(getDeletedEmployeeIds());
           if (payload.eventType === 'INSERT') {
             const newLeave = dbToLeave(payload.new);
+            if (deletedIds.has(newLeave.employeeId)) return;
             setLeaveRequests((prev) => {
               if (prev.some((l) => l.id === newLeave.id)) return prev;
               return [newLeave, ...prev];
             });
           } else if (payload.eventType === 'UPDATE') {
             const updatedLeave = dbToLeave(payload.new);
+            if (deletedIds.has(updatedLeave.employeeId)) return;
             setLeaveRequests((prev) => prev.map((l) => (l.id === updatedLeave.id ? updatedLeave : l)));
           } else if (payload.eventType === 'DELETE') {
             const oldId = (payload.old as any)?.id;
@@ -1185,14 +1391,17 @@ export default function App() {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'overtime_requests' },
         (payload: any) => {
+          const deletedIds = new Set(getDeletedEmployeeIds());
           if (payload.eventType === 'INSERT') {
             const newOt = dbToOvertime(payload.new);
+            if (deletedIds.has(newOt.employeeId)) return;
             setOvertimeRequests((prev) => {
               if (prev.some((o) => o.id === newOt.id)) return prev;
               return [newOt, ...prev];
             });
           } else if (payload.eventType === 'UPDATE') {
             const updatedOt = dbToOvertime(payload.new);
+            if (deletedIds.has(updatedOt.employeeId)) return;
             setOvertimeRequests((prev) => prev.map((o) => (o.id === updatedOt.id ? updatedOt : o)));
           } else if (payload.eventType === 'DELETE') {
             const oldId = (payload.old as any)?.id;
@@ -1206,14 +1415,17 @@ export default function App() {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'reimbursements' },
         (payload: any) => {
+          const deletedIds = new Set(getDeletedEmployeeIds());
           if (payload.eventType === 'INSERT') {
             const newClaim = dbToReimbursement(payload.new);
+            if (deletedIds.has(newClaim.employeeId)) return;
             setReimbursements((prev) => {
               if (prev.some((c) => c.id === newClaim.id)) return prev;
               return [newClaim, ...prev];
             });
           } else if (payload.eventType === 'UPDATE') {
             const updatedClaim = dbToReimbursement(payload.new);
+            if (deletedIds.has(updatedClaim.employeeId)) return;
             setReimbursements((prev) => prev.map((c) => (c.id === updatedClaim.id ? updatedClaim : c)));
           } else if (payload.eventType === 'DELETE') {
             const oldId = (payload.old as any)?.id;
@@ -1232,7 +1444,17 @@ export default function App() {
 
   // Handlers for Employees
   const handleAddEmployee = (newEmp: Employee) => {
-    setEmployees((prev) => [newEmp, ...prev]);
+    removeDeletedEmployeeId(newEmp.id);
+    markEmployeesModified();
+    setEmployees((prev) => {
+      const next = [newEmp, ...prev.filter((e) => e.id !== newEmp.id)];
+      try {
+        localStorage.setItem('tgi_employees_data', JSON.stringify(next));
+      } catch (err) {
+        console.error('Storage error', err);
+      }
+      return next;
+    });
     // Generate initial payroll record for new employee
     const newPayroll = calculatePayroll(newEmp, companyConfig.currentPayrollPeriod, 0, 0, 0);
     setPayrolls((prev) => [newPayroll, ...prev]);
@@ -1255,8 +1477,21 @@ export default function App() {
   };
 
   const handleUpdateEmployee = (updatedEmp: Employee) => {
+    markEmployeesModified();
     const oldEmp = employees.find((e) => e.id === updatedEmp.id);
-    setEmployees((prev) => prev.map((e) => (e.id === updatedEmp.id ? updatedEmp : e)));
+    setEmployees((prev) => {
+      const next = prev.map((e) => (e.id === updatedEmp.id ? updatedEmp : e));
+      try {
+        localStorage.setItem('tgi_employees_data', JSON.stringify(next));
+      } catch (err) {
+        console.error('Failed to persist updated employees to localStorage', err);
+      }
+      return next;
+    });
+
+    // Persist to Supabase asynchronously so Portal Admin & Portal Karyawan stay synced
+    updateEmployeeInSupabase(updatedEmp);
+
     // Update matching payroll calculation
     setPayrolls((prev) =>
       prev.map((p) => {
@@ -1298,6 +1533,30 @@ export default function App() {
           notes: 'Perubahan komponen gaji dan tunjangan karyawan.',
         }
       );
+    } else if (oldEmp && oldEmp.avatarUrl !== updatedEmp.avatarUrl) {
+      logActivity(
+        'EMPLOYEE_UPDATE',
+        'Data Karyawan',
+        `Memperbarui Foto Profil karyawan ${updatedEmp.fullName} (NIK: ${updatedEmp.nik}) dan menyinkronkan ke Portal Admin HR.`,
+        {
+          targetId: updatedEmp.id,
+          targetName: updatedEmp.fullName,
+          newValue: 'Foto Profil Diperbarui',
+          severity: 'success',
+        }
+      );
+    } else if (oldEmp && oldEmp.ktpPhotoUrl !== updatedEmp.ktpPhotoUrl) {
+      logActivity(
+        'EMPLOYEE_UPDATE',
+        'Data Karyawan',
+        `Mengunggah / memperbarui dokumen Foto KTP karyawan ${updatedEmp.fullName} (NIK: ${updatedEmp.nik}).`,
+        {
+          targetId: updatedEmp.id,
+          targetName: updatedEmp.fullName,
+          newValue: updatedEmp.ktpPhotoUrl ? 'Dokumen KTP Terunggah' : 'Dokumen KTP Dihapus',
+          severity: 'success',
+        }
+      );
     } else {
       logActivity(
         'EMPLOYEE_UPDATE',
@@ -1314,6 +1573,15 @@ export default function App() {
 
   const handleDeleteEmployee = (id: string) => {
     const empToDelete = employees.find((e) => e.id === id);
+
+    // 1. Track deleted employee ID in localStorage (deleted_employee_ids) & mark employee data modified so it is never re-seeded or restored
+    addDeletedEmployeeId(id);
+    markEmployeesModified();
+
+    // 2. Permanently delete from Supabase (DELETE FROM employees WHERE id = ...) and dependent tables
+    deleteEmployeeFromSupabase(id);
+
+    // 3. Remove from employees state & localStorage immediately
     setEmployees((prev) => {
       const remaining = prev.filter((e) => e.id !== id);
       try {
@@ -1323,7 +1591,90 @@ export default function App() {
       }
       return remaining;
     });
-    setPayrolls((prev) => prev.filter((p) => p.employeeId !== id));
+
+    // 4. Clean up all related records in state & localStorage so Dashboard, Payroll, Presensi, and Portal Karyawan stay 100% consistent
+    setPayrolls((prev) => {
+      const next = prev.filter((p) => p.employeeId !== id);
+      try {
+        localStorage.setItem('tgi_payrolls_data', JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+    setAttendances((prev) => {
+      const next = prev.filter((a) => a.employeeId !== id);
+      try {
+        localStorage.setItem('tgi_attendances_data', JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+    setLeaveRequests((prev) => {
+      const next = prev.filter((l) => l.employeeId !== id);
+      try {
+        localStorage.setItem('tgi_leave_requests_data', JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+    setOvertimeRequests((prev) => {
+      const next = prev.filter((o) => o.employeeId !== id);
+      try {
+        localStorage.setItem('tgi_overtime_requests_data', JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+    setReimbursements((prev) => {
+      const next = prev.filter((r) => r.employeeId !== id);
+      try {
+        localStorage.setItem('tgi_reimbursements_data', JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+    setCashAdvances((prev) => {
+      const next = prev.filter((c) => c.employeeId !== id);
+      try {
+        localStorage.setItem('tgi_cash_advances_data', JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+    setReviews((prev) => {
+      const next = prev.filter((r) => r.employeeId !== id);
+      try {
+        localStorage.setItem('tgi_performance_reviews', JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+    setAssets((prev) => {
+      const next = prev.map((a) =>
+        a.assignedToEmployeeId === id
+          ? {
+              ...a,
+              assignedToEmployeeId: null,
+              assignedToEmployeeName: null,
+              assignedToEmployeeNik: null,
+              status: 'Tersedia' as const,
+            }
+          : a
+      );
+      try {
+        localStorage.setItem('tgi_company_assets', JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
 
     if (activeEmployeeId === id) {
       const remaining = employees.filter((e) => e.id !== id);
@@ -1339,14 +1690,14 @@ export default function App() {
     logActivity(
       'EMPLOYEE_DELETE',
       'Data Karyawan',
-      `Menghapus permanen data karyawan ${empToDelete?.fullName || id} (NIK: ${empToDelete?.nik || id}) - Jabatan: ${empToDelete?.role || '-'} dari database aktif.`,
+      `Menghapus permanen data karyawan ${empToDelete?.fullName || id} (NIK: ${empToDelete?.nik || id}) - Jabatan: ${empToDelete?.role || '-'} dari database aktif (Supabase & LocalStorage).`,
       {
         targetId: id,
         targetName: empToDelete?.fullName || id,
         oldValue: empToDelete
           ? `Gaji Pokok: Rp ${empToDelete.baseSalary.toLocaleString('id-ID')}, Dept: ${empToDelete.department}, Status: ${empToDelete.employmentStatus}`
           : undefined,
-        newValue: 'Data karyawan dan record payroll dihapus permanen',
+        newValue: 'Data karyawan dan record payroll dihapus permanen (Supabase & LocalStorage)',
         severity: 'danger',
         notes: 'Penghapusan arsip karyawan oleh admin berwenang.',
       }
@@ -1420,16 +1771,57 @@ export default function App() {
     );
   };
 
-  // Handlers for Attendance & Work Shifts
+  // Handlers for Attendance & Work Shifts (Enforcing Anti-Duplicate 1x Check-In & 1x Check-Out per Shift/Day)
   const handleAddAttendance = (att: AttendanceRecord) => {
+    let recordToPersist: AttendanceRecord = att;
+
     setAttendances((prev) => {
-      const exists = prev.some((a) => a.id === att.id);
-      if (exists) {
-        return prev.map((a) => (a.id === att.id ? att : a));
+      // Find any existing record for the same employee and date
+      const existingSameDay = prev.find(
+        (a) => a.id === att.id || (a.employeeId === att.employeeId && a.date === att.date)
+      );
+
+      if (existingSameDay) {
+        const alreadyHasCheckIn = Boolean(
+          existingSameDay.checkIn && existingSameDay.checkIn.trim() !== '' && existingSameDay.checkIn !== '-'
+        );
+        const alreadyHasCheckOut = Boolean(
+          existingSameDay.checkOut && existingSameDay.checkOut.trim() !== '' && existingSameDay.checkOut !== '-'
+        );
+
+        // If both Check-In and Check-Out are already recorded for today, prevent duplicate overwrite
+        if (alreadyHasCheckIn && alreadyHasCheckOut) {
+          recordToPersist = existingSameDay;
+          return prev;
+        }
+
+        // Merge: preserve original Check-In data while allowing 1x Check-Out
+        const merged: AttendanceRecord = {
+          ...existingSameDay,
+          ...att,
+          id: existingSameDay.id,
+          checkIn: alreadyHasCheckIn ? existingSameDay.checkIn : att.checkIn,
+          checkInFullTimestamp:
+            existingSameDay.checkInFullTimestamp || att.checkInFullTimestamp,
+          facePhotoSnapshot: existingSameDay.facePhotoSnapshot || att.facePhotoSnapshot,
+          locationCoords: existingSameDay.locationCoords || att.locationCoords,
+          locationAddress: existingSameDay.locationAddress || att.locationAddress,
+          checkOut: alreadyHasCheckOut ? existingSameDay.checkOut : att.checkOut,
+          checkOutFullTimestamp: alreadyHasCheckOut
+            ? existingSameDay.checkOutFullTimestamp
+            : att.checkOutFullTimestamp,
+          checkOutPhotoSnapshot: alreadyHasCheckOut
+            ? existingSameDay.checkOutPhotoSnapshot
+            : att.checkOutPhotoSnapshot,
+        };
+        recordToPersist = merged;
+        return prev.map((a) => (a.id === existingSameDay.id ? merged : a));
       }
+
       return [att, ...prev];
     });
-    upsertAttendanceToSupabase(att);
+
+    upsertAttendanceToSupabase(recordToPersist);
   };
 
   const handleUpdateShifts = (newShifts: WorkShift[]) => {
@@ -2644,8 +3036,8 @@ export default function App() {
   // View: Mode Portal Layanan Mandiri Karyawan (Self-Service)
   if (dashboardMode === 'employee') {
     const safePayrolls = isAdminUnlocked
-      ? payrolls
-      : payrolls.filter((p) => p.employeeId === currentEmployee?.id);
+      ? syncedPayrolls
+      : syncedPayrolls.filter((p) => p.employeeId === currentEmployee?.id);
 
     return (
       <div className="min-h-screen bg-slate-100 flex flex-col antialiased font-sans text-slate-800">
@@ -2703,9 +3095,17 @@ export default function App() {
             onUpdateProfile={handleUpdateEmployee}
             onOpenPayslip={handleOpenPayslip}
             onSwitchToAdminMode={handleToggleDashboardMode}
-            onSelectEmployee={(empId) => setActiveEmployeeId(empId)}
+            onSelectEmployee={(empId) => {
+              if (isAdminUnlocked) {
+                setActiveEmployeeId(empId);
+              }
+            }}
             isAdminUnlocked={isAdminUnlocked}
-            onRequestAdminAccess={() => setIsAdminAuthModalOpen(true)}
+            onRequestAdminAccess={() => {
+              if (isAdminUnlocked) {
+                setDashboardMode('admin');
+              }
+            }}
             onLockAdmin={handleLockAdmin}
             onReportAssetIssue={(assetId, notes) => {
               const targetAsset = assets.find((a) => a.id === assetId);
@@ -2826,7 +3226,7 @@ export default function App() {
             {activeTab === 'overview' && (
               <DashboardOverview
                 employees={employees}
-                payrolls={payrolls}
+                payrolls={syncedPayrolls}
                 attendances={attendances}
                 leaveRequests={leaveRequests}
                 overtimeRequests={overtimeRequests}
@@ -2857,7 +3257,7 @@ export default function App() {
             {activeTab === 'payroll' && (
               <PayrollManagement
                 employees={employees}
-                payrolls={payrolls}
+                payrolls={syncedPayrolls}
                 reviews={reviews}
                 companyConfig={companyConfig}
                 onOpenPayslip={handleOpenPayslip}
@@ -2933,7 +3333,7 @@ export default function App() {
               <CashAdvanceView
                 cashAdvances={cashAdvances}
                 employees={employees}
-                payrolls={payrolls}
+                payrolls={syncedPayrolls}
                 companyConfig={companyConfig}
                 adminUser={adminUser}
                 onApproveCashAdvance={handleApproveCashAdvance}
@@ -2960,14 +3360,14 @@ export default function App() {
             )}
 
             {activeTab === 'tax_bpjs' && (
-              <TaxAndBpjsView employees={employees} payrolls={payrolls} />
+              <TaxAndBpjsView employees={employees} payrolls={syncedPayrolls} />
             )}
 
             {activeTab === 'performance_review' && (
               <PerformanceReviewView
                 reviews={reviews}
                 employees={employees}
-                payrolls={payrolls}
+                payrolls={syncedPayrolls}
                 companyConfig={companyConfig}
                 adminUser={adminUser}
                 onAddReview={handleAddReview}
@@ -2988,7 +3388,7 @@ export default function App() {
             {activeTab === 'reports' && (
               <ReportsView
                 employees={employees}
-                payrolls={payrolls}
+                payrolls={syncedPayrolls}
                 companyConfig={companyConfig}
               />
             )}

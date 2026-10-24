@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import {
   User,
   WalletCards,
@@ -48,6 +48,11 @@ import {
   Camera,
   Home,
   LayoutGrid,
+  LogOut,
+  Eye,
+  Trash2,
+  RefreshCw,
+  Image as ImageIcon,
 } from 'lucide-react';
 import {
   Employee,
@@ -77,8 +82,12 @@ import {
   calculateMinutesBetweenTimes,
   getEmployeeShift,
   evaluateAttendanceAgainstShift,
+  formatNpwpInput,
+  getNpwpStatusInfo,
+  getContractValidityInfo,
 } from '../utils/formatters';
 import { getEmployeeEffectivePin } from '../services/supabaseService';
+import { validateImageFile, compressImage, compressVideoFrame } from '../utils/imageUtils';
 import { LiveFaceGpsAttendanceScanner } from './LiveFaceGpsAttendanceScanner';
 import { PWAInstallBanner } from './PWAInstallPrompt';
 
@@ -328,14 +337,42 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     setTimeout(() => setCashAdvanceSuccessMsg(null), 5000);
   };
 
-  // Leave Form State
+  // Leave Form State (with Evidence Photo Upload)
   const [isLeaveModalOpen, setIsLeaveModalOpen] = useState(false);
   const [leaveForm, setLeaveForm] = useState({
     type: 'Cuti Tahunan' as LeaveRequest['type'],
     startDate: new Date().toISOString().slice(0, 10),
     endDate: new Date().toISOString().slice(0, 10),
     reason: '',
+    attachmentUrl: '',
+    attachmentName: '',
   });
+  const [isCompressingLeavePhoto, setIsCompressingLeavePhoto] = useState(false);
+
+  const handleUploadLeaveAttachment = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setLeaveError(null);
+    const validation = validateImageFile(file);
+    if (!validation.valid) {
+      setLeaveError(validation.error || 'Format gambar bukti tidak didukung.');
+      return;
+    }
+    try {
+      setIsCompressingLeavePhoto(true);
+      const compressedDataUrl = await compressImage(file, 800, 800, 0.8);
+      setLeaveForm((prev) => ({
+        ...prev,
+        attachmentUrl: compressedDataUrl,
+        attachmentName: file.name || 'Bukti_Cuti_Izin.jpg',
+      }));
+    } catch (err: any) {
+      setLeaveError(err?.message || 'Gagal mengompresi gambar bukti cuti/izin.');
+    } finally {
+      setIsCompressingLeavePhoto(false);
+    }
+  };
 
   // Calculate days for leave form
   const calculatedLeaveDays = useMemo(() => {
@@ -401,7 +438,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
   // Claims sub-tab: 'overtime' | 'reimbursement'
   const [claimsSubTab, setClaimsSubTab] = useState<'overtime' | 'reimbursement'>('overtime');
 
-  // Profile Edit State
+  // Profile Edit State (Tanpa Foto KTP, Cukup NIK KTP 16 Digit + Nomor NPWP)
   const [profileForm, setProfileForm] = useState({
     phone: currentEmployee.phone,
     email: currentEmployee.email,
@@ -413,9 +450,176 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     emergencyName: currentEmployee.emergencyContact?.name || '',
     emergencyRelation: currentEmployee.emergencyContact?.relation || '',
     emergencyPhone: currentEmployee.emergencyContact?.phone || '',
+    avatarUrl: currentEmployee.avatarUrl || '',
+    ktpNumber: currentEmployee.ktpNumber || '',
+    npwp: currentEmployee.npwp || '',
   });
 
   const [profileSuccessMsg, setProfileSuccessMsg] = useState(false);
+  const [profileUploadBanner, setProfileUploadBanner] = useState<string | null>(null);
+  const [profileUploadError, setProfileUploadError] = useState<string | null>(null);
+  const [isProcessingProfilePhoto, setIsProcessingProfilePhoto] = useState(false);
+  const [previewDocumentModal, setPreviewDocumentModal] = useState<{
+    title: string;
+    subtitle: string;
+    imageUrl: string;
+    downloadFileName?: string;
+  } | null>(null);
+
+  // Camera state for Profile Photo inside Panel Profil & Bank
+  const [activeDocCameraMode, setActiveDocCameraMode] = useState<'profile' | null>(null);
+  const docCameraVideoRef = useRef<HTMLVideoElement | null>(null);
+  const docCameraStreamRef = useRef<MediaStream | null>(null);
+
+  const stopDocCamera = () => {
+    if (docCameraStreamRef.current) {
+      docCameraStreamRef.current.getTracks().forEach((track) => track.stop());
+      docCameraStreamRef.current = null;
+    }
+    setActiveDocCameraMode(null);
+  };
+
+  React.useEffect(() => {
+    return () => {
+      stopDocCamera();
+    };
+  }, []);
+
+  const startDocCamera = async (_mode: 'profile' = 'profile') => {
+    setProfileUploadError(null);
+    stopDocCamera();
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setProfileUploadError('Browser perangkat Anda tidak mendukung akses kamera langsung.');
+        return;
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 640 }, height: { ideal: 640 }, facingMode: 'user' },
+      });
+      docCameraStreamRef.current = stream;
+      setActiveDocCameraMode('profile');
+      setTimeout(() => {
+        if (docCameraVideoRef.current) {
+          docCameraVideoRef.current.srcObject = stream;
+          docCameraVideoRef.current.play().catch(console.error);
+        }
+      }, 120);
+    } catch (err) {
+      console.error('Camera access error:', err);
+      setProfileUploadError(
+        'Gagal membuka kamera. Pastikan izin kamera telah diaktifkan atau gunakan tombol Upload File Gambar.'
+      );
+      setActiveDocCameraMode(null);
+    }
+  };
+
+  const captureDocCameraPhoto = () => {
+    if (!docCameraVideoRef.current || !activeDocCameraMode) return;
+    const video = docCameraVideoRef.current;
+
+    // Otomatis kompres gambar kamera maksimal lebar 800px, format JPEG kualitas 0.8
+    const dataUrl = compressVideoFrame(video, 800, 800, 0.8, true);
+    if (!dataUrl) return;
+
+    const nowTimestamp = `${new Date().toLocaleDateString('id-ID', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    })} • ${new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} WIB`;
+
+    const cleanNikKtp = (profileForm.ktpNumber || '').replace(/\D/g, '').trim();
+    const validNikKtp = /^\d{16}$/.test(cleanNikKtp) ? cleanNikKtp : currentEmployee.ktpNumber;
+
+    setProfileForm((prev) => ({ ...prev, avatarUrl: dataUrl }));
+    const updatedEmp: Employee = {
+      ...currentEmployee,
+      phone: profileForm.phone,
+      email: profileForm.email,
+      googleEmail: profileForm.googleEmail,
+      address: profileForm.address,
+      bankName: profileForm.bankName,
+      bankAccountNumber: profileForm.bankAccountNumber,
+      bankAccountHolder: profileForm.bankAccountHolder,
+      avatarUrl: dataUrl,
+      facePhotoUrl: dataUrl,
+      profilePhotoUpdatedAt: nowTimestamp,
+      ktpNumber: validNikKtp,
+      npwp: profileForm.npwp.trim() || currentEmployee.npwp,
+      emergencyContact: {
+        name: profileForm.emergencyName,
+        relation: profileForm.emergencyRelation,
+        phone: profileForm.emergencyPhone,
+      },
+    };
+    onUpdateProfile(updatedEmp);
+    setProfileUploadBanner(
+      'Foto Profil (JPEG 800px) berhasil dijepret & langsung terintegrasi real-time ke Header, Direktori Admin & Log Presensi!'
+    );
+
+    stopDocCamera();
+    setTimeout(() => setProfileUploadBanner(null), 5000);
+  };
+
+  const handleUploadProfilePhotoFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+
+    setProfileUploadError(null);
+    const validation = validateImageFile(file);
+    if (!validation.valid) {
+      setProfileUploadError(validation.error || 'Format gambar tidak didukung.');
+      return;
+    }
+
+    try {
+      setIsProcessingProfilePhoto(true);
+      // Kompresi otomatis maksimal lebar 800px, format JPEG kualitas 0.8
+      const compressedDataUrl = await compressImage(file, 800, 800, 0.8);
+      const nowTimestamp = `${new Date().toLocaleDateString('id-ID', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+      })} • ${new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} WIB`;
+
+      setProfileForm((prev) => ({ ...prev, avatarUrl: compressedDataUrl }));
+
+      const cleanNikKtp = (profileForm.ktpNumber || '').replace(/\D/g, '').trim();
+      const validNikKtp = /^\d{16}$/.test(cleanNikKtp) ? cleanNikKtp : currentEmployee.ktpNumber;
+
+      const updatedEmp: Employee = {
+        ...currentEmployee,
+        phone: profileForm.phone,
+        email: profileForm.email,
+        googleEmail: profileForm.googleEmail,
+        address: profileForm.address,
+        bankName: profileForm.bankName,
+        bankAccountNumber: profileForm.bankAccountNumber,
+        bankAccountHolder: profileForm.bankAccountHolder,
+        avatarUrl: compressedDataUrl,
+        facePhotoUrl: compressedDataUrl,
+        profilePhotoUpdatedAt: nowTimestamp,
+        ktpNumber: validNikKtp,
+        npwp: profileForm.npwp.trim() || currentEmployee.npwp,
+        emergencyContact: {
+          name: profileForm.emergencyName,
+          relation: profileForm.emergencyRelation,
+          phone: profileForm.emergencyPhone,
+        },
+      };
+
+      onUpdateProfile(updatedEmp);
+      setProfileUploadBanner(
+        'Foto Profil (terkompresi maks. 800px JPEG 0.8) berhasil diunggah & langsung terupdate di Header, Portal Karyawan, Direktori Admin & Log Presensi!'
+      );
+      setTimeout(() => setProfileUploadBanner(null), 5000);
+    } catch (err: any) {
+      setProfileUploadError(err?.message || 'Gagal memproses gambar Foto Profil.');
+    } finally {
+      setIsProcessingProfilePhoto(false);
+    }
+  };
+
   const [previewReceiptUrl, setPreviewReceiptUrl] = useState<string | null>(null);
   const [reportedAssetNotice, setReportedAssetNotice] = useState<string | null>(null);
 
@@ -432,13 +636,16 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       emergencyName: currentEmployee.emergencyContact?.name || '',
       emergencyRelation: currentEmployee.emergencyContact?.relation || '',
       emergencyPhone: currentEmployee.emergencyContact?.phone || '',
+      avatarUrl: currentEmployee.avatarUrl || '',
+      ktpNumber: currentEmployee.ktpNumber || '',
+      npwp: currentEmployee.npwp || '',
     });
     setProfileSuccessMsg(false);
   }, [currentEmployee]);
 
   const [leaveError, setLeaveError] = useState<string | null>(null);
 
-  // Leave Submit Handler
+  // Leave Submit Handler (Supports Evidence Photo Attachment)
   const handleSubmitLeave = (e: React.FormEvent) => {
     e.preventDefault();
     setLeaveError(null);
@@ -454,6 +661,12 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       return;
     }
 
+    const nowTimestamp = `${new Date().toLocaleDateString('id-ID', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    })} • ${new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} WIB`;
+
     const newReq: LeaveRequest = {
       id: `leave-${Date.now().toString().slice(-6)}`,
       employeeId: currentEmployee.id,
@@ -464,6 +677,9 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       reason: leaveForm.reason.trim(),
       status: 'Menunggu Persetujuan',
       appliedAt: new Date().toISOString().slice(0, 10),
+      attachmentUrl: leaveForm.attachmentUrl || undefined,
+      attachmentName: leaveForm.attachmentName || undefined,
+      attachmentUploadedAt: leaveForm.attachmentUrl ? nowTimestamp : undefined,
     };
 
     onApplyLeave(newReq);
@@ -474,6 +690,8 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       startDate: new Date().toISOString().slice(0, 10),
       endDate: new Date().toISOString().slice(0, 10),
       reason: '',
+      attachmentUrl: '',
+      attachmentName: '',
     });
   };
 
@@ -546,9 +764,46 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     });
   };
 
-  // Profile Save Handler
+  const isCurrentKtpNumberValid = /^\d{16}$/.test((currentEmployee.ktpNumber || '').trim());
+  const isFormKtpNumberValid = /^\d{16}$/.test((profileForm.ktpNumber || '').replace(/\D/g, '').trim());
+  const npwpInfo = useMemo(
+    () => getNpwpStatusInfo(profileForm.npwp, profileForm.ktpNumber),
+    [profileForm.npwp, profileForm.ktpNumber]
+  );
+  const myContractInfo = useMemo(() => getContractValidityInfo(currentEmployee), [currentEmployee]);
+  const formNpwpStatus = npwpInfo;
+  const contractValidity = myContractInfo;
+  const isCompressingLeaveAttachment = isCompressingLeavePhoto;
+  const formatDateID = formatIndoDate;
+
+  // Profile Save Handler with strict 16-digit NIK KTP validation & NPWP integration
   const handleSaveProfile = (e: React.FormEvent) => {
     e.preventDefault();
+    setProfileUploadError(null);
+
+    const cleanedNikKtp = (profileForm.ktpNumber || '').replace(/\D/g, '').trim();
+    if (!/^\d{16}$/.test(cleanedNikKtp)) {
+      setProfileUploadError(
+        `Validasi Gagal: Kolom 'Nomor NIK KTP (16 Digit)' wajib diisi tepat 16 digit angka (saat ini terisi ${cleanedNikKtp.length} digit). Mohon lengkapi NIK KTP Anda sebelum menyimpan perubahan profil.`
+      );
+      return;
+    }
+
+    const cleanedNpwpDigits = (profileForm.npwp || '').replace(/\D/g, '');
+    if (cleanedNpwpDigits.length > 0 && cleanedNpwpDigits.length !== 15 && cleanedNpwpDigits.length !== 16) {
+      setProfileUploadError(
+        `Validasi NPWP: Nomor NPWP harus terdiri dari 15 digit atau 16 digit angka (Pemadanan NIK-NPWP). Saat ini terisi ${cleanedNpwpDigits.length} digit.`
+      );
+      return;
+    }
+
+    const finalNpwp =
+      cleanedNpwpDigits.length === 16
+        ? cleanedNpwpDigits
+        : cleanedNpwpDigits.length === 15
+        ? formatNpwpInput(cleanedNpwpDigits)
+        : profileForm.npwp.trim() || currentEmployee.npwp;
+
     const updated: Employee = {
       ...currentEmployee,
       phone: profileForm.phone,
@@ -558,6 +813,10 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       bankName: profileForm.bankName,
       bankAccountNumber: profileForm.bankAccountNumber,
       bankAccountHolder: profileForm.bankAccountHolder,
+      avatarUrl: profileForm.avatarUrl || currentEmployee.avatarUrl,
+      facePhotoUrl: profileForm.avatarUrl || currentEmployee.facePhotoUrl || currentEmployee.avatarUrl,
+      ktpNumber: cleanedNikKtp,
+      npwp: finalNpwp,
       emergencyContact: {
         name: profileForm.emergencyName,
         relation: profileForm.emergencyRelation,
@@ -567,7 +826,13 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
 
     onUpdateProfile(updated);
     setProfileSuccessMsg(true);
-    setTimeout(() => setProfileSuccessMsg(false), 4000);
+    setProfileUploadBanner(
+      `Profil, Rekening Bank, NIK KTP (${cleanedNikKtp}) & NPWP (${finalNpwp}) berhasil disimpan dan langsung tersinkronisasi ke Panel Admin HR & Pajak PPh 21!`
+    );
+    setTimeout(() => {
+      setProfileSuccessMsg(false);
+      setProfileUploadBanner(null);
+    }, 4500);
   };
 
   // Simulated File Upload for Reimbursement
@@ -633,8 +898,14 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 Halo, {currentEmployee.fullName}
               </h1>
               <p className="text-xs sm:text-sm text-emerald-100 mt-0.5 truncate">
-                NIK: <span className="font-mono font-bold">{currentEmployee.nik}</span> •{' '}
-                {currentEmployee.role} ({currentEmployee.department})
+                NIK: <span className="font-mono font-bold">{currentEmployee.nik}</span>
+                {currentEmployee.ktpNumber ? (
+                  <>
+                    {' '}
+                    • NIK KTP: <span className="font-mono font-bold">{currentEmployee.ktpNumber}</span>
+                  </>
+                ) : null}{' '}
+                • {currentEmployee.role} ({currentEmployee.department})
               </p>
               <div className="mt-2.5 flex flex-wrap items-center gap-2">
                 <button
@@ -649,42 +920,64 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                       : 'Absen Foto Wajah & GPS HP Sekarang'}
                   </span>
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setActivePortalTab('profile')}
+                  className={`min-h-[38px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                    isCurrentKtpNumberValid
+                      ? 'bg-emerald-900/45 text-emerald-100 border-emerald-400/40 hover:bg-emerald-900/65'
+                      : 'bg-amber-400 text-slate-950 border-amber-300 hover:bg-amber-300 shadow-sm'
+                  }`}
+                >
+                  <CreditCard className="w-3.5 h-3.5 shrink-0" />
+                  <span>
+                    {isCurrentKtpNumberValid
+                      ? `NIK KTP: ${currentEmployee.ktpNumber} • NPWP: ${currentEmployee.npwp || '-'}`
+                      : '⚠️ Lengkapi NIK KTP (16 Digit) & NPWP'}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActivePortalTab('profile')}
+                  className={`min-h-[38px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                    myContractInfo.status === 'expired' || myContractInfo.status === 'expiring_soon'
+                      ? 'bg-amber-400 text-slate-950 border-amber-300 hover:bg-amber-300 shadow-sm'
+                      : 'bg-white/15 text-white border-white/30 hover:bg-white/25'
+                  }`}
+                >
+                  <FileText className="w-3.5 h-3.5 shrink-0" />
+                  <span>{myContractInfo.badgeText}</span>
+                </button>
               </div>
             </div>
           </div>
 
-          {/* Action Switchers: Protected against unauthorized employee switching */}
+          {/* Action Switchers: Sesi Login Ketat — Saat karyawan login dengan NIK & PIN (!isAdminUnlocked), kunci tampilan hanya di Portal Karyawan mereka sendiri & sembunyikan seluruh tombol navigasi ke Dashboard Admin HR */}
           {!isAdminUnlocked ? (
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-              <div className="inline-flex items-center justify-between sm:justify-start gap-2 px-3 py-2 bg-emerald-950/40 border border-emerald-400/30 rounded-xl text-emerald-100 text-xs">
+              <div className="inline-flex items-center justify-between sm:justify-start gap-2 px-3.5 py-2 bg-emerald-950/45 border border-emerald-400/35 rounded-xl text-emerald-100 text-xs">
                 <div className="flex items-center gap-1.5 min-w-0">
                   <ShieldCheck className="w-4 h-4 text-emerald-300 shrink-0" />
-                  <span className="font-semibold text-white truncate max-w-[145px]">
-                    {currentEmployee.fullName}
+                  <span className="font-semibold text-white truncate max-w-[165px]">
+                    Sesi Terkunci: {currentEmployee.fullName}
                   </span>
                   <span className="text-[10px] bg-emerald-800/80 text-emerald-200 px-1.5 py-0.5 rounded font-mono shrink-0">
                     {currentEmployee.nik}
                   </span>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setIsSwitchProfileModalOpen(true)}
-                  className="ml-1 text-[10px] bg-white/20 hover:bg-white/30 text-white px-2 py-1 rounded-lg font-semibold cursor-pointer transition-colors shrink-0"
-                  title="Ganti ke akun karyawan Anda jika menggunakan perangkat bersama"
-                >
-                  Ganti Akun
-                </button>
               </div>
 
-              <button
-                type="button"
-                onClick={() => (onRequestAdminAccess ? onRequestAdminAccess() : onSwitchToAdminMode())}
-                className="min-h-[38px] inline-flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-bold bg-white text-purple-900 hover:bg-purple-50 rounded-xl shadow-xs transition-all cursor-pointer hover:shadow-md"
-                title="Buka Panel HR & Payroll Admin (Perlu PIN Keamanan)"
-              >
-                <Lock className="w-3.5 h-3.5 text-purple-600 shrink-0" />
-                <span>Masuk Panel Admin (PIN)</span>
-              </button>
+              {onLockAdmin && (
+                <button
+                  type="button"
+                  onClick={onLockAdmin}
+                  className="min-h-[38px] inline-flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-bold bg-rose-600/90 hover:bg-rose-600 text-white border border-rose-400/40 rounded-xl shadow-xs transition-all cursor-pointer"
+                  title="Keluar Sesi Login Portal Karyawan (Logout)"
+                >
+                  <LogOut className="w-3.5 h-3.5 text-white shrink-0" />
+                  <span>Keluar Sesi (Logout)</span>
+                </button>
+              )}
             </div>
           ) : (
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
@@ -729,6 +1022,115 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
           )}
         </div>
       </div>
+
+      {/* Global Warning Banner if Employee has not completed 16-digit NIK KTP */}
+      {!isCurrentKtpNumberValid && (
+        <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-4 text-amber-950 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in">
+          <div className="flex items-start sm:items-center gap-3 min-w-0">
+            <div className="p-2.5 bg-amber-100 text-amber-700 rounded-xl shrink-0 border border-amber-300">
+              <AlertTriangle className="w-5 h-5" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[10px] font-extrabold uppercase tracking-wider bg-amber-200 text-amber-900 px-2 py-0.5 rounded-full">
+                  Peringatan Wajib Lengkapi Identitas
+                </span>
+                <span className="text-xs sm:text-sm font-bold text-amber-950">
+                  Nomor NIK KTP (16 Digit) Anda Belum Lengkap!
+                </span>
+              </div>
+              <p className="text-xs text-amber-800 mt-0.5">
+                Harap segera lengkapi <strong>Nomor NIK KTP (16 Digit)</strong> dan{' '}
+                <strong>Nomor NPWP (15/16 Digit)</strong> di tab{' '}
+                <strong>Profil &amp; Bank</strong> untuk kelengkapan administrasi HR dan pelaporan Pajak PPh 21 TER.
+              </p>
+            </div>
+          </div>
+          {activePortalTab !== 'profile' && (
+            <button
+              type="button"
+              onClick={() => setActivePortalTab('profile')}
+              className="min-h-[38px] px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-extrabold transition-colors shadow-xs cursor-pointer flex items-center justify-center gap-1.5 shrink-0"
+            >
+              <CreditCard className="w-3.5 h-3.5" />
+              <span>Lengkapi NIK KTP &amp; NPWP</span>
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Global Contract Expiring / Expired Warning Banner */}
+      {myContractInfo.warningMessage && (
+        <div
+          className={`rounded-2xl p-4 border-2 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in ${
+            myContractInfo.status === 'expired'
+              ? 'bg-rose-50 border-rose-300 text-rose-950'
+              : 'bg-amber-50 border-amber-300 text-amber-950'
+          }`}
+        >
+          <div className="flex items-start sm:items-center gap-3 min-w-0">
+            <div
+              className={`p-2.5 rounded-xl shrink-0 border ${
+                myContractInfo.status === 'expired'
+                  ? 'bg-rose-100 text-rose-700 border-rose-300'
+                  : 'bg-amber-100 text-amber-700 border-amber-300'
+              }`}
+            >
+              <FileText className="w-5 h-5" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span
+                  className={`text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                    myContractInfo.status === 'expired'
+                      ? 'bg-rose-200 text-rose-900'
+                      : 'bg-amber-200 text-amber-900'
+                  }`}
+                >
+                  {myContractInfo.badgeText}
+                </span>
+                <span className="text-xs sm:text-sm font-bold">
+                  Status Kontrak Kerja ({currentEmployee.employmentStatus})
+                </span>
+              </div>
+              <p className="text-xs mt-0.5 opacity-90">{myContractInfo.warningMessage}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {currentEmployee.contractDocumentUrl && (
+              <button
+                type="button"
+                onClick={() =>
+                  setPreviewDocumentModal({
+                    title: `Dokumen Kontrak Kerja — ${currentEmployee.fullName}`,
+                    subtitle: `${currentEmployee.employmentStatus} • No: ${
+                      currentEmployee.contractDocumentNumber || '-'
+                    }`,
+                    imageUrl: currentEmployee.contractDocumentUrl!,
+                    downloadFileName:
+                      currentEmployee.contractDocumentName ||
+                      `Kontrak_${currentEmployee.nik}.jpg`,
+                  })
+                }
+                className="min-h-[38px] px-3.5 py-2 bg-white hover:bg-slate-50 text-slate-800 border border-slate-300 rounded-xl text-xs font-bold cursor-pointer flex items-center gap-1.5"
+              >
+                <Eye className="w-3.5 h-3.5 text-indigo-600" />
+                <span>Lihat Dokumen Kontrak</span>
+              </button>
+            )}
+            {activePortalTab !== 'profile' && (
+              <button
+                type="button"
+                onClick={() => setActivePortalTab('profile')}
+                className="min-h-[38px] px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold cursor-pointer flex items-center gap-1.5"
+              >
+                <FileText className="w-3.5 h-3.5" />
+                <span>Detail Kontrak</span>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Unread Performance / Payroll Notification Alert Banner */}
       {unreadKpiNotifs.length > 0 && (
@@ -2030,6 +2432,28 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                     <p className="text-xs text-slate-700 bg-slate-50 p-2 rounded-lg border border-slate-100">
                       {leave.reason}
                     </p>
+                    {leave.attachmentUrl && (
+                      <div className="flex items-center justify-between bg-indigo-50/70 border border-indigo-200/80 rounded-lg px-2.5 py-1.5">
+                        <span className="text-[11px] font-semibold text-indigo-900 truncate max-w-[180px]">
+                          📎 {leave.attachmentName || 'Bukti Pendukung Cuti/Izin'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPreviewDocumentModal({
+                              title: `Bukti Cuti / Izin — ${leave.type}`,
+                              subtitle: `${currentEmployee.fullName} • ${leave.startDate} s/d ${leave.endDate}`,
+                              imageUrl: leave.attachmentUrl!,
+                              downloadFileName: leave.attachmentName || `Bukti-Cuti-${leave.id}.jpg`,
+                            })
+                          }
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-bold cursor-pointer shrink-0"
+                        >
+                          <Eye className="w-3 h-3" />
+                          <span>Lihat Bukti</span>
+                        </button>
+                      </div>
+                    )}
                     <div className="flex items-center justify-between text-[10px] text-slate-400">
                       <span>Diajukan: {leave.appliedAt}</span>
                       <span>Reviewer: {leave.approvedBy || '-'}</span>
@@ -2049,6 +2473,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                     <th className="py-3 px-3">Rentang Tanggal</th>
                     <th className="py-3 px-3">Durasi</th>
                     <th className="py-3 px-3">Alasan / Keperluan</th>
+                    <th className="py-3 px-3">Bukti / Lampiran</th>
                     <th className="py-3 px-3">Status Persetujuan</th>
                     <th className="py-3 px-3">Ditinjau Oleh</th>
                   </tr>
@@ -2056,7 +2481,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 <tbody className="divide-y divide-slate-100">
                   {myLeaveRequests.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="py-8 text-center text-slate-400">
+                      <td colSpan={8} className="py-8 text-center text-slate-400">
                         Belum ada riwayat pengajuan cuti. Klik tombol di atas untuk mengajukan.
                       </td>
                     </tr>
@@ -2073,6 +2498,27 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                         </td>
                         <td className="py-3 px-3 max-w-xs truncate text-slate-700" title={leave.reason}>
                           {leave.reason}
+                        </td>
+                        <td className="py-3 px-3 whitespace-nowrap">
+                          {leave.attachmentUrl ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPreviewDocumentModal({
+                                  title: `Bukti Cuti / Izin — ${leave.type}`,
+                                  subtitle: `${currentEmployee.fullName} • ${leave.startDate} s/d ${leave.endDate}`,
+                                  imageUrl: leave.attachmentUrl!,
+                                  downloadFileName: leave.attachmentName || `Bukti-Cuti-${leave.id}.jpg`,
+                                })
+                              }
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-[11px] font-bold transition-colors cursor-pointer"
+                            >
+                              <Eye className="w-3.5 h-3.5 text-indigo-600" />
+                              <span>Lihat Bukti</span>
+                            </button>
+                          ) : (
+                            <span className="text-[11px] text-slate-400 italic">Tanpa Lampiran</span>
+                          )}
                         </td>
                         <td className="py-3 px-3 whitespace-nowrap">
                           <span
@@ -3181,32 +3627,605 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
 
       {/* TAB: PROFIL & DATA REKENING PRIBADI */}
       {activePortalTab === 'profile' && (
-        <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-xs space-y-6">
+        <div className="bg-white rounded-2xl p-4 sm:p-6 border border-slate-200 shadow-xs space-y-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
             <div>
-              <h3 className="text-base font-bold text-slate-900">Profil & Rekening Penerima Gaji</h3>
+              <h3 className="text-base font-bold text-slate-900">
+                Profil, Identitas Resmi (NIK KTP &amp; NPWP), Kontrak Kerja &amp; Rekening Bank
+              </h3>
               <p className="text-xs text-slate-500">
-                Perbarui nomor kontak darurat, alamat domisili, atau nomor rekening bank payroll Anda
+                Kelola Photo Profil, Nomor NIK KTP (16 Digit), Nomor NPWP (terintegrasi Pajak PPh 21 Admin HR), dokumen kontrak kerja, dan rekening gaji
               </p>
             </div>
             {profileSuccessMsg && (
               <span className="inline-flex items-center gap-1 px-3 py-1 bg-emerald-50 text-emerald-700 text-xs font-semibold rounded-lg border border-emerald-200">
                 <Check className="w-3.5 h-3.5 text-emerald-600" />
-                Data berhasil diperbarui & tersinkronisasi!
+                Data berhasil diperbarui &amp; tersinkronisasi ke Admin!
               </span>
             )}
           </div>
 
+          {profileUploadBanner && (
+            <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 flex items-center justify-between gap-3 text-xs animate-in fade-in">
+              <div className="flex items-center gap-2.5">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span className="font-bold">{profileUploadBanner}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setProfileUploadBanner(null)}
+                className="text-emerald-700 hover:text-emerald-950 p-1 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
+          {profileUploadError && (
+            <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 flex items-center justify-between gap-3 text-xs animate-in fade-in">
+              <div className="flex items-center gap-2.5">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span className="font-semibold">{profileUploadError}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setProfileUploadError(null)}
+                className="text-rose-700 hover:text-rose-950 p-1 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
           <form onSubmit={handleSaveProfile} className="space-y-6">
+            {/* SEKSI 1: PHOTO PROFIL & IDENTITAS PAJAK (NIK KTP 16 DIGIT + NPWP) */}
+            <div className="p-4 sm:p-5 bg-gradient-to-br from-emerald-50/70 via-white to-indigo-50/50 rounded-2xl border border-emerald-200/80 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-emerald-200/60 pb-3">
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-extrabold text-slate-900">
+                      <ImageIcon className="w-4 h-4 text-emerald-600" />
+                      Photo Profil, Nomor NIK KTP (16 Digit) &amp; Nomor NPWP Pajak
+                    </span>
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-600 text-white shadow-2xs">
+                      Sinkron Otomatis ke Portal Admin HR &amp; PPh 21
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-600 mt-0.5">
+                    Unggah Photo Profil Anda dan lengkapi Nomor NIK KTP 16 digit beserta Nomor NPWP (mendukung format 15/16 digit &amp; pemadanan NIK-NPWP Coretax DJP).
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-800 bg-emerald-100/80 px-3 py-1.5 rounded-xl border border-emerald-200 shrink-0">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>
+                    NIK KTP: {isFormKtpNumberValid ? 'Valid (16 Digit)' : 'Belum Lengkap'} • NPWP:{' '}
+                    {formNpwpStatus.isValid ? 'Terdaftar' : 'Belum Diisi'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Live Camera Viewfinder when taking Photo Profil */}
+              {activeDocCameraMode === 'profile' && (
+                <div className="p-4 bg-slate-900 rounded-2xl text-white space-y-3 border border-slate-700 shadow-lg">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Camera className="w-4 h-4 text-emerald-400 animate-pulse" />
+                      <span className="text-xs font-bold">
+                        Kamera Aktif: Ambil Photo Profil Wajah
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={stopDocCamera}
+                      className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold cursor-pointer"
+                    >
+                      Tutup Kamera
+                    </button>
+                  </div>
+
+                  <div className="relative mx-auto overflow-hidden rounded-xl bg-black border-2 border-emerald-500/60 flex items-center justify-center w-full max-w-[260px] aspect-square">
+                    <video
+                      ref={docCameraVideoRef}
+                      autoPlay
+                      playsInline
+                      muted
+                      className="w-full h-full object-cover scale-x-[-1]"
+                    />
+                    <div className="absolute inset-4 border-2 border-dashed border-emerald-400/80 rounded-full pointer-events-none" />
+                  </div>
+
+                  <div className="flex items-center justify-center gap-2.5">
+                    <button
+                      type="button"
+                      onClick={captureDocCameraPhoto}
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 shadow-md cursor-pointer"
+                    >
+                      <Camera className="w-4 h-4" />
+                      <span>Jepret &amp; Simpan Photo Profil</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={stopDocCamera}
+                      className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold cursor-pointer"
+                    >
+                      Batal
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Grid 2 Kartu: 1. Photo Profil & 2. Identitas NIK KTP 16 Digit + NPWP */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {/* ITEM 1: UPLOAD PHOTO PROFIL */}
+                <div className="bg-white rounded-xl p-4 border border-slate-200 shadow-2xs flex flex-col justify-between space-y-3.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="w-6 h-6 rounded-lg bg-emerald-600 text-white font-extrabold text-xs flex items-center justify-center shrink-0">
+                        1
+                      </span>
+                      <div>
+                        <h5 className="text-xs sm:text-sm font-bold text-slate-900">
+                          Photo Profil Karyawan
+                        </h5>
+                        <p className="text-[11px] text-slate-500">
+                          Digunakan di Portal Karyawan, Verifikasi Wajah &amp; Data Karyawan Admin HR
+                        </p>
+                      </div>
+                    </div>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200 shrink-0">
+                      ✓ Terintegrasi Admin
+                    </span>
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row items-center gap-4 bg-slate-50 p-3.5 rounded-xl border border-slate-200/80">
+                    <div className="relative group shrink-0">
+                      <img
+                        src={
+                          profileForm.avatarUrl ||
+                          currentEmployee.avatarUrl ||
+                          'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=256&h=256&q=80'
+                        }
+                        alt={currentEmployee.fullName}
+                        onClick={() =>
+                          setPreviewDocumentModal({
+                            title: `Photo Profil — ${currentEmployee.fullName}`,
+                            subtitle: `NIK: ${currentEmployee.nik} • Terintegrasi dengan Portal Admin HR`,
+                            imageUrl:
+                              profileForm.avatarUrl ||
+                              currentEmployee.avatarUrl ||
+                              'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=256&h=256&q=80',
+                            downloadFileName: `Foto-Profil-${currentEmployee.nik}.jpg`,
+                          })
+                        }
+                        className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl object-cover ring-2 ring-emerald-500 shadow-md cursor-pointer"
+                      />
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPreviewDocumentModal({
+                            title: `Photo Profil — ${currentEmployee.fullName}`,
+                            subtitle: `NIK: ${currentEmployee.nik} • Terintegrasi dengan Portal Admin HR`,
+                            imageUrl:
+                              profileForm.avatarUrl ||
+                              currentEmployee.avatarUrl ||
+                              'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=256&h=256&q=80',
+                            downloadFileName: `Foto-Profil-${currentEmployee.nik}.jpg`,
+                          })
+                        }
+                        className="absolute bottom-1 right-1 p-1.5 rounded-lg bg-slate-900/75 text-white hover:bg-slate-900 cursor-pointer"
+                        title="Lihat Photo Profil"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    <div className="flex-1 w-full space-y-2 text-center sm:text-left">
+                      <div className="text-xs font-bold text-slate-800">
+                        {currentEmployee.fullName} ({currentEmployee.nik})
+                      </div>
+                      <p className="text-[11px] text-slate-500">
+                        {currentEmployee.profilePhotoUpdatedAt
+                          ? `Terakhir diperbarui: ${currentEmployee.profilePhotoUpdatedAt}`
+                          : 'Format JPG, PNG, atau WebP (Otomatis dikompresi maks. 800px & disinkronkan ke Admin)'}
+                      </p>
+
+                      <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 pt-1">
+                        <label className="min-h-[36px] inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold cursor-pointer shadow-2xs transition-colors">
+                          <Upload className="w-3.5 h-3.5" />
+                          <span>
+                            {isProcessingProfilePhoto ? 'Mengunggah...' : 'Upload Photo Profil'}
+                          </span>
+                          <input
+                            type="file"
+                            accept="image/jpeg,image/png,image/webp,image/jpg"
+                            onChange={handleUploadProfilePhotoFile}
+                            disabled={isProcessingProfilePhoto}
+                            className="hidden"
+                          />
+                        </label>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            activeDocCameraMode === 'profile'
+                              ? stopDocCamera()
+                              : startDocCamera('profile')
+                          }
+                          className="min-h-[36px] inline-flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-xl text-xs font-semibold cursor-pointer transition-colors"
+                        >
+                          <Camera className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>
+                            {activeDocCameraMode === 'profile' ? 'Tutup Kamera' : 'Kamera Selfie'}
+                          </span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* ITEM 2: IDENTITAS RESMI NIK KTP (16 DIGIT) & NOMOR NPWP PAJAK PPH 21 */}
+                <div className="bg-white rounded-xl p-4 border border-slate-200 shadow-2xs flex flex-col justify-between space-y-3.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="w-6 h-6 rounded-lg bg-indigo-600 text-white font-extrabold text-xs flex items-center justify-center shrink-0">
+                        2
+                      </span>
+                      <div>
+                        <h5 className="text-xs sm:text-sm font-bold text-slate-900">
+                          Nomor NIK KTP (16 Digit) &amp; Nomor NPWP Pajak
+                        </h5>
+                        <p className="text-[11px] text-slate-500">
+                          Tanpa perlu unggah foto KTP — cukup isi NIK 16 digit &amp; NPWP untuk kalkulasi PPh 21 TER
+                        </p>
+                      </div>
+                    </div>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${
+                        isFormKtpNumberValid
+                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                          : 'bg-rose-100 text-rose-800 border border-rose-200'
+                      }`}
+                    >
+                      {isFormKtpNumberValid ? '✓ NIK 16 Digit Valid' : 'Wajib 16 Digit'}
+                    </span>
+                  </div>
+
+                  <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200/80 space-y-3.5">
+                    {/* Input Wajib Isi (Required): Nomor NIK KTP (16 Digit) */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <label className="text-xs font-bold text-slate-800 flex items-center gap-1">
+                          <span>Nomor NIK KTP (16 Digit)</span>
+                          <span className="text-rose-600 font-extrabold">* (Wajib Diisi)</span>
+                        </label>
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                            isFormKtpNumberValid
+                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                              : 'bg-rose-100 text-rose-800 border border-rose-200'
+                          }`}
+                        >
+                          {(profileForm.ktpNumber || '').length}/16 Digit Angka
+                        </span>
+                      </div>
+
+                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                        <input
+                          type="text"
+                          required
+                          inputMode="numeric"
+                          minLength={16}
+                          maxLength={16}
+                          pattern="\d{16}"
+                          value={profileForm.ktpNumber}
+                          onChange={(e) => {
+                            const digitsOnly = e.target.value.replace(/\D/g, '').slice(0, 16);
+                            setProfileForm({
+                              ...profileForm,
+                              ktpNumber: digitsOnly,
+                            });
+                            if (profileUploadError && digitsOnly.length === 16) {
+                              setProfileUploadError(null);
+                            }
+                          }}
+                          placeholder="Ketik 16 digit angka NIK sesuai KTP (Contoh: 3171012345670001)"
+                          className={`flex-1 px-3 py-2 text-xs font-mono font-bold bg-white border rounded-xl focus:outline-hidden ${
+                            isFormKtpNumberValid
+                              ? 'border-emerald-400 text-slate-900 focus:ring-2 focus:ring-emerald-500/20'
+                              : 'border-amber-400 text-slate-900 focus:ring-2 focus:ring-rose-500/20'
+                          }`}
+                        />
+                        {isFormKtpNumberValid &&
+                          profileForm.ktpNumber !== currentEmployee.ktpNumber && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const cleaned = profileForm.ktpNumber.replace(/\D/g, '').trim();
+                                if (!/^\d{16}$/.test(cleaned)) return;
+                                onUpdateProfile({
+                                  ...currentEmployee,
+                                  ktpNumber: cleaned,
+                                });
+                                setProfileUploadBanner(
+                                  `Nomor NIK KTP (${cleaned}) berhasil disimpan & disinkronkan ke Panel Admin HR!`
+                                );
+                                setTimeout(() => setProfileUploadBanner(null), 4500);
+                              }}
+                              className="min-h-[36px] px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold cursor-pointer shrink-0 flex items-center justify-center gap-1"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              <span>Simpan NIK</span>
+                            </button>
+                          )}
+                      </div>
+                    </div>
+
+                    {/* Input Nomor NPWP (15/16 Digit atau Pemadanan NIK-NPWP) */}
+                    <div className="pt-2.5 border-t border-slate-200/80 space-y-1.5">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <label className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                          <span>Nomor NPWP (15 / 16 Digit)</span>
+                          <span className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200 text-[9px] font-bold">
+                            PPh 21 TER 2026
+                          </span>
+                        </label>
+                        {isFormKtpNumberValid && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const nikDigits = profileForm.ktpNumber.replace(/\D/g, '').slice(0, 16);
+                              setProfileForm((prev) => ({
+                                ...prev,
+                                npwp: nikDigits,
+                              }));
+                            }}
+                            className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 underline cursor-pointer"
+                          >
+                            Samakan NPWP = NIK KTP 16 Digit (Coretax DJP)
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                        <input
+                          type="text"
+                          value={profileForm.npwp}
+                          onChange={(e) => {
+                            const formatted = formatNpwpInput(e.target.value);
+                            setProfileForm({
+                              ...profileForm,
+                              npwp: formatted,
+                            });
+                          }}
+                          placeholder="Contoh: 12.345.678.9-012.000 atau 16 digit NIK KTP"
+                          className="flex-1 px-3 py-2 text-xs font-mono font-bold bg-white border border-slate-300 rounded-xl focus:outline-hidden focus:border-indigo-500 text-slate-900"
+                        />
+                        {profileForm.npwp.trim() !== (currentEmployee.npwp || '').trim() && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const cleanedNpwp = profileForm.npwp.trim();
+                              onUpdateProfile({
+                                ...currentEmployee,
+                                ktpNumber: isFormKtpNumberValid
+                                  ? profileForm.ktpNumber.replace(/\D/g, '')
+                                  : currentEmployee.ktpNumber,
+                                npwp: cleanedNpwp,
+                              });
+                              setProfileUploadBanner(
+                                `Nomor NPWP (${cleanedNpwp || 'Kosong'}) berhasil diperbarui & terintegrasi ke tabel Data Karyawan dan Pajak PPh 21 Admin HR!`
+                              );
+                              setTimeout(() => setProfileUploadBanner(null), 4500);
+                            }}
+                            className="min-h-[36px] px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold cursor-pointer shrink-0 flex items-center justify-center gap-1"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                            <span>Update NPWP</span>
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span
+                          className={`font-semibold ${
+                            formNpwpStatus.isValid ? 'text-emerald-700' : 'text-amber-700'
+                          }`}
+                        >
+                          Status Pajak: {formNpwpStatus.label}
+                        </span>
+                        <span className="text-slate-400">PTKP: {currentEmployee.ptkpStatus}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* SEKSI 2: MASA AKTIF KONTRAK KERJA & DOKUMEN KONTRAK KERJA (PKWT / PKWTT) */}
+            <div className="p-4 sm:p-5 bg-white rounded-2xl border border-slate-200 shadow-2xs space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 border-b border-slate-100 pb-3">
+                <div className="flex items-start gap-2.5">
+                  <div className="p-2 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-100 shrink-0">
+                    <FileCheck2 className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h4 className="text-xs sm:text-sm font-extrabold text-slate-900">
+                        Masa Aktif Kontrak &amp; Dokumen Kontrak Kerja ({currentEmployee.employmentStatus})
+                      </h4>
+                      <span
+                        className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                          contractValidity.isPermanent
+                            ? 'bg-indigo-100 text-indigo-800 border border-indigo-200'
+                            : contractValidity.isExpired
+                            ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                            : contractValidity.isExpiringSoon
+                            ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                            : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                        }`}
+                      >
+                        {contractValidity.badgeText}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      Dikelola oleh Admin HRD PT Tangan Kita Berkarya • Tersinkronisasi langsung dari menu Data Karyawan
+                    </p>
+                  </div>
+                </div>
+
+                {currentEmployee.contractDocumentUrl ? (
+                  <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setPreviewDocumentModal({
+                          title: `Dokumen Kontrak Kerja — ${currentEmployee.fullName}`,
+                          subtitle: `${
+                            currentEmployee.contractDocumentNumber || currentEmployee.employmentStatus
+                          } • Masa Berlaku: ${currentEmployee.contractStartDate || currentEmployee.joinDate} s/d ${
+                            currentEmployee.contractEndDate || 'Tetap (PKWTT)'
+                          }`,
+                          imageUrl: currentEmployee.contractDocumentUrl!,
+                          downloadFileName:
+                            currentEmployee.contractDocumentName ||
+                            `Kontrak-Kerja-${currentEmployee.nik}.jpg`,
+                        })
+                      }
+                      className="min-h-[36px] inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold shadow-2xs transition-colors cursor-pointer"
+                    >
+                      <Eye className="w-3.5 h-3.5" />
+                      <span>Lihat Dokumen Kontrak</span>
+                    </button>
+                    <a
+                      href={currentEmployee.contractDocumentUrl}
+                      download={
+                        currentEmployee.contractDocumentName ||
+                        `Kontrak-Kerja-${currentEmployee.nik}.jpg`
+                      }
+                      className="min-h-[36px] inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs font-bold transition-colors"
+                    >
+                      <Download className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Unduh Kontrak</span>
+                    </a>
+                  </div>
+                ) : (
+                  <span className="px-3 py-1.5 rounded-xl bg-slate-100 text-slate-500 border border-slate-200 text-[11px] font-semibold">
+                    Dokumen fisik/digital belum diunggah oleh Admin HR
+                  </span>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+                <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80">
+                  <span className="text-[11px] text-slate-500 block">Status Perjanjian Kerja</span>
+                  <span className="font-extrabold text-slate-900 mt-0.5 block">
+                    {currentEmployee.employmentStatus}
+                  </span>
+                  <span className="text-[10px] text-slate-400 font-mono">
+                    {currentEmployee.contractDocumentNumber || 'No. SK / Kontrak Standar HR'}
+                  </span>
+                </div>
+
+                <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80">
+                  <span className="text-[11px] text-slate-500 block">Tanggal Mulai Kontrak</span>
+                  <span className="font-bold text-slate-900 mt-0.5 block">
+                    {currentEmployee.contractStartDate
+                      ? formatDateID(currentEmployee.contractStartDate)
+                      : formatDateID(currentEmployee.joinDate)}
+                  </span>
+                  <span className="text-[10px] text-slate-400">
+                    Tgl Bergabung: {formatDateID(currentEmployee.joinDate)}
+                  </span>
+                </div>
+
+                <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80">
+                  <span className="text-[11px] text-slate-500 block">Tanggal Berakhir Kontrak</span>
+                  <span
+                    className={`font-bold mt-0.5 block ${
+                      contractValidity.isPermanent
+                        ? 'text-indigo-700'
+                        : contractValidity.isExpired
+                        ? 'text-rose-700'
+                        : contractValidity.isExpiringSoon
+                        ? 'text-amber-700'
+                        : 'text-slate-900'
+                    }`}
+                  >
+                    {contractValidity.isPermanent
+                      ? 'Tidak Terbatas (Karyawan Tetap)'
+                      : currentEmployee.contractEndDate
+                      ? formatDateID(currentEmployee.contractEndDate)
+                      : 'Belum Ditentukan HR'}
+                  </span>
+                  <span className="text-[10px] text-slate-400">
+                    {currentEmployee.contractUpdatedAt
+                      ? `Diperbarui HR: ${currentEmployee.contractUpdatedAt}`
+                      : 'Terdaftar di Master Data HR'}
+                  </span>
+                </div>
+
+                <div
+                  className={`p-3 rounded-xl border ${
+                    contractValidity.isPermanent
+                      ? 'bg-indigo-50/70 border-indigo-200'
+                      : contractValidity.isExpired
+                      ? 'bg-rose-50 border-rose-200'
+                      : contractValidity.isExpiringSoon
+                      ? 'bg-amber-50 border-amber-200'
+                      : 'bg-emerald-50/70 border-emerald-200'
+                  }`}
+                >
+                  <span className="text-[11px] text-slate-600 block">Indikator Masa Aktif Kontrak</span>
+                  <span
+                    className={`font-extrabold mt-0.5 block ${
+                      contractValidity.isPermanent
+                        ? 'text-indigo-800'
+                        : contractValidity.isExpired
+                        ? 'text-rose-800'
+                        : contractValidity.isExpiringSoon
+                        ? 'text-amber-800'
+                        : 'text-emerald-800'
+                    }`}
+                  >
+                    {contractValidity.badgeText}
+                  </span>
+                  {!contractValidity.isPermanent && contractValidity.daysRemaining !== null && (
+                    <div className="w-full h-1.5 bg-white/80 rounded-full overflow-hidden mt-1.5 border border-slate-200/60">
+                      <div
+                        className={`h-full rounded-full ${
+                          contractValidity.isExpired
+                            ? 'bg-rose-600'
+                            : contractValidity.isExpiringSoon
+                            ? 'bg-amber-500'
+                            : 'bg-emerald-600'
+                        }`}
+                        style={{ width: `${contractValidity.progressPercent}%` }}
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
             {/* Read-Only Employment Master Data */}
             <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
               <h4 className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                Data Kepegawaian Resmi (Read-Only)
+                Data Kepegawaian Resmi &amp; Identitas Terdaftar (Sinkronisasi Admin HR)
               </h4>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
                 <div>
                   <span className="text-slate-400 block text-[11px]">Nomor Induk Karyawan:</span>
                   <span className="font-mono font-bold text-slate-800">{currentEmployee.nik}</span>
+                </div>
+                <div>
+                  <span className="text-slate-400 block text-[11px]">Nomor NIK KTP (16 Digit):</span>
+                  {currentEmployee.ktpNumber && /^\d{16}$/.test(currentEmployee.ktpNumber) ? (
+                    <span className="font-mono font-bold text-indigo-700">
+                      {currentEmployee.ktpNumber}
+                    </span>
+                  ) : (
+                    <span className="font-semibold text-rose-600">Belum dilengkapi</span>
+                  )}
                 </div>
                 <div>
                   <span className="text-slate-400 block text-[11px]">Departemen:</span>
@@ -3221,8 +4240,8 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   <span className="font-semibold text-emerald-700">{currentEmployee.employmentStatus}</span>
                 </div>
                 <div>
-                  <span className="text-slate-400 block text-[11px]">NPWP:</span>
-                  <span className="font-mono text-slate-700">{currentEmployee.npwp || '-'}</span>
+                  <span className="text-slate-400 block text-[11px]">Nomor NPWP Terdaftar:</span>
+                  <span className="font-mono font-bold text-slate-800">{currentEmployee.npwp || '-'}</span>
                 </div>
                 <div>
                   <span className="text-slate-400 block text-[11px]">No. BPJS Kesehatan:</span>
@@ -3231,10 +4250,6 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 <div>
                   <span className="text-slate-400 block text-[11px]">No. BPJS Ketenagakerjaan:</span>
                   <span className="font-mono text-slate-700">{currentEmployee.bpjsKetenagakerjaanNo || '-'}</span>
-                </div>
-                <div>
-                  <span className="text-slate-400 block text-[11px]">Tanggal Bergabung:</span>
-                  <span className="text-slate-700">{currentEmployee.joinDate}</span>
                 </div>
               </div>
             </div>
@@ -3480,6 +4495,96 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 />
               </div>
 
+              {/* Upload Gambar Bukti Pendukung (Surat Dokter / Bukti Izin - Kompresi Otomatis) */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="block font-semibold text-slate-700">
+                    Upload Gambar Bukti Pendukung (Surat Dokter / Bukti Izin)
+                  </label>
+                  <span className="text-[10px] font-semibold text-indigo-600">
+                    Kompresi Otomatis JPEG
+                  </span>
+                </div>
+
+                {leaveForm.attachmentUrl ? (
+                  <div className="p-3 rounded-xl bg-indigo-50/70 border border-indigo-200 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <img
+                        src={leaveForm.attachmentUrl}
+                        alt="Preview Bukti Cuti"
+                        onClick={() =>
+                          setPreviewDocumentModal({
+                            title: 'Pratinjau Bukti Cuti & Izin',
+                            subtitle: leaveForm.attachmentName || 'Bukti Pendukung',
+                            imageUrl: leaveForm.attachmentUrl,
+                            downloadFileName: leaveForm.attachmentName || 'Bukti-Cuti.jpg',
+                          })
+                        }
+                        className="w-12 h-12 rounded-lg object-cover border border-indigo-300 cursor-pointer shrink-0"
+                      />
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-slate-800 truncate">
+                          {leaveForm.attachmentName || 'Bukti-Cuti-Izin.jpg'}
+                        </p>
+                        <p className="text-[10px] text-emerald-700 font-semibold">
+                          ✓ Gambar telah dikompresi &amp; siap dikirim ke Admin HR
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPreviewDocumentModal({
+                            title: 'Pratinjau Bukti Cuti & Izin',
+                            subtitle: leaveForm.attachmentName || 'Bukti Pendukung',
+                            imageUrl: leaveForm.attachmentUrl,
+                            downloadFileName: leaveForm.attachmentName || 'Bukti-Cuti.jpg',
+                          })
+                        }
+                        className="p-1.5 rounded-lg bg-white text-indigo-600 border border-indigo-200 hover:bg-indigo-100 cursor-pointer"
+                        title="Perbesar Bukti"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setLeaveForm((prev) => ({
+                            ...prev,
+                            attachmentUrl: '',
+                            attachmentName: '',
+                          }))
+                        }
+                        className="p-1.5 rounded-lg bg-white text-rose-600 border border-rose-200 hover:bg-rose-50 cursor-pointer"
+                        title="Hapus Gambar"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <label className="flex flex-col items-center justify-center p-3.5 border-2 border-dashed border-slate-300 hover:border-emerald-500 rounded-xl bg-slate-50 hover:bg-emerald-50/40 cursor-pointer transition-colors">
+                    <Upload className="w-5 h-5 text-emerald-600 mb-1" />
+                    <span className="text-xs font-bold text-slate-700">
+                      {isCompressingLeaveAttachment
+                        ? 'Mengompresi gambar bukti...'
+                        : 'Klik untuk pilih / foto Surat Dokter atau Bukti Izin'}
+                    </span>
+                    <span className="text-[10px] text-slate-400 mt-0.5">
+                      Format JPG, PNG, WebP (Otomatis dikompresi maks. 800px agar ringan)
+                    </span>
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,image/jpg"
+                      onChange={handleUploadLeaveAttachment}
+                      disabled={isCompressingLeaveAttachment}
+                      className="hidden"
+                    />
+                  </label>
+                )}
+              </div>
+
               <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
                 <button
                   type="button"
@@ -3490,7 +4595,8 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-xs"
+                  disabled={isCompressingLeaveAttachment}
+                  className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-xs disabled:opacity-50"
                 >
                   Kirim Permohonan Cuti
                 </button>
@@ -3784,6 +4890,57 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
               >
                 Tutup
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL PREVIEW PHOTO PROFIL & DOKUMEN KTP */}
+      {previewDocumentModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-xs animate-in fade-in">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-5 shadow-2xl border border-slate-200 space-y-3.5">
+            <div className="flex items-start justify-between gap-3 pb-2.5 border-b border-slate-100">
+              <div>
+                <h4 className="font-bold text-slate-900 text-sm">{previewDocumentModal.title}</h4>
+                <p className="text-[11px] text-slate-500 mt-0.5">{previewDocumentModal.subtitle}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPreviewDocumentModal(null)}
+                className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="rounded-xl overflow-hidden bg-slate-900 border border-slate-200 flex items-center justify-center max-h-[65vh]">
+              <img
+                src={previewDocumentModal.imageUrl}
+                alt={previewDocumentModal.title}
+                className="w-full max-h-[62vh] object-contain"
+              />
+            </div>
+            <div className="flex items-center justify-between gap-2 pt-1 flex-wrap">
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                Tersinkronisasi dengan Portal Admin HR
+              </span>
+              <div className="flex items-center gap-2">
+                <a
+                  href={previewDocumentModal.imageUrl}
+                  download={previewDocumentModal.downloadFileName || 'Dokumen-Karyawan.jpg'}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl transition-colors"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Unduh File</span>
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setPreviewDocumentModal(null)}
+                  className="px-4 py-2 text-xs font-bold bg-slate-800 hover:bg-slate-900 text-white rounded-xl cursor-pointer"
+                >
+                  Tutup Pratinjau
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -4084,31 +5241,53 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
             </div>
 
             <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setIsMobileMenuSheetOpen(false);
-                  setIsSwitchProfileModalOpen(true);
-                }}
-                className="flex-1 min-h-[42px] py-2.5 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
-              >
-                Ganti Akun Karyawan (PIN)
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsMobileMenuSheetOpen(false);
-                  if (onRequestAdminAccess && !isAdminUnlocked) {
-                    onRequestAdminAccess();
-                  } else {
-                    onSwitchToAdminMode();
-                  }
-                }}
-                className="flex-1 min-h-[42px] py-2.5 px-3 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-900 border border-purple-200 text-xs font-bold cursor-pointer flex items-center justify-center gap-1.5"
-              >
-                <Lock className="w-3.5 h-3.5 text-purple-600" />
-                <span>Panel Admin</span>
-              </button>
+              {isAdminUnlocked ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsMobileMenuSheetOpen(false);
+                      setIsSwitchProfileModalOpen(true);
+                    }}
+                    className="flex-1 min-h-[42px] py-2.5 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
+                  >
+                    Simulasi Karyawan Lain
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsMobileMenuSheetOpen(false);
+                      onSwitchToAdminMode();
+                    }}
+                    className="flex-1 min-h-[42px] py-2.5 px-3 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-900 border border-purple-200 text-xs font-bold cursor-pointer flex items-center justify-center gap-1.5"
+                  >
+                    <Shield className="w-3.5 h-3.5 text-purple-600" />
+                    <span>Kembali ke Panel Admin</span>
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-600 min-w-0">
+                    <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span className="truncate">
+                      Sesi Terkunci: <strong>{currentEmployee.nik}</strong>
+                    </span>
+                  </div>
+                  {onLockAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMobileMenuSheetOpen(false);
+                        onLockAdmin();
+                      }}
+                      className="min-h-[42px] py-2.5 px-4 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold cursor-pointer flex items-center justify-center gap-1.5 shrink-0"
+                    >
+                      <LogOut className="w-3.5 h-3.5 text-rose-600" />
+                      <span>Keluar Sesi (Logout)</span>
+                    </button>
+                  )}
+                </>
+              )}
             </div>
           </div>
         </div>
