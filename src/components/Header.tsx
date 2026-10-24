@@ -33,6 +33,7 @@ import {
   AppNotification,
 } from '../types';
 import { NotificationCenterModal } from './NotificationCenterModal';
+import { PWAInstallButton, OfflineIndicator } from './PWAInstallPrompt';
 
 interface HeaderProps {
   onOpenSidebar: () => void;
@@ -145,311 +146,327 @@ export const Header: React.FC<HeaderProps> = ({
   });
 
   return (
-    <header className="h-16 bg-white border-b border-slate-200 px-4 sm:px-6 flex items-center justify-between sticky top-0 z-30 shadow-xs">
-      <div className="flex items-center gap-3">
-        <button
-          onClick={onOpenSidebar}
-          className="p-2 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded-lg lg:hidden cursor-pointer"
-        >
-          <Menu className="w-5 h-5" />
-        </button>
+    <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
+      <OfflineIndicator />
+      {/* Main Top Navigation Row */}
+      <div className="h-16 px-3 sm:px-5 lg:px-6 flex items-center justify-between gap-2 sm:gap-3">
+        {/* Left: Hamburger (Admin Mobile) + Company Identity & Cut-off Period */}
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0 shrink-0">
+          {dashboardMode === 'admin' && (
+            <button
+              onClick={onOpenSidebar}
+              className="p-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-xl lg:hidden cursor-pointer shrink-0"
+              title="Buka Menu Navigasi Sidebar"
+            >
+              <Menu className="w-5 h-5" />
+            </button>
+          )}
 
-        {/* Brand / Company identity in header */}
-        <div className="hidden sm:flex items-center gap-2 text-slate-700">
-          <div className="p-1.5 bg-emerald-50 text-emerald-700 rounded-lg border border-emerald-200">
-            <Building className="w-4 h-4" />
-          </div>
-          <div>
-            <h2 className="text-xs font-semibold text-slate-800 leading-tight">
-              {companyConfig.companyName}
-            </h2>
-            <div className="flex items-center gap-2 text-[11px] text-slate-500">
-              <span className="inline-flex items-center gap-1 text-emerald-600 font-medium">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                Periode: {companyConfig.currentPayrollPeriod}
-              </span>
-              <span>•</span>
-              <span>Cut-off tgl {companyConfig.cutOffEndDay}</span>
+          {/* Brand / Company identity in header */}
+          <div className="flex items-center gap-2 sm:gap-2.5 text-slate-700 min-w-0">
+            <div className="p-1.5 sm:p-2 bg-emerald-50 text-emerald-700 rounded-xl border border-emerald-200 shrink-0">
+              <Building className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-xs sm:text-sm font-bold text-slate-900 leading-tight truncate max-w-[145px] xs:max-w-[190px] sm:max-w-[240px] md:max-w-none">
+                {companyConfig.companyName}
+              </h2>
+              <div className="flex items-center gap-1.5 text-[10px] sm:text-[11px] text-slate-500 whitespace-nowrap mt-0.5">
+                <span className="inline-flex items-center gap-1 text-emerald-700 font-semibold">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+                  <span>Periode: {companyConfig.currentPayrollPeriod}</span>
+                </span>
+                <span className="hidden sm:inline text-slate-300">•</span>
+                <span className="hidden sm:inline font-medium text-slate-600">
+                  Cut-off tgl {companyConfig.cutOffEndDay}
+                </span>
+              </div>
             </div>
           </div>
         </div>
-      </div>
 
-      {/* Live Real-Time Date & Clock Badge */}
-      <div className="hidden xl:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-700 shadow-2xs">
-        <Calendar className="w-3.5 h-3.5 text-emerald-600" />
-        <span className="font-medium text-slate-800">{formattedDate}</span>
-        <span className="text-slate-300">|</span>
-        <Clock className="w-3.5 h-3.5 text-emerald-600 animate-pulse" />
-        <span className="font-mono font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded text-[11px] border border-emerald-200/60">
-          {formattedTime} WIB
-        </span>
-      </div>
-
-      {/* Center Search Input */}
-      <div className="flex-1 max-w-xs lg:max-w-sm mx-3 hidden md:block">
-        <div className="relative">
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            placeholder="Cari karyawan, NIK, jabatan, atau slip gaji..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-4 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all text-slate-700 placeholder-slate-400"
-          />
+        {/* Center: Live Real-Time Date & Clock Badge (Wide Desktop Only) */}
+        <div className="hidden 2xl:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-700 shadow-2xs shrink-0 whitespace-nowrap">
+          <Calendar className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+          <span className="font-medium text-slate-800">{formattedDate}</span>
+          <span className="text-slate-300">|</span>
+          <Clock className="w-3.5 h-3.5 text-emerald-600 animate-pulse shrink-0" />
+          <span className="font-mono font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded text-[11px] border border-emerald-200/60 tabular-nums">
+            {formattedTime} WIB
+          </span>
         </div>
-      </div>
 
-      {/* Right Action buttons */}
-      <div className="flex items-center gap-2 sm:gap-3">
-        {/* Quick RBAC Role Switcher & Simulator (Admin Mode) */}
-        {dashboardMode === 'admin' && adminUser && onSwitchAdminUserRole && (
-          <div className="relative">
-            <button
-              onClick={() => setShowRoleDropdown(!showRoleDropdown)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs border bg-purple-50 text-purple-900 border-purple-200 hover:bg-purple-100"
-              title="Simulasi Peran Akses RBAC (Super Admin, HR, Finance, Operations, Auditor)"
-            >
-              <Shield className="w-3.5 h-3.5 text-purple-600 shrink-0" />
-              <span className="hidden xl:inline text-[10px] text-purple-600 font-normal">Peran:</span>
-              <span className="font-extrabold truncate max-w-[125px] text-purple-950">
-                {adminUser.role === 'admin' ? 'Super Admin' : adminUser.role}
-              </span>
-              <ChevronDown className="w-3 h-3 text-purple-400 shrink-0" />
-            </button>
-
-            {showRoleDropdown && (
-              <div className="absolute right-0 mt-2 w-72 bg-white rounded-2xl shadow-xl border border-slate-200 py-2 z-50 animate-in fade-in zoom-in-95">
-                <div className="px-3 py-1.5 border-b border-slate-100">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                    Simulasi Akses Peran (RBAC)
-                  </span>
-                  <p className="text-[10px] text-slate-500 mt-0.5">
-                    Uji coba langsung visibilitas menu sidebar untuk setiap peran
-                  </p>
-                </div>
-
-                <div className="p-1 space-y-0.5">
-                  {[
-                    {
-                      role: 'Super Admin',
-                      label: 'Super Admin',
-                      desc: 'Akses penuh tanpa batas (15 Modul)',
-                      badge: 'Root',
-                      badgeColor: 'bg-purple-100 text-purple-800',
-                    },
-                    {
-                      role: 'HR & Payroll Admin',
-                      label: 'HR & Payroll Admin (HR)',
-                      desc: 'Personalia, Cuti, Lembur & Presensi',
-                      badge: 'HR',
-                      badgeColor: 'bg-blue-100 text-blue-800',
-                    },
-                    {
-                      role: 'Finance & Reimbursement',
-                      label: 'Finance & Reimbursement (Finance)',
-                      desc: 'Payroll, Pajak TER, Kasbon & Aset',
-                      badge: 'Finance',
-                      badgeColor: 'bg-emerald-100 text-emerald-800',
-                    },
-                    {
-                      role: 'Operations Manager',
-                      label: 'Operations Manager (Operations)',
-                      desc: 'Operasional Gudang, Presensi & KPI',
-                      badge: 'Ops',
-                      badgeColor: 'bg-amber-100 text-amber-800',
-                    },
-                    {
-                      role: 'Viewer / Auditor',
-                      label: 'Viewer / Auditor (Auditor)',
-                      desc: 'Read-only Laporan, KPI & Audit Trail',
-                      badge: 'Audit',
-                      badgeColor: 'bg-slate-100 text-slate-800',
-                    },
-                  ].map((item) => {
-                    const isCurrent =
-                      (adminUser.role === 'admin' ? 'Super Admin' : adminUser.role) === item.role;
-                    return (
-                      <button
-                        key={item.role}
-                        type="button"
-                        onClick={() => {
-                          onSwitchAdminUserRole(item.role);
-                          setShowRoleDropdown(false);
-                        }}
-                        className={`w-full flex items-center justify-between p-2 rounded-xl text-left transition-colors cursor-pointer text-xs ${
-                          isCurrent
-                            ? 'bg-purple-50 text-purple-900 font-bold border border-purple-200'
-                            : 'hover:bg-slate-50 text-slate-700'
-                        }`}
-                      >
-                        <div className="min-w-0 pr-2">
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-bold truncate">{item.label}</span>
-                            {isCurrent && (
-                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
-                            )}
-                          </div>
-                          <p className="text-[10px] text-slate-400 truncate">{item.desc}</p>
-                        </div>
-                        <span
-                          className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded shrink-0 ${item.badgeColor}`}
-                        >
-                          {item.badge}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-
-                <div className="px-3 pt-2 pb-1 border-t border-slate-100 text-center">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onNavigateTab('settings');
-                      setShowRoleDropdown(false);
-                    }}
-                    className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 hover:underline cursor-pointer"
-                  >
-                    Atur Hak Akses di Pengaturan (RBAC) →
-                  </button>
-                </div>
-              </div>
-            )}
+        {/* Center Search Input (Admin Desktop XL+ Inline) */}
+        {dashboardMode === 'admin' && (
+          <div className="flex-1 max-w-xs 2xl:max-w-md mx-2 hidden xl:block min-w-[200px]">
+            <div className="relative">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                placeholder="Cari karyawan, NIK, jabatan, atau slip gaji..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all text-slate-700 placeholder-slate-400"
+              />
+            </div>
           </div>
         )}
 
-        {/* Mode Tampilan Switcher (Panel Admin vs Portal Karyawan) */}
-        {dashboardMode === 'employee' ? (
-          <button
-            onClick={() => {
-              if (isAdminUnlocked) {
-                onToggleDashboardMode?.();
-              } else if (onRequestAdminLogin) {
-                onRequestAdminLogin();
-              } else {
-                onToggleDashboardMode?.();
-              }
-            }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs border bg-purple-50 text-purple-900 border-purple-200 hover:bg-purple-100 hover:border-purple-300"
-            title="Masuk ke Mode HR & Payroll Admin (Perlu PIN Keamanan)"
-          >
-            <Lock className="w-3.5 h-3.5 text-purple-600" />
-            <span className="hidden sm:inline">Masuk Panel Admin</span>
-            <span className="text-[10px] text-purple-700 bg-purple-200/60 px-1.5 py-0.2 rounded font-semibold">
-              PIN
-            </span>
-          </button>
-        ) : (
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={onToggleDashboardMode}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs border bg-indigo-50 text-indigo-800 border-indigo-200 hover:bg-indigo-100"
-              title="Beralih ke Portal Layanan Mandiri Karyawan"
-            >
-              <User className="w-3.5 h-3.5 text-indigo-600" />
-              <span className="hidden md:inline">Portal Karyawan</span>
-              <span className="text-[10px] text-indigo-700 bg-indigo-100 px-1.5 py-0.2 rounded font-semibold">
-                Buka
-              </span>
-            </button>
-
-            {onLockAdmin && (
+        {/* Right Action buttons */}
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          {/* Quick RBAC Role Switcher & Simulator (Admin Mode) */}
+          {dashboardMode === 'admin' && adminUser && onSwitchAdminUserRole && (
+            <div className="relative hidden md:block shrink-0">
               <button
-                onClick={onLockAdmin}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs border bg-slate-50 text-slate-700 border-slate-200 hover:bg-rose-50 hover:text-rose-700 hover:border-rose-200"
-                title="Kunci Akses Admin dan Kembali ke Portal Karyawan"
+                onClick={() => setShowRoleDropdown(!showRoleDropdown)}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs border bg-purple-50 text-purple-900 border-purple-200 hover:bg-purple-100 whitespace-nowrap"
+                title="Simulasi Peran Akses RBAC (Super Admin, HR, Finance, Operations, Auditor)"
               >
-                <Lock className="w-3.5 h-3.5 text-slate-500 hover:text-rose-600" />
-                <span className="hidden xl:inline text-[11px]">Kunci</span>
+                <Shield className="w-3.5 h-3.5 text-purple-600 shrink-0" />
+                <span className="hidden 2xl:inline text-[10px] text-purple-600 font-normal">Peran:</span>
+                <span className="font-extrabold truncate max-w-[110px] text-purple-950">
+                  {adminUser.role === 'admin' ? 'Super Admin' : adminUser.role}
+                </span>
+                <ChevronDown className="w-3 h-3 text-purple-400 shrink-0" />
               </button>
-            )}
-          </div>
-        )}
 
-        {/* Quick Button: Hitung Payroll (Admin Only) */}
-        {dashboardMode === 'admin' && (
-          <button
-            onClick={onOpenRunPayroll}
-            className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors cursor-pointer shadow-2xs"
-          >
-            <Calculator className="w-3.5 h-3.5" />
-            <span>Proses Payroll</span>
-          </button>
-        )}
+              {showRoleDropdown && (
+                <div className="absolute right-0 mt-2 w-72 bg-white rounded-2xl shadow-xl border border-slate-200 py-2 z-50 animate-in fade-in zoom-in-95">
+                  <div className="px-3 py-1.5 border-b border-slate-100">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      Simulasi Akses Peran (RBAC)
+                    </span>
+                    <p className="text-[10px] text-slate-500 mt-0.5">
+                      Uji coba langsung visibilitas menu sidebar untuk setiap peran
+                    </p>
+                  </div>
 
-        {/* Quick Button: Tambah Karyawan (Admin Only) */}
-        {dashboardMode === 'admin' && (
-          <button
-            onClick={onOpenAddEmployee}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors cursor-pointer shadow-xs shadow-emerald-600/30"
-          >
-            <PlusCircle className="w-3.5 h-3.5" />
-            <span className="hidden xs:inline">+ Karyawan</span>
-          </button>
-        )}
+                  <div className="p-1 space-y-0.5">
+                    {[
+                      {
+                        role: 'Super Admin',
+                        label: 'Super Admin',
+                        desc: 'Akses penuh tanpa batas (15 Modul)',
+                        badge: 'Root',
+                        badgeColor: 'bg-purple-100 text-purple-800',
+                      },
+                      {
+                        role: 'HR & Payroll Admin',
+                        label: 'HR & Payroll Admin (HR)',
+                        desc: 'Personalia, Cuti, Lembur & Presensi',
+                        badge: 'HR',
+                        badgeColor: 'bg-blue-100 text-blue-800',
+                      },
+                      {
+                        role: 'Finance & Reimbursement',
+                        label: 'Finance & Reimbursement (Finance)',
+                        desc: 'Payroll, Pajak TER, Kasbon & Aset',
+                        badge: 'Finance',
+                        badgeColor: 'bg-emerald-100 text-emerald-800',
+                      },
+                      {
+                        role: 'Operations Manager',
+                        label: 'Operations Manager (Operations)',
+                        desc: 'Operasional Gudang, Presensi & KPI',
+                        badge: 'Ops',
+                        badgeColor: 'bg-amber-100 text-amber-800',
+                      },
+                      {
+                        role: 'Viewer / Auditor',
+                        label: 'Viewer / Auditor (Auditor)',
+                        desc: 'Read-only Laporan, KPI & Audit Trail',
+                        badge: 'Audit',
+                        badgeColor: 'bg-slate-100 text-slate-800',
+                      },
+                    ].map((item) => {
+                      const isCurrent =
+                        (adminUser.role === 'admin' ? 'Super Admin' : adminUser.role) === item.role;
+                      return (
+                        <button
+                          key={item.role}
+                          type="button"
+                          onClick={() => {
+                            onSwitchAdminUserRole(item.role);
+                            setShowRoleDropdown(false);
+                          }}
+                          className={`w-full flex items-center justify-between p-2 rounded-xl text-left transition-colors cursor-pointer text-xs ${
+                            isCurrent
+                              ? 'bg-purple-50 text-purple-900 font-bold border border-purple-200'
+                              : 'hover:bg-slate-50 text-slate-700'
+                          }`}
+                        >
+                          <div className="min-w-0 pr-2">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-bold truncate">{item.label}</span>
+                              {isCurrent && (
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+                              )}
+                            </div>
+                            <p className="text-[10px] text-slate-400 truncate">{item.desc}</p>
+                          </div>
+                          <span
+                            className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded shrink-0 ${item.badgeColor}`}
+                          >
+                            {item.badge}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
 
-        {/* Quick Button: Supabase Cloud Status */}
-        {onOpenSupabaseModal && (
-          <button
-            onClick={onOpenSupabaseModal}
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer border shadow-2xs ${
-              supabaseStatus?.isTablesCreated
-                ? 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border-emerald-300'
-                : supabaseStatus?.isConnected
-                ? 'text-amber-800 bg-amber-50 hover:bg-amber-100 border-amber-300'
-                : 'text-slate-700 bg-slate-50 hover:bg-slate-100 border-slate-200'
-            }`}
-            title={supabaseStatus?.statusText || 'Status Supabase Cloud Database'}
-          >
-            <span className="relative flex h-2 w-2">
-              <span
-                className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
-                  supabaseStatus?.isTablesCreated ? 'bg-emerald-400' : 'bg-amber-400'
-                }`}
-              />
-              <span
-                className={`relative inline-flex rounded-full h-2 w-2 ${
-                  supabaseStatus?.isTablesCreated ? 'bg-emerald-500' : 'bg-amber-500'
-                }`}
-              />
-            </span>
-            <Database className="w-3.5 h-3.5 text-emerald-600" />
-            <span className="hidden lg:inline">Supabase</span>
-          </button>
-        )}
+                  <div className="px-3 pt-2 pb-1 border-t border-slate-100 text-center">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onNavigateTab('settings');
+                        setShowRoleDropdown(false);
+                      }}
+                      className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 hover:underline cursor-pointer"
+                    >
+                      Atur Hak Akses di Pengaturan (RBAC) →
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
-        {/* Quick Button: Pengaturan Sistem & Role (Admin Only) */}
-        {dashboardMode === 'admin' && (
-          <button
-            onClick={() => onNavigateTab('settings')}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer border ${
-              activeTab === 'settings'
-                ? 'bg-indigo-600 text-white border-indigo-500 shadow-xs shadow-indigo-600/30'
-                : 'text-slate-700 bg-slate-50 hover:bg-slate-100 border-slate-200 hover:border-slate-300'
-            }`}
-            title="Pengaturan Sistem & Hak Akses Role RBAC"
-          >
-            <Settings className={`w-3.5 h-3.5 ${activeTab === 'settings' ? 'text-white' : 'text-slate-500'}`} />
-            <span className="hidden sm:inline">Pengaturan</span>
-          </button>
-        )}
+          {/* PWA Install App Button (Mobile & Desktop) */}
+          <PWAInstallButton />
 
-        {/* Notification Bell (Admin & Portal Karyawan) */}
-        <div className="relative">
-          <button
-            onClick={() => setShowNotificationSlideOver(true)}
-            className="p-2 text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-xl relative cursor-pointer transition-colors border border-transparent hover:border-slate-200"
-            title="Buka Pusat Notifikasi & Pengingat Kinerja"
-          >
-            <Bell className="w-4 h-4 text-slate-600" />
-            {unreadNotificationsCount > 0 && (
-              <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-rose-500 text-white rounded-full text-[10px] font-extrabold flex items-center justify-center ring-2 ring-white shadow-xs animate-pulse">
-                {unreadNotificationsCount > 99 ? '99+' : unreadNotificationsCount}
+          {/* Mode Tampilan Switcher (Panel Admin vs Portal Karyawan) */}
+          {dashboardMode === 'employee' ? (
+            <button
+              onClick={() => {
+                if (isAdminUnlocked) {
+                  onToggleDashboardMode?.();
+                } else if (onRequestAdminLogin) {
+                  onRequestAdminLogin();
+                } else {
+                  onToggleDashboardMode?.();
+                }
+              }}
+              className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs border bg-purple-50 text-purple-900 border-purple-200 hover:bg-purple-100 hover:border-purple-300 shrink-0 whitespace-nowrap"
+              title="Masuk ke Mode HR & Payroll Admin (Perlu PIN Keamanan)"
+            >
+              <Lock className="w-3.5 h-3.5 text-purple-600 shrink-0" />
+              <span className="hidden sm:inline">Panel Admin</span>
+              <span className="text-[10px] text-purple-700 bg-purple-200/60 px-1.5 py-0.2 rounded font-semibold">
+                PIN
               </span>
-            )}
-          </button>
-        </div>
+            </button>
+          ) : (
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                onClick={onToggleDashboardMode}
+                className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs border bg-indigo-50 text-indigo-800 border-indigo-200 hover:bg-indigo-100 whitespace-nowrap"
+                title="Beralih ke Portal Layanan Mandiri Karyawan"
+              >
+                <User className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                <span className="hidden md:inline">Portal Karyawan</span>
+                <span className="text-[10px] text-indigo-700 bg-indigo-100 px-1.5 py-0.2 rounded font-semibold">
+                  Buka
+                </span>
+              </button>
+
+              {onLockAdmin && (
+                <button
+                  onClick={onLockAdmin}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs border bg-slate-50 text-slate-700 border-slate-200 hover:bg-rose-50 hover:text-rose-700 hover:border-rose-200 shrink-0 whitespace-nowrap"
+                  title="Kunci Akses Admin dan Kembali ke Portal Karyawan"
+                >
+                  <Lock className="w-3.5 h-3.5 text-slate-500 hover:text-rose-600 shrink-0" />
+                  <span className="hidden 2xl:inline text-[11px]">Kunci</span>
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Quick Button: Hitung Payroll (Admin Only) */}
+          {dashboardMode === 'admin' && (
+            <button
+              onClick={onOpenRunPayroll}
+              className="hidden lg:inline-flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-xl transition-colors cursor-pointer shadow-2xs shrink-0 whitespace-nowrap"
+              title="Hitung & Proses Payroll Bulan Ini"
+            >
+              <Calculator className="w-3.5 h-3.5 shrink-0" />
+              <span className="hidden xl:inline">Proses Payroll</span>
+            </button>
+          )}
+
+          {/* Quick Button: Tambah Karyawan (Admin Only) */}
+          {dashboardMode === 'admin' && (
+            <button
+              onClick={onOpenAddEmployee}
+              className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl transition-colors cursor-pointer shadow-xs shadow-emerald-600/30 shrink-0 whitespace-nowrap"
+              title="Tambah Data Karyawan Baru"
+            >
+              <PlusCircle className="w-3.5 h-3.5 shrink-0" />
+              <span className="hidden sm:inline">+ Karyawan</span>
+            </button>
+          )}
+
+          {/* Quick Button: Supabase Cloud Status */}
+          {onOpenSupabaseModal && (
+            <button
+              onClick={onOpenSupabaseModal}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-xl transition-all cursor-pointer border shadow-2xs shrink-0 whitespace-nowrap ${
+                supabaseStatus?.isTablesCreated
+                  ? 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border-emerald-300'
+                  : supabaseStatus?.isConnected
+                  ? 'text-amber-800 bg-amber-50 hover:bg-amber-100 border-amber-300'
+                  : 'text-slate-700 bg-slate-50 hover:bg-slate-100 border-slate-200'
+              }`}
+              title={supabaseStatus?.statusText || 'Status Supabase Cloud Database'}
+            >
+              <span className="relative flex h-2 w-2 shrink-0">
+                <span
+                  className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                    supabaseStatus?.isTablesCreated ? 'bg-emerald-400' : 'bg-amber-400'
+                  }`}
+                />
+                <span
+                  className={`relative inline-flex rounded-full h-2 w-2 ${
+                    supabaseStatus?.isTablesCreated ? 'bg-emerald-500' : 'bg-amber-500'
+                  }`}
+                />
+              </span>
+              <Database className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              <span className="hidden 2xl:inline">Supabase</span>
+            </button>
+          )}
+
+          {/* Quick Button: Pengaturan Sistem & Role (Admin Only) */}
+          {dashboardMode === 'admin' && (
+            <button
+              onClick={() => onNavigateTab('settings')}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-xl transition-colors cursor-pointer border shrink-0 whitespace-nowrap ${
+                activeTab === 'settings'
+                  ? 'bg-indigo-600 text-white border-indigo-500 shadow-xs shadow-indigo-600/30'
+                  : 'text-slate-700 bg-slate-50 hover:bg-slate-100 border-slate-200 hover:border-slate-300'
+              }`}
+              title="Pengaturan Sistem & Hak Akses Role RBAC"
+            >
+              <Settings className={`w-3.5 h-3.5 shrink-0 ${activeTab === 'settings' ? 'text-white' : 'text-slate-500'}`} />
+              <span className="hidden 2xl:inline">Pengaturan</span>
+            </button>
+          )}
+
+          {/* Notification Bell (Admin & Portal Karyawan) */}
+          <div className="relative shrink-0">
+            <button
+              onClick={() => setShowNotificationSlideOver(true)}
+              className="p-2 text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-xl relative cursor-pointer transition-colors border border-transparent hover:border-slate-200"
+              title="Buka Pusat Notifikasi & Pengingat Kinerja"
+            >
+              <Bell className="w-4 h-4 text-slate-600" />
+              {unreadNotificationsCount > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-rose-500 text-white rounded-full text-[10px] font-extrabold flex items-center justify-center ring-2 ring-white shadow-xs animate-pulse">
+                  {unreadNotificationsCount > 99 ? '99+' : unreadNotificationsCount}
+                </span>
+              )}
+            </button>
+          </div>
 
         {/* Mode Karyawan Profile Dropdown */}
         {dashboardMode === 'employee' && currentEmployee ? (
@@ -715,7 +732,52 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           );
         })() : null}
+        </div>
       </div>
+
+      {/* Responsive Sub-Bar for Admin Mode (<1280px) so Search Input & Actions Never Crowd the Top Bar */}
+      {dashboardMode === 'admin' && (
+        <div className="xl:hidden px-3 sm:px-5 py-2 bg-slate-50/80 border-t border-slate-100 flex items-center justify-between gap-2">
+          <div className="relative flex-1 min-w-0">
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input
+              type="text"
+              placeholder="Cari nama karyawan, NIK, atau divisi..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-8 pr-3 py-1.5 text-xs bg-white border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-slate-700 placeholder-slate-400"
+            />
+          </div>
+
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-[11px] text-slate-600 font-medium whitespace-nowrap">
+              <Clock className="w-3 h-3 text-emerald-600" />
+              <span className="font-mono font-bold text-emerald-700 tabular-nums">{formattedTime} WIB</span>
+            </span>
+            <button
+              type="button"
+              onClick={onOpenRunPayroll}
+              className="lg:hidden inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-xl whitespace-nowrap cursor-pointer"
+            >
+              <Calculator className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+              <span>Payroll</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Compact Mobile Info Strip for Employee Portal (<640px) */}
+      {dashboardMode === 'employee' && (
+        <div className="sm:hidden px-3 py-1.5 bg-slate-50/90 border-t border-slate-100 flex items-center justify-between gap-2 text-[11px] text-slate-600">
+          <span className="truncate font-medium">
+            Cut-off Payroll: <strong className="text-slate-800">Tgl {companyConfig.cutOffEndDay}</strong>
+          </span>
+          <span className="inline-flex items-center gap-1 font-mono font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200/60 shrink-0 tabular-nums">
+            <Clock className="w-3 h-3 text-emerald-600" />
+            {formattedTime} WIB
+          </span>
+        </div>
+      )}
 
       {/* Slide-over Modal Pusat Notifikasi & Pengingat Kinerja */}
       <NotificationCenterModal

@@ -36,15 +36,14 @@ interface LiveFaceGpsAttendanceScannerProps {
   onSubmitAttendance: (record: AttendanceRecord, mode: 'check_in' | 'check_out') => void;
 }
 
-// Titik Lokasi Resmi Kantor PT Tas Grosir Import (Sesuai Titik Bing Maps)
+// Titik Lokasi Resmi Kantor PT Tas Grosir Import (Sesuai Titik Google Maps)
 export const OFFICE_REFERENCE_COORDS = {
-  latitude: -6.158122,
-  longitude: 106.87099,
-  shortAddress: 'Jl. Sumber Mas I Blok C No. 191, Tangerang, Banten, ID',
-  name: 'Kantor & Gudang PT Tas Grosir Import — Jl. Sumber Mas I Blok C No. 191, Tangerang, Banten, ID',
-  bingMapsUrl:
-    'https://www.bing.com/maps/search?trk=org-locations_url&style=r&q=Jl.+Sumber+Mas+I+Blok+C+No.+191+Tangerang+Banten+ID&cp=-6.158122%7E106.870990&lvl=16',
-  maxRadiusMeters: 15, // Batas maksimal jangkauan wajib 15 meter dari titik lokasi kantor
+  latitude: -6.2105112,
+  longitude: 106.6847656,
+  shortAddress: 'Jl. Sumber Mas I Blok C No. 191, Tangerang, Banten (-6.2105112, 106.6847656)',
+  name: 'Kantor & Gudang PT Tas Grosir Import — Jl. Sumber Mas I Blok C No. 191, Tangerang, Banten (-6.2105112, 106.6847656)',
+  mapsUrl: 'https://maps.google.com/maps?q=-6.2105112%2C106.6847656&z=17&hl=id',
+  maxRadiusMeters: 25, // Batas maksimal jangkauan wajib 25 meter dari titik koordinat kantor
 };
 
 interface GpsTelemetrySample {
@@ -140,7 +139,6 @@ function auditGpsPositionForSpoofing(
 
   const lat = pos.coords.latitude;
   const lon = pos.coords.longitude;
-  const acc = pos.coords.accuracy;
   const alt = pos.coords.altitude;
   const altAcc = pos.coords.altitudeAccuracy;
   const spd = pos.coords.speed;
@@ -148,36 +146,24 @@ function auditGpsPositionForSpoofing(
   const fixTime = pos.timestamp || Date.now();
   const nowMs = Date.now();
 
-  // 1. Audit Akurasi Satelit (Fake GPS sering memalsukan accuracy = 0, < 0.8m, atau > 50m dari IP Proxy)
+  // 1. Validasi Koordinat GPS Standar (Tanpa pembatasan Akurasi Satelit)
   let accuracyValid = true;
-  if (!Number.isFinite(acc) || acc <= 0) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || (lat === 0 && lon === 0)) {
     accuracyValid = false;
     penalty += 60;
     reasons.push(
-      'Nilai akurasi GPS tidak valid (0m) — indikasi kuat injeksi aplikasi Fake GPS / Mock Location.'
-    );
-  } else if (acc < 0.8) {
-    accuracyValid = false;
-    penalty += 55;
-    reasons.push(
-      `Akurasi satelit terlalu sintetis (±${acc.toFixed(2)}m < 0.8m) — terdeteksi karakteristik Mock Location.`
-    );
-  } else if (acc > 45) {
-    accuracyValid = false;
-    penalty += 50;
-    reasons.push(
-      `Sinyal lokasi terlalu kasar (±${Math.round(acc)}m > 45m). Wajib gunakan GPS perangkat asli dengan akurasi tinggi, bukan jaringan IP/emulasi.`
+      'Titik koordinat GPS tidak valid (0, 0) — pastikan GPS perangkat aktif.'
     );
   }
 
-  // 2. Audit Sinkronisasi Timestamp (Mendeteksi paket koordinat rekaman / replay / jam dimanipulasi)
+  // 2. Audit Sinkronisasi Timestamp GPS
   let timestampSynced = true;
   const clockDriftMs = Math.abs(nowMs - fixTime);
-  if (clockDriftMs > 30000) {
+  if (clockDriftMs > 120000) {
     timestampSynced = false;
     penalty += 50;
     reasons.push(
-      `Selisih waktu paket sensor GPS (${Math.round(clockDriftMs / 1000)} detik) tidak sinkron dengan jam real-time perangkat (indikasi Spoofed/Cached GPS).`
+      `Waktu pembacaan GPS tidak sinkron dengan jam real-time perangkat.`
     );
   }
 
@@ -187,18 +173,18 @@ function auditGpsPositionForSpoofing(
     sensorHardwareValid = false;
     penalty += 60;
     reasons.push(
-      'Terdeteksi signature Mock Location Provider (Altitude terkunci tanpa akurasi vertikal).'
+      'Terdeteksi signature Mock Location Provider pada perangkat.'
     );
   }
   if (spd !== null && spd < 0) {
     sensorHardwareValid = false;
     penalty += 50;
-    reasons.push('Sensor kecepatan GPS bernilai negatif tidak wajar (Mock Sensor Injection).');
+    reasons.push('Sensor kecepatan GPS bernilai negatif tidak wajar (Mock Location).');
   }
   if (hdg !== null && (hdg < 0 || hdg > 360)) {
     sensorHardwareValid = false;
     penalty += 45;
-    reasons.push('Sensor arah kompas/heading GPS tidak valid (Mock Sensor Injection).');
+    reasons.push('Sensor arah kompas/heading GPS tidak valid (Mock Location).');
   }
 
   // 4. Audit Kinematika & Anti-Teleportasi (Lompatan Jarak Ekstrem antar sampel GPS)
@@ -208,42 +194,15 @@ function auditGpsPositionForSpoofing(
     const dtSeconds = (fixTime - prev.timestamp) / 1000;
     const jumpMeters = calculateHaversineMeters(prev.latitude, prev.longitude, lat, lon);
 
-    if (fixTime < prev.timestamp - 500) {
-      timestampSynced = false;
-      penalty += 55;
-      reasons.push('Timestamp GPS berjalan mundur — terdeteksi manipulasi umpan lokasi.');
-    }
-
-    if (dtSeconds > 0 && dtSeconds < 12 && jumpMeters > 85) {
+    if (dtSeconds > 0 && dtSeconds < 10 && jumpMeters > 150) {
       const impliedSpeedMps = jumpMeters / Math.max(0.5, dtSeconds);
-      if (impliedSpeedMps > 35) {
+      if (impliedSpeedMps > 45) {
         kinematicsValid = false;
         penalty += 65;
         reasons.push(
-          `Terdeteksi lompatan lokasi mendadak / teleportasi (${jumpMeters.toFixed(0)}m dalam ${dtSeconds.toFixed(1)} dtk — ${Math.round(
-            impliedSpeedMps * 3.6
-          )} km/jam) yang mengindikasikan perpindahan titik Fake GPS.`
+          `Terdeteksi lompatan lokasi mendadak / teleportasi (${jumpMeters.toFixed(0)}m dalam ${dtSeconds.toFixed(1)} dtk) yang mengindikasikan perpindahan titik Fake GPS.`
         );
       }
-    }
-  }
-
-  // 5. Audit Koordinat Beku / Static Mock Jitter (Jika >= 4 sampel beruntun identik 8 desimal & akurasi bulat statis)
-  if (history.length >= 4) {
-    const recent = history.slice(-4);
-    const allIdenticalCoords = recent.every(
-      (s) =>
-        Math.abs(s.latitude - lat) < 0.000000001 &&
-        Math.abs(s.longitude - lon) < 0.000000001 &&
-        s.accuracy === acc
-    );
-    const timeSpanSec = (fixTime - recent[0].timestamp) / 1000;
-    if (allIdenticalCoords && timeSpanSec > 8 && Number.isInteger(acc) && alt === null && spd === null) {
-      sensorHardwareValid = false;
-      penalty += 55;
-      reasons.push(
-        'Koordinat GPS terkunci statis 100% tanpa fluktuasi satelit alami — terdeteksi emulator / aplikasi pengunci titik Fake GPS.'
-      );
     }
   }
 
@@ -466,7 +425,7 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
     [reverseGeocodeCoords]
   );
 
-  // 3. Start & Watch Live Phone GPS (Strictly Hardware GPS - No Mock Fallback)
+  // 3. Start & Watch Live Phone GPS (Standard GPS Coordinate Reading without Satellite Accuracy Restrictions)
   const refreshPhoneGps = useCallback(() => {
     setGpsStatus('searching');
     setGpsErrorMessage(null);
@@ -476,41 +435,60 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
       setGpsCoords(null);
       setDistanceFromOffice(null);
       setGpsErrorMessage(
-        'Perangkat atau browser ini tidak memiliki sensor GPS perangkat keras. Absensi wajib menggunakan GPS HP asli.'
+        'Perangkat atau browser ini tidak mendukung fitur lokasi GPS. Silakan buka menggunakan HP atau browser yang mendukung GPS.'
       );
-      setGpsDetailedAddress('Sensor GPS tidak tersedia pada perangkat ini.');
+      setGpsDetailedAddress('Fitur lokasi GPS tidak tersedia pada perangkat ini.');
       return;
     }
+
+    const handleGpsError = (err: GeolocationPositionError) => {
+      setGpsStatus('denied');
+      setGpsCoords(null);
+      setDistanceFromOffice(null);
+      if (err.code === 1) {
+        setGpsErrorMessage(
+          'Izin lokasi GPS ditolak! Silakan izinkan akses Lokasi (GPS) pada HP/Browser untuk melakukan absen dalam radius maksimal 25 meter dari titik koordinat kantor.'
+        );
+      } else if (err.code === 2) {
+        setGpsErrorMessage(
+          'Titik lokasi GPS belum terbaca. Pastikan fitur Lokasi / GPS pada HP Anda aktif.'
+        );
+      } else {
+        setGpsErrorMessage(
+          'Waktu pembacaan GPS habis. Klik tombol "Perbarui GPS HP" untuk membaca ulang titik koordinat.'
+        );
+      }
+      setGpsDetailedAddress(
+        'Titik koordinat GPS belum terkunci — pastikan izin Lokasi / GPS pada HP Anda aktif.'
+      );
+    };
 
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         processIncomingPosition(pos, true);
       },
       (err) => {
-        setGpsStatus('denied');
-        setGpsCoords(null);
-        setDistanceFromOffice(null);
-        if (err.code === 1) {
-          setGpsErrorMessage(
-            'Izin lokasi GPS HP ditolak! Anda wajib mengaktifkan izin Lokasi (High Accuracy GPS) pada HP/Browser untuk dapat melakukan absen dalam radius 15 meter kantor.'
-          );
-        } else if (err.code === 2) {
-          setGpsErrorMessage(
-            'Sinyal satelit GPS tidak terjangkau. Pastikan GPS HP menyala dan tidak menggunakan pengubah lokasi.'
+        // Fallback to standard GPS (enableHighAccuracy: false) if high accuracy times out indoors
+        if (err.code !== 1) {
+          navigator.geolocation.getCurrentPosition(
+            (posFallback) => {
+              processIncomingPosition(posFallback, true);
+            },
+            handleGpsError,
+            {
+              enableHighAccuracy: false,
+              timeout: 10000,
+              maximumAge: 15000,
+            }
           );
         } else {
-          setGpsErrorMessage(
-            'Waktu pencarian sinyal GPS habis (Timeout). Klik tombol "Perbarui GPS HP" di ruang terbuka dekat titik kantor.'
-          );
+          handleGpsError(err);
         }
-        setGpsDetailedAddress(
-          'Sinyal GPS HP belum terkunci — aktifkan layanan Lokasi / GPS Akurasi Tinggi pada HP Anda.'
-        );
       },
       {
         enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 0,
+        timeout: 7000,
+        maximumAge: 5000,
       }
     );
   }, [processIncomingPosition]);
@@ -528,9 +506,9 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
           // Keep current state if watch encounters transient error
         },
         {
-          enableHighAccuracy: true,
-          maximumAge: 0,
-          timeout: 10000,
+          enableHighAccuracy: false,
+          maximumAge: 5000,
+          timeout: 15000,
         }
       );
     }
@@ -606,16 +584,16 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
     setFacingMode(nextMode);
   };
 
-  // Geofence <= 15m and Anti-Fake GPS Eligibility Evaluation
+  // Geofence <= 25m and Anti-Fake GPS Eligibility Evaluation
   const isGpsLocked = gpsStatus === 'locked' && gpsCoords !== null && distanceFromOffice !== null;
-  const isWithin15Meters =
+  const isWithinMaxRadius =
     isGpsLocked &&
     distanceFromOffice !== null &&
     distanceFromOffice <= OFFICE_REFERENCE_COORDS.maxRadiusMeters;
   const isFakeGpsDetected = antiFakeAudit.isFakeDetected;
-  const canSubmitAttendance = isGpsLocked && isWithin15Meters && !isFakeGpsDetected;
+  const canSubmitAttendance = isGpsLocked && isWithinMaxRadius && !isFakeGpsDetected;
 
-  // 5. Generate Watermarked Face Snapshot with Real-Time Date, Clock, Anti-Fake GPS & 15m Geofence Proof
+  // 5. Generate Watermarked Face Snapshot with Real-Time Date, Clock, Anti-Fake GPS & 25m Geofence Proof
   const captureWatermarkedFacePhoto = (
     attendanceActionLabel: 'ABSEN MASUK' | 'ABSEN PULANG',
     recordedTimeStr: string,
@@ -631,7 +609,6 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
 
     const activeLat = gpsCoords ? gpsCoords.latitude : OFFICE_REFERENCE_COORDS.latitude;
     const activeLon = gpsCoords ? gpsCoords.longitude : OFFICE_REFERENCE_COORDS.longitude;
-    const activeAcc = gpsCoords ? gpsCoords.accuracy : 0;
     const activeDist = distanceFromOffice !== null ? distanceFromOffice : 0;
 
     // A. Draw live camera frame or fallback employee portrait
@@ -702,18 +679,18 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
 
     ctx.fillStyle = '#ffffff';
     ctx.font = 'bold 14px Inter, system-ui, sans-serif';
-    ctx.fillText(`● ${attendanceActionLabel} • RADIUS ≤15M VALID`, 38, 43);
+    ctx.fillText(`● ${attendanceActionLabel} • RADIUS ≤25M VALID`, 38, 43);
 
-    // Top Right: Anti-Fake GPS & Distance Verification
+    // Top Right: GPS & Distance Verification (Without Satellite Accuracy)
     ctx.fillStyle = 'rgba(15, 23, 42, 0.86)';
     ctx.beginPath();
-    ctx.roundRect(width - 390, 20, 366, 36, 10);
+    ctx.roundRect(width - 340, 20, 316, 36, 10);
     ctx.fill();
     ctx.fillStyle = '#6ee7b7';
     ctx.font = 'bold 12.5px JetBrains Mono, monospace';
     ctx.fillText(
-      `ANTI-FAKE GPS LOLOS • JARAK ${activeDist}m/15m • ±${activeAcc}m`,
-      width - 376,
+      `GPS VALID • JARAK KANTOR: ${activeDist}m / 25m`,
+      width - 324,
       43
     );
 
@@ -763,11 +740,11 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
       boxY + 92
     );
 
-    // GPS Coordinates & Geofence 15m Line
+    // GPS Coordinates & Geofence 25m Line
     ctx.fillStyle = '#34d399';
     ctx.font = 'bold 13.5px JetBrains Mono, monospace';
     ctx.fillText(
-      `GPS HP: ${activeLat.toFixed(6)}°, ${activeLon.toFixed(6)}° | Jarak Kantor: ${activeDist}m (Maks 15m) | Anti-Fake GPS: 100% Asli`,
+      `GPS HP: ${activeLat.toFixed(7)}°, ${activeLon.toFixed(7)}° | Jarak Kantor: ${activeDist}m (Maks 25m) | Anti-Fake GPS: 100% Asli`,
       44,
       boxY + 118
     );
@@ -810,10 +787,10 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
       return;
     }
 
-    // Hard Guard 3: Must be strictly <= 15 meters from Office Reference Coordinates
+    // Hard Guard 3: Must be strictly <= 25 meters from Office Reference Coordinates
     if (distanceFromOffice > OFFICE_REFERENCE_COORDS.maxRadiusMeters) {
       setBlockedAttemptAlert(
-        `ABSEN DITOLAK (DI LUAR RADIUS 15 METER): Jarak Anda saat ini ${distanceFromOffice} meter dari titik kantor (${OFFICE_REFERENCE_COORDS.shortAddress}). Anda hanya bisa absen dalam jangkauan maksimal 15 meter dari titik kantor.`
+        `ABSEN DITOLAK (DI LUAR RADIUS 25 METER): Jarak Anda saat ini ${distanceFromOffice} meter dari titik koordinat kantor (${OFFICE_REFERENCE_COORDS.latitude}, ${OFFICE_REFERENCE_COORDS.longitude}). Anda hanya bisa absen dalam jangkauan maksimal 25 meter dari titik koordinat kantor.`
       );
       return;
     }
@@ -871,7 +848,7 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
         distanceMeters: Math.round(distanceFromOffice),
         notes:
           clockInNotes.trim() ||
-          `Absen Wajah & GPS Valid (${distanceFromOffice}m ≤ 15m • Anti-Fake GPS Lolos) • ${activeShift.code}`,
+          `Absen Wajah & GPS Valid (${distanceFromOffice}m ≤ 25m • Anti-Fake GPS Lolos) • ${activeShift.code}`,
       };
 
       onSubmitAttendance(newRecord, 'check_in');
@@ -920,7 +897,7 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
         notes:
           clockInNotes.trim() ||
           todayAttendance.notes ||
-          `Selesai Shift (${distanceFromOffice}m ≤ 15m • Anti-Fake GPS Lolos)`,
+          `Selesai Shift (${distanceFromOffice}m ≤ 25m • Anti-Fake GPS Lolos)`,
       };
 
       onSubmitAttendance(updatedRecord, 'check_out');
@@ -942,11 +919,11 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
   );
 
   return (
-    <div className="bg-slate-900 rounded-2xl border border-slate-800 shadow-xl overflow-hidden text-white">
+    <div className="bg-slate-900 rounded-2xl border border-slate-800 shadow-xl overflow-hidden text-white max-w-full">
       {/* Top Bar: Status Kamera Langsung, Titik Kantor Resmi & Sinyal GPS HP Real-Time */}
-      <div className="px-5 py-3.5 bg-slate-950/90 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2.5">
-          <span className="relative flex h-3 w-3">
+      <div className="p-3.5 sm:px-5 sm:py-3.5 bg-slate-950/90 border-b border-slate-800 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+        <div className="flex items-start sm:items-center gap-2.5 min-w-0">
+          <span className="relative flex h-3 w-3 shrink-0 mt-1 sm:mt-0">
             <span
               className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
                 canSubmitAttendance ? 'bg-emerald-400' : 'bg-rose-400'
@@ -958,67 +935,71 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
               }`}
             />
           </span>
-          <div>
-            <h4 className="text-xs sm:text-sm font-bold text-white flex flex-wrap items-center gap-2">
-              <Camera className="w-4 h-4 text-emerald-400" />
-              <span>Kamera Absen Wajah & Geofence GPS HP (Wajib Radius ≤ 15 Meter & Anti-Fake GPS)</span>
+          <div className="min-w-0">
+            <h4 className="text-xs sm:text-sm font-bold text-white flex items-center gap-1.5">
+              <Camera className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span className="truncate sm:whitespace-normal">
+                Kamera Absen Wajah & Geofence GPS HP (Radius ≤ 25m)
+              </span>
             </h4>
-            <p className="text-[11px] text-slate-400">
-              Titik Kantor Resmi:{' '}
-              <strong className="text-emerald-300">{OFFICE_REFERENCE_COORDS.shortAddress}</strong>{' '}
-              ({OFFICE_REFERENCE_COORDS.latitude}, {OFFICE_REFERENCE_COORDS.longitude})
+            <p className="text-[10px] sm:text-[11px] text-slate-400 break-words mt-0.5">
+              Koordinat Kantor:{' '}
+              <strong className="text-emerald-300 font-mono tabular-nums">
+                {OFFICE_REFERENCE_COORDS.latitude}, {OFFICE_REFERENCE_COORDS.longitude}
+              </strong>{' '}
+              • Maks: <strong className="text-emerald-300">25 Meter</strong>
             </p>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-1.5 sm:gap-2 w-full lg:w-auto">
           <a
-            href={OFFICE_REFERENCE_COORDS.bingMapsUrl}
+            href={OFFICE_REFERENCE_COORDS.mapsUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-500/30 text-xs font-semibold flex items-center gap-1.5 transition-colors"
-            title="Buka Titik Lokasi Kantor Resmi di Bing Maps"
+            className="min-h-[38px] px-2.5 sm:px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-500/30 text-[11px] sm:text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
+            title="Buka Titik Koordinat Kantor Resmi di Google Maps"
           >
-            <ExternalLink className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Titik Maps Kantor</span>
+            <ExternalLink className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+            <span className="truncate">Maps Kantor</span>
           </a>
 
           <button
             type="button"
             onClick={handleToggleFacingMode}
-            className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+            className="min-h-[38px] px-2.5 sm:px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-[11px] sm:text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
             title="Ganti Kamera Depan / Belakang HP"
           >
-            <SwitchCamera className="w-3.5 h-3.5 text-emerald-400" />
-            <span>{facingMode === 'user' ? 'Kamera Depan' : 'Kamera Belakang'}</span>
+            <SwitchCamera className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+            <span className="truncate">{facingMode === 'user' ? 'Kamera Depan' : 'Kamera Belakang'}</span>
           </button>
 
           <button
             type="button"
             onClick={() => startLiveCamera(facingMode)}
-            className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+            className="min-h-[38px] px-2.5 sm:px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-[11px] sm:text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
             title="Muat Ulang Kamera"
           >
-            <RefreshCw className={`w-3.5 h-3.5 text-teal-400 ${isStartingCamera ? 'animate-spin' : ''}`} />
-            <span>Segarkan Kamera</span>
+            <RefreshCw className={`w-3.5 h-3.5 text-teal-400 shrink-0 ${isStartingCamera ? 'animate-spin' : ''}`} />
+            <span className="truncate">Segarkan Kamera</span>
           </button>
 
           <button
             type="button"
             onClick={refreshPhoneGps}
-            className="px-3 py-1.5 rounded-xl bg-emerald-950/90 hover:bg-emerald-900 text-emerald-300 border border-emerald-700/60 text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+            className="min-h-[38px] px-2.5 sm:px-3 py-1.5 rounded-xl bg-emerald-950/90 hover:bg-emerald-900 text-emerald-300 border border-emerald-700/60 text-[11px] sm:text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
             title="Perbarui Titik Koordinat GPS HP"
           >
-            <Navigation className={`w-3.5 h-3.5 text-emerald-400 ${gpsStatus === 'searching' ? 'animate-bounce' : ''}`} />
-            <span>Perbarui GPS HP</span>
+            <Navigation className={`w-3.5 h-3.5 text-emerald-400 shrink-0 ${gpsStatus === 'searching' ? 'animate-bounce' : ''}`} />
+            <span className="truncate">Perbarui GPS HP</span>
           </button>
         </div>
       </div>
 
-      {/* Main Grid: Left = Live Camera Viewfinder with Real-Time Clock & GPS HUD; Right = Controls, Geofence 15m & Anti-Fake GPS Shield */}
+      {/* Main Grid: Left = Live Camera Viewfinder with Real-Time Clock & GPS HUD; Right = Controls, Geofence 25m & Anti-Fake GPS Shield */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-0">
         {/* LEFT COLUMN (7 cols): LIVE CAMERA VIEWPORT + REAL-TIME CLOCK & GPS OVERLAY */}
-        <div className="lg:col-span-7 relative bg-black min-h-[430px] sm:min-h-[500px] flex flex-col justify-between overflow-hidden border-b lg:border-b-0 lg:border-r border-slate-800">
+        <div className="lg:col-span-7 relative bg-black min-h-[380px] sm:min-h-[480px] flex flex-col justify-between overflow-hidden border-b lg:border-b-0 lg:border-r border-slate-800">
           {/* Live Video Element */}
           <video
             ref={videoRef}
@@ -1032,17 +1013,17 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
 
           {/* Fallback Visual Portrait when physical webcam is unavailable */}
           {!isCameraActive && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-b from-slate-900 via-slate-900 to-emerald-950/80 p-6">
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-b from-slate-900 via-slate-900 to-emerald-950/80 p-4 sm:p-6">
               <img
                 src={
                   currentEmployee.avatarUrl ||
                   'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=600&h=600&q=80'
                 }
                 alt={currentEmployee.fullName}
-                className="w-44 h-44 sm:w-52 sm:h-52 rounded-3xl object-cover ring-4 ring-emerald-500/40 shadow-2xl"
+                className="w-36 h-36 sm:w-52 sm:h-52 rounded-3xl object-cover ring-4 ring-emerald-500/40 shadow-2xl"
               />
               {cameraFallbackReason && (
-                <p className="text-[11px] text-slate-300 text-center max-w-md mt-3 bg-slate-950/80 px-3 py-1.5 rounded-xl border border-slate-800">
+                <p className="text-[10px] sm:text-[11px] text-slate-300 text-center max-w-md mt-2.5 bg-slate-950/80 px-3 py-1.5 rounded-xl border border-slate-800">
                   {cameraFallbackReason}
                 </p>
               )}
@@ -1052,7 +1033,7 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
           {/* Face Framing Reticle Guide */}
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
             <div
-              className={`w-52 h-64 sm:w-60 sm:h-72 rounded-3xl border-2 border-dashed relative ${
+              className={`w-44 h-56 sm:w-60 sm:h-72 rounded-3xl border-2 border-dashed relative ${
                 canSubmitAttendance ? 'border-emerald-400/60' : 'border-rose-400/60'
               }`}
             >
@@ -1079,21 +1060,21 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
             </div>
           </div>
 
-          {/* TOP HUD OVERLAY: LIVE STATUS + GEOFENCE 15M BADGE */}
-          <div className="relative z-10 p-4 bg-gradient-to-b from-slate-950/90 via-slate-950/50 to-transparent flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2 bg-slate-950/80 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/15">
-              <Radio className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
-              <span className="text-[11px] font-bold tracking-wide text-emerald-300 uppercase">
-                {isCameraActive ? 'LIVE KAMERA AKTIF' : 'SENSOR WAJAH AKTIF'}
+          {/* TOP HUD OVERLAY: LIVE STATUS + GEOFENCE 25M BADGE */}
+          <div className="relative z-10 p-3 sm:p-4 bg-gradient-to-b from-slate-950/90 via-slate-950/50 to-transparent flex flex-wrap items-center justify-between gap-1.5 sm:gap-2">
+            <div className="flex items-center gap-1.5 sm:gap-2 bg-slate-950/80 backdrop-blur-md px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-xl border border-white/15 min-w-0 max-w-full">
+              <Radio className="w-3.5 h-3.5 text-emerald-400 animate-pulse shrink-0" />
+              <span className="text-[10px] sm:text-[11px] font-bold tracking-wide text-emerald-300 uppercase shrink-0">
+                {isCameraActive ? 'LIVE KAMERA' : 'SENSOR WAJAH'}
               </span>
-              <span className="text-slate-500">•</span>
-              <span className="text-[11px] font-mono text-white font-semibold">
+              <span className="text-slate-500 shrink-0">•</span>
+              <span className="text-[10px] sm:text-[11px] font-mono text-white font-semibold truncate">
                 {currentEmployee.fullName} ({currentEmployee.nik})
               </span>
             </div>
 
             <div
-              className={`flex items-center gap-1.5 backdrop-blur-md px-3 py-1.5 rounded-xl border text-[11px] font-bold ${
+              className={`flex items-center gap-1.5 backdrop-blur-md px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-xl border text-[10px] sm:text-[11px] font-bold ${
                 canSubmitAttendance
                   ? 'bg-emerald-950/85 border-emerald-500/40 text-emerald-300'
                   : 'bg-rose-950/90 border-rose-500/50 text-rose-300'
@@ -1101,18 +1082,18 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
             >
               {canSubmitAttendance ? (
                 <>
-                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>RADIUS ≤15M & ANTI-FAKE GPS VALID</span>
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  <span>RADIUS ≤25M & GPS VALID</span>
                 </>
               ) : (
                 <>
-                  <Lock className="w-3.5 h-3.5 text-rose-400" />
+                  <Lock className="w-3.5 h-3.5 text-rose-400 shrink-0" />
                   <span>
                     {isFakeGpsDetected
-                      ? 'FAKE GPS TERDETEKSI — ABSEN DIBLOKIR'
-                      : distanceFromOffice !== null && distanceFromOffice > 15
-                      ? `DI LUAR RADIUS 15M (${distanceFromOffice}m)`
-                      : 'MENUNGGU KUNCI GPS HP ASLI'}
+                      ? 'FAKE GPS — ABSEN DIBLOKIR'
+                      : distanceFromOffice !== null && distanceFromOffice > 25
+                      ? `DI LUAR 25M (${distanceFromOffice}m)`
+                      : 'MENUNGGU KUNCI GPS HP'}
                   </span>
                 </>
               )}
@@ -1120,82 +1101,82 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
           </div>
 
           {/* BOTTOM HUD OVERLAY: REAL-TIME CLOCK, DATE & LIVE PHONE GPS LOCATION */}
-          <div className="relative z-10 p-4 pt-10 bg-gradient-to-t from-slate-950 via-slate-950/90 to-transparent space-y-2.5">
+          <div className="relative z-10 p-3 sm:p-4 pt-8 bg-gradient-to-t from-slate-950 via-slate-950/90 to-transparent space-y-2">
             {/* Real-Time Clock & Date Row */}
-            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-2 border-b border-white/15 pb-2.5">
-              <div>
-                <div className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-400 uppercase tracking-wider">
-                  <Clock className="w-3.5 h-3.5" />
-                  <span>Waktu & Tanggal Real-Time Perangkat</span>
+            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-2 border-b border-white/15 pb-2">
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 text-[10px] sm:text-[11px] font-semibold text-emerald-400 uppercase tracking-wider">
+                  <Clock className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
+                  <span className="truncate">Jam & Tanggal Real-Time</span>
                 </div>
-                <div className="text-2xl sm:text-3xl font-mono font-extrabold text-white tracking-tight mt-0.5">
+                <div className="text-xl sm:text-3xl font-mono font-extrabold text-white tracking-tight mt-0.5 tabular-nums">
                   {timeWithSecondsStr}
                 </div>
-                <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-200 mt-0.5">
-                  <Calendar className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                  <span>{dayDateStr}</span>
+                <div className="flex items-center gap-1.5 text-[11px] sm:text-xs font-semibold text-emerald-200 mt-0.5">
+                  <Calendar className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-emerald-400 shrink-0" />
+                  <span className="truncate">{dayDateStr}</span>
                 </div>
               </div>
 
-              {/* GPS Coordinate & 15m Distance Pill */}
+              {/* GPS Coordinate & 25m Distance Pill */}
               <div
-                className={`backdrop-blur-md px-3 py-2 rounded-xl border text-left sm:text-right ${
+                className={`backdrop-blur-md px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl border text-left sm:text-right min-w-0 ${
                   canSubmitAttendance
                     ? 'bg-slate-900/90 border-emerald-500/40'
                     : 'bg-rose-950/85 border-rose-500/50'
                 }`}
               >
                 <div
-                  className={`flex items-center sm:justify-end gap-1.5 text-[10px] font-bold uppercase ${
+                  className={`flex items-center sm:justify-end gap-1 text-[10px] font-bold uppercase ${
                     canSubmitAttendance ? 'text-emerald-400' : 'text-rose-300'
                   }`}
                 >
-                  <MapPin className="w-3 h-3" />
-                  <span>
+                  <MapPin className="w-3 h-3 shrink-0" />
+                  <span className="truncate">
                     {gpsStatus === 'locked'
                       ? isFakeGpsDetected
-                        ? 'Indikasi Fake GPS Terdeteksi!'
-                        : isWithin15Meters
-                        ? 'Dalam Jangkauan Kantor (≤ 15m)'
-                        : 'Di Luar Jangkauan Kantor (> 15m)'
+                        ? 'Indikasi Fake GPS!'
+                        : isWithinMaxRadius
+                        ? 'Dalam Radius Kantor (≤ 25m)'
+                        : 'Di Luar Radius Kantor (> 25m)'
                       : gpsStatus === 'searching'
-                      ? 'Mencari Sinyal Satelit GPS HP...'
-                      : 'GPS HP Belum Aktif / Ditolak'}
+                      ? 'Membaca Koordinat GPS HP...'
+                      : 'GPS HP Belum Aktif'}
                   </span>
                 </div>
-                <div className="font-mono text-xs font-bold text-white mt-0.5">
+                <div className="font-mono text-[11px] sm:text-xs font-bold text-white mt-0.5 tabular-nums break-all sm:break-normal">
                   {gpsCoords
-                    ? `${gpsCoords.latitude.toFixed(6)}°, ${gpsCoords.longitude.toFixed(6)}°`
+                    ? `${gpsCoords.latitude.toFixed(7)}°, ${gpsCoords.longitude.toFixed(7)}°`
                     : 'Koordinat GPS Belum Terkunci'}
                 </div>
-                <div className="text-[10px] text-slate-200 font-mono">
+                <div className="text-[10px] text-slate-200 font-mono tabular-nums">
                   {gpsCoords && distanceFromOffice !== null ? (
                     <>
-                      Jarak ke Kantor: <strong>{distanceFromOffice}m</strong> (Batas:{' '}
-                      <strong>15m</strong>) • Akurasi: <strong>±{gpsCoords.accuracy}m</strong>
+                      Jarak ke Kantor: <strong>{distanceFromOffice}m</strong> (Maks:{' '}
+                      <strong>25m</strong>)
                     </>
                   ) : (
-                    <span>Wajib radius ≤ 15m dari titik kantor</span>
+                    <span>Wajib radius ≤ 25m dari titik kantor</span>
                   )}
                 </div>
               </div>
             </div>
 
             {/* Detailed Street Address from Phone GPS */}
-            <div className="bg-slate-900/90 backdrop-blur-md p-3 rounded-xl border border-white/10 flex items-start gap-2.5">
+            <div className="bg-slate-900/90 backdrop-blur-md p-2.5 sm:p-3 rounded-xl border border-white/10 flex items-start gap-2">
               <MapPin className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
               <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center justify-between gap-1">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-300">
-                    Detail Lokasi Terbaca dari GPS HP:
+                    Detail Lokasi GPS HP:
                   </span>
                   {lastGpsUpdatedTime && (
-                    <span className="text-[10px] font-mono text-slate-400">
-                      Update GPS: {lastGpsUpdatedTime} WIB
+                    <span className="text-[10px] font-mono text-slate-400 tabular-nums">
+                      Update: {lastGpsUpdatedTime} WIB
                     </span>
                   )}
                 </div>
-                <p className="text-xs font-semibold text-white leading-snug mt-0.5 break-words">
+                <p className="text-[11px] sm:text-xs font-semibold text-white leading-snug mt-0.5 break-words">
                   {gpsDetailedAddress}
                 </p>
               </div>
@@ -1203,178 +1184,99 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
           </div>
         </div>
 
-        {/* RIGHT COLUMN (5 cols): GEOFENCE 15M + ANTI-FAKE GPS SHIELD + SHUTTER CONTROLS */}
-        <div className="lg:col-span-5 p-5 bg-slate-900 flex flex-col justify-between space-y-4">
-          <div className="space-y-3.5">
-            {/* Official Office Location & 15m Geofence Security Card */}
-            <div
-              className={`p-3.5 rounded-xl border space-y-2.5 ${
-                canSubmitAttendance
-                  ? 'bg-emerald-950/30 border-emerald-500/40'
-                  : 'bg-rose-950/35 border-rose-500/50'
-              }`}
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  {canSubmitAttendance ? (
-                    <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
-                  ) : (
-                    <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0" />
-                  )}
-                  <div>
-                    <h5 className="text-xs font-extrabold uppercase tracking-wide text-white">
-                      Geofence Radius 15 Meter & Anti-Fake GPS
-                    </h5>
-                    <p className="text-[11px] text-slate-300">
-                      Titik Kantor: <strong>{OFFICE_REFERENCE_COORDS.shortAddress}</strong>
-                    </p>
-                  </div>
-                </div>
-                <span
-                  className={`px-2 py-0.5 rounded-md text-[10px] font-mono font-bold shrink-0 ${
-                    canSubmitAttendance
-                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                      : 'bg-rose-500/25 text-rose-200 border border-rose-500/40'
-                  }`}
-                >
-                  {distanceFromOffice !== null ? `${distanceFromOffice}m / 15m` : 'GPS OFF'}
+        {/* RIGHT COLUMN (5 cols): GEOFENCE 25M + ANTI-FAKE GPS SHIELD + SHUTTER CONTROLS */}
+        <div className="lg:col-span-5 p-3.5 sm:p-5 bg-slate-900 flex flex-col justify-between space-y-4">
+          <div className="flex flex-col space-y-3.5">
+            {/* Primary Shutter Buttons: Placed First on Mobile (order-1 lg:order-4) for One-Handed Ergonomics */}
+            <div className="order-1 lg:order-4 space-y-2.5 pt-1 lg:pt-0">
+              {/* Optional Attendance Notes Input */}
+              <div>
+                <label className="block text-[11px] font-bold text-slate-300 mb-1">
+                  Catatan Presensi / Keterangan Lokasi (Opsional)
+                </label>
+                <input
+                  type="text"
+                  value={clockInNotes}
+                  onChange={(e) => onChangeNotes(e.target.value)}
+                  placeholder={`Hadir ${activeShift.name} di ${OFFICE_REFERENCE_COORDS.shortAddress}...`}
+                  className="w-full px-3.5 py-2.5 text-xs bg-slate-800 border border-slate-700 rounded-xl text-white placeholder:text-slate-500 focus:outline-hidden focus:border-emerald-500"
+                />
+              </div>
+
+              <button
+                type="button"
+                disabled={isCapturing || !canSubmitAttendance}
+                onClick={() => handleCaptureAndSubmit('check_in')}
+                className={`w-full min-h-[48px] py-3.5 px-4 rounded-xl text-xs sm:text-sm font-extrabold flex items-center justify-center gap-2 transition-all text-center ${
+                  canSubmitAttendance
+                    ? 'bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white shadow-lg shadow-emerald-600/25 cursor-pointer active:scale-[0.99]'
+                    : 'bg-slate-800 text-slate-400 border border-rose-500/30 cursor-not-allowed'
+                }`}
+              >
+                {canSubmitAttendance ? (
+                  <Camera className="w-4 h-4 sm:w-5 sm:h-5 shrink-0" />
+                ) : (
+                  <Lock className="w-4 h-4 shrink-0 text-rose-400" />
+                )}
+                <span className="leading-snug">
+                  {!canSubmitAttendance
+                    ? isFakeGpsDetected
+                      ? 'Absen Masuk Diblokir (Fake GPS Terdeteksi)'
+                      : distanceFromOffice !== null && distanceFromOffice > 25
+                      ? `Tidak Bisa Absen Masuk (Jarak ${distanceFromOffice}m > 25m)`
+                      : 'Menunggu Kunci GPS HP (Wajib Radius ≤ 25m)'
+                    : todayAttendance?.checkIn
+                    ? `Foto Ulang Wajah & Perbarui Absen Masuk (${
+                        useCustomClockTime ? customClockInTime : shortHourMinStr
+                      } WIB)`
+                    : `Jepret Foto Wajah & Absen Masuk (${
+                        useCustomClockTime ? customClockInTime : shortHourMinStr
+                      } WIB)`}
                 </span>
-              </div>
+              </button>
 
-              {/* Distance Progress Bar vs 15m Limit */}
-              <div className="space-y-1">
-                <div className="flex items-center justify-between text-[11px]">
-                  <span className="text-slate-300">Jarak Anda dari Titik Kantor:</span>
-                  <span
-                    className={`font-mono font-bold ${
-                      distanceFromOffice !== null && distanceFromOffice <= 15
-                        ? 'text-emerald-300'
-                        : 'text-rose-300'
-                    }`}
-                  >
-                    {distanceFromOffice !== null
-                      ? `${distanceFromOffice} Meter (Maksimal 15 Meter)`
-                      : 'Belum Terbaca'}
-                  </span>
-                </div>
-                <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
-                  <div
-                    className={`h-full transition-all duration-300 ${
-                      distanceFromOffice !== null && distanceFromOffice <= 15 && !isFakeGpsDetected
-                        ? 'bg-emerald-500'
-                        : 'bg-rose-500'
-                    }`}
-                    style={{
-                      width:
-                        distanceFromOffice !== null
-                          ? `${Math.min(100, Math.max(8, (distanceFromOffice / 15) * 100))}%`
-                          : '100%',
-                    }}
-                  />
-                </div>
-              </div>
-
-              {/* 4-Layer Anti-Fake GPS Sensor Verification Pills */}
-              <div className="grid grid-cols-2 gap-1.5 pt-1">
-                <div
-                  className={`px-2.5 py-1.5 rounded-lg border text-[10px] flex items-center gap-1.5 ${
-                    isGpsLocked && antiFakeAudit.checks.accuracyValid
-                      ? 'bg-slate-900/80 border-emerald-500/30 text-emerald-300'
-                      : 'bg-slate-900/80 border-rose-500/30 text-rose-300'
-                  }`}
-                >
-                  <CheckCircle2 className="w-3 h-3 shrink-0" />
-                  <span className="truncate font-semibold">
-                    Akurasi Satelit {gpsCoords ? `(±${gpsCoords.accuracy}m)` : ''}
-                  </span>
-                </div>
-
-                <div
-                  className={`px-2.5 py-1.5 rounded-lg border text-[10px] flex items-center gap-1.5 ${
-                    isGpsLocked && antiFakeAudit.checks.timestampSynced
-                      ? 'bg-slate-900/80 border-emerald-500/30 text-emerald-300'
-                      : 'bg-slate-900/80 border-rose-500/30 text-rose-300'
-                  }`}
-                >
-                  <CheckCircle2 className="w-3 h-3 shrink-0" />
-                  <span className="truncate font-semibold">Sinkronisasi Jam GPS</span>
-                </div>
-
-                <div
-                  className={`px-2.5 py-1.5 rounded-lg border text-[10px] flex items-center gap-1.5 ${
-                    isGpsLocked && antiFakeAudit.checks.kinematicsValid
-                      ? 'bg-slate-900/80 border-emerald-500/30 text-emerald-300'
-                      : 'bg-slate-900/80 border-rose-500/30 text-rose-300'
-                  }`}
-                >
-                  <CheckCircle2 className="w-3 h-3 shrink-0" />
-                  <span className="truncate font-semibold">Anti-Teleportasi GPS</span>
-                </div>
-
-                <div
-                  className={`px-2.5 py-1.5 rounded-lg border text-[10px] flex items-center gap-1.5 ${
-                    isGpsLocked && antiFakeAudit.checks.sensorHardwareValid
-                      ? 'bg-slate-900/80 border-emerald-500/30 text-emerald-300'
-                      : 'bg-slate-900/80 border-rose-500/30 text-rose-300'
-                  }`}
-                >
-                  <CheckCircle2 className="w-3 h-3 shrink-0" />
-                  <span className="truncate font-semibold">Sensor Hardware Asli</span>
-                </div>
-              </div>
-
-              {/* Blocking Explanation Banner if Outside 15m or Fake GPS Detected or GPS Denied */}
-              {!canSubmitAttendance && (
-                <div className="p-2.5 rounded-lg bg-rose-950/90 border border-rose-500/50 text-[11px] text-rose-200 flex items-start gap-2">
-                  <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                  <div className="space-y-1">
-                    {gpsErrorMessage ? (
-                      <p className="font-semibold leading-snug">{gpsErrorMessage}</p>
-                    ) : isFakeGpsDetected ? (
-                      <>
-                        <p className="font-bold text-rose-300">
-                          TERDETEKSI INDIKASI FAKE GPS / MOCK LOCATION!
-                        </p>
-                        <ul className="list-disc list-inside space-y-0.5 text-[10px] text-rose-200">
-                          {antiFakeAudit.reasons.map((r, idx) => (
-                            <li key={idx}>{r}</li>
-                          ))}
-                        </ul>
-                      </>
-                    ) : distanceFromOffice !== null && distanceFromOffice > 15 ? (
-                      <p className="font-semibold leading-snug">
-                        <strong>TIDAK BISA ABSEN:</strong> Jarak posisi GPS Anda saat ini{' '}
-                        <strong>{distanceFromOffice} meter</strong> dari titik kantor (
-                        {OFFICE_REFERENCE_COORDS.shortAddress}). Batas maksimal absen adalah{' '}
-                        <strong>15 meter</strong> dari titik lokasi kantor.
-                      </p>
-                    ) : (
-                      <p className="font-semibold leading-snug">
-                        Sedang mengunci titik koordinat satelit GPS HP Anda... Pastikan Anda berada
-                        maksimal 15 meter dari titik kantor.
-                      </p>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {blockedAttemptAlert && (
-                <div className="p-2.5 rounded-lg bg-rose-900/90 border border-rose-400 text-[11px] font-bold text-white flex items-start gap-2">
-                  <Lock className="w-4 h-4 text-rose-300 shrink-0 mt-0.5" />
-                  <span>{blockedAttemptAlert}</span>
-                </div>
-              )}
+              <button
+                type="button"
+                disabled={!todayAttendance?.checkIn || isCapturing || !canSubmitAttendance}
+                onClick={() => handleCaptureAndSubmit('check_out')}
+                className={`w-full min-h-[46px] py-3 px-4 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-all text-center ${
+                  todayAttendance?.checkIn && canSubmitAttendance
+                    ? 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-md cursor-pointer active:scale-[0.99]'
+                    : 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
+                }`}
+              >
+                {todayAttendance?.checkIn && canSubmitAttendance ? (
+                  <LogOut className="w-4 h-4 shrink-0" />
+                ) : (
+                  <Lock className="w-4 h-4 shrink-0" />
+                )}
+                <span className="leading-snug">
+                  {!canSubmitAttendance
+                    ? isFakeGpsDetected
+                      ? 'Absen Pulang Diblokir (Fake GPS Terdeteksi)'
+                      : distanceFromOffice !== null && distanceFromOffice > 25
+                      ? `Tidak Bisa Absen Pulang (Jarak ${distanceFromOffice}m > 25m)`
+                      : 'Absen Pulang Wajib di Dalam Radius ≤ 25m Kantor'
+                    : todayAttendance?.checkOut
+                    ? `Foto Ulang Wajah & Perbarui Absen Pulang (${
+                        useCustomClockTime ? customClockOutTime : shortHourMinStr
+                      } WIB)`
+                    : `Jepret Foto Wajah & Absen Pulang (${
+                        useCustomClockTime ? customClockOutTime : shortHourMinStr
+                      } WIB)`}
+                </span>
+              </button>
             </div>
 
             {/* Shift & Evaluation Summary Box */}
-            <div className="p-3 rounded-xl bg-slate-800/90 border border-slate-700 space-y-1.5">
-              <div className="flex items-center justify-between text-xs">
+            <div className="order-2 lg:order-2 p-3 rounded-xl bg-slate-800/90 border border-slate-700 space-y-1.5">
+              <div className="flex flex-wrap items-center justify-between gap-1 text-xs">
                 <span className="text-slate-400 font-medium">Jadwal Shift Anda:</span>
-                <span className="font-bold text-emerald-400">
+                <span className="font-bold text-emerald-400 tabular-nums">
                   {activeShift.name} ({activeShift.checkInTime} – {activeShift.checkOutTime} WIB)
                 </span>
               </div>
-              <div className="flex items-center justify-between text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-1 text-xs">
                 <span className="text-slate-400 font-medium">Status Evaluasi Saat Ini:</span>
                 <span
                   className={`font-bold px-2 py-0.5 rounded text-[11px] ${
@@ -1391,85 +1293,168 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
               </div>
             </div>
 
-            {/* Optional Attendance Notes Input */}
-            <div>
-              <label className="block text-[11px] font-bold text-slate-300 mb-1">
-                Catatan Presensi / Keterangan Lokasi (Opsional)
-              </label>
-              <input
-                type="text"
-                value={clockInNotes}
-                onChange={(e) => onChangeNotes(e.target.value)}
-                placeholder={`Hadir ${activeShift.name} di ${OFFICE_REFERENCE_COORDS.shortAddress}...`}
-                className="w-full px-3.5 py-2 text-xs bg-slate-800 border border-slate-700 rounded-xl text-white placeholder:text-slate-500 focus:outline-hidden focus:border-emerald-500"
-              />
-            </div>
-
-            {/* Primary Shutter Buttons: Jepret Foto Wajah & Absen Masuk / Pulang (Locked if > 15m or Fake GPS) */}
-            <div className="space-y-2">
-              <button
-                type="button"
-                disabled={isCapturing || !canSubmitAttendance}
-                onClick={() => handleCaptureAndSubmit('check_in')}
-                className={`w-full py-3.5 px-4 rounded-xl text-xs sm:text-sm font-extrabold flex items-center justify-center gap-2 transition-all ${
-                  canSubmitAttendance
-                    ? 'bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white shadow-lg shadow-emerald-600/25 cursor-pointer'
-                    : 'bg-slate-800 text-slate-500 border border-rose-500/30 cursor-not-allowed'
-                }`}
-              >
-                {canSubmitAttendance ? (
-                  <Camera className="w-4 h-4 shrink-0" />
-                ) : (
-                  <Lock className="w-4 h-4 shrink-0 text-rose-400" />
-                )}
-                <span>
-                  {!canSubmitAttendance
-                    ? isFakeGpsDetected
-                      ? 'Absen Masuk Diblokir (Fake GPS Terdeteksi)'
-                      : distanceFromOffice !== null && distanceFromOffice > 15
-                      ? `Tidak Bisa Absen Masuk (Jarak ${distanceFromOffice}m > 15m)`
-                      : 'Menunggu Kunci GPS HP (Wajib Radius ≤ 15m)'
-                    : todayAttendance?.checkIn
-                    ? `Foto Ulang Wajah & Perbarui Absen Masuk (${
-                        useCustomClockTime ? customClockInTime : shortHourMinStr
-                      } WIB)`
-                    : `Jepret Foto Wajah & Absen Masuk (${
-                        useCustomClockTime ? customClockInTime : shortHourMinStr
-                      } WIB)`}
+            {/* Official Office Location & 25m Geofence Security Card */}
+            <div
+              className={`order-3 lg:order-1 p-3 sm:p-3.5 rounded-xl border space-y-2.5 ${
+                canSubmitAttendance
+                  ? 'bg-emerald-950/30 border-emerald-500/40'
+                  : 'bg-rose-950/35 border-rose-500/50'
+              }`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-start gap-2 min-w-0">
+                  {canSubmitAttendance ? (
+                    <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                  ) : (
+                    <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                  )}
+                  <div className="min-w-0">
+                    <h5 className="text-[11px] sm:text-xs font-extrabold uppercase tracking-wide text-white">
+                      Geofence Radius 25 Meter & Anti-Fake GPS
+                    </h5>
+                    <p className="text-[10px] sm:text-[11px] text-slate-300 break-words">
+                      Koordinat Kantor:{' '}
+                      <strong className="font-mono text-emerald-300 tabular-nums">
+                        {OFFICE_REFERENCE_COORDS.latitude}, {OFFICE_REFERENCE_COORDS.longitude}
+                      </strong>
+                    </p>
+                  </div>
+                </div>
+                <span
+                  className={`px-2 py-0.5 rounded-md text-[10px] font-mono font-bold shrink-0 tabular-nums ${
+                    canSubmitAttendance
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                      : 'bg-rose-500/25 text-rose-200 border border-rose-500/40'
+                  }`}
+                >
+                  {distanceFromOffice !== null ? `${distanceFromOffice}m / 25m` : 'GPS OFF'}
                 </span>
-              </button>
+              </div>
 
-              <button
-                type="button"
-                disabled={!todayAttendance?.checkIn || isCapturing || !canSubmitAttendance}
-                onClick={() => handleCaptureAndSubmit('check_out')}
-                className={`w-full py-3 px-4 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-all ${
-                  todayAttendance?.checkIn && canSubmitAttendance
-                    ? 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-md cursor-pointer'
-                    : 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
-                }`}
-              >
-                {todayAttendance?.checkIn && canSubmitAttendance ? (
-                  <LogOut className="w-4 h-4 shrink-0" />
-                ) : (
-                  <Lock className="w-4 h-4 shrink-0" />
-                )}
-                <span>
-                  {!canSubmitAttendance
-                    ? isFakeGpsDetected
-                      ? 'Absen Pulang Diblokir (Fake GPS Terdeteksi)'
-                      : distanceFromOffice !== null && distanceFromOffice > 15
-                      ? `Tidak Bisa Absen Pulang (Jarak ${distanceFromOffice}m > 15m)`
-                      : 'Absen Pulang Wajib di Dalam Radius ≤ 15m Kantor'
-                    : todayAttendance?.checkOut
-                    ? `Foto Ulang Wajah & Perbarui Absen Pulang (${
-                        useCustomClockTime ? customClockOutTime : shortHourMinStr
-                      } WIB)`
-                    : `Jepret Foto Wajah & Absen Pulang (${
-                        useCustomClockTime ? customClockOutTime : shortHourMinStr
-                      } WIB)`}
-                </span>
-              </button>
+              {/* Distance Progress Bar vs 25m Limit */}
+              <div className="space-y-1">
+                <div className="flex flex-wrap items-center justify-between gap-1 text-[10px] sm:text-[11px]">
+                  <span className="text-slate-300">Jarak dari Titik Koordinat:</span>
+                  <span
+                    className={`font-mono font-bold tabular-nums ${
+                      distanceFromOffice !== null && distanceFromOffice <= 25
+                        ? 'text-emerald-300'
+                        : 'text-rose-300'
+                    }`}
+                  >
+                    {distanceFromOffice !== null
+                      ? `${distanceFromOffice}m (Maks 25m)`
+                      : 'Belum Terbaca'}
+                  </span>
+                </div>
+                <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
+                  <div
+                    className={`h-full transition-all duration-300 ${
+                      distanceFromOffice !== null && distanceFromOffice <= 25 && !isFakeGpsDetected
+                        ? 'bg-emerald-500'
+                        : 'bg-rose-500'
+                    }`}
+                    style={{
+                      width:
+                        distanceFromOffice !== null
+                          ? `${Math.min(100, Math.max(8, (distanceFromOffice / 25) * 100))}%`
+                          : '100%',
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* 4-Layer GPS Verification Pills (No Satellite Accuracy Requirement) */}
+              <div className="grid grid-cols-2 gap-1.5 pt-1">
+                <div
+                  className={`px-2 py-1.5 rounded-lg border text-[10px] flex items-center gap-1.5 min-w-0 ${
+                    isGpsLocked && isWithinMaxRadius
+                      ? 'bg-slate-900/80 border-emerald-500/30 text-emerald-300'
+                      : 'bg-slate-900/80 border-rose-500/30 text-rose-300'
+                  }`}
+                >
+                  <CheckCircle2 className="w-3 h-3 shrink-0" />
+                  <span className="truncate font-semibold">
+                    Radius ≤ 25m {distanceFromOffice !== null ? `(${distanceFromOffice}m)` : ''}
+                  </span>
+                </div>
+
+                <div
+                  className={`px-2 py-1.5 rounded-lg border text-[10px] flex items-center gap-1.5 min-w-0 ${
+                    isGpsLocked && antiFakeAudit.checks.timestampSynced
+                      ? 'bg-slate-900/80 border-emerald-500/30 text-emerald-300'
+                      : 'bg-slate-900/80 border-rose-500/30 text-rose-300'
+                  }`}
+                >
+                  <CheckCircle2 className="w-3 h-3 shrink-0" />
+                  <span className="truncate font-semibold">Sinkron Jam GPS</span>
+                </div>
+
+                <div
+                  className={`px-2 py-1.5 rounded-lg border text-[10px] flex items-center gap-1.5 min-w-0 ${
+                    isGpsLocked && antiFakeAudit.checks.kinematicsValid
+                      ? 'bg-slate-900/80 border-emerald-500/30 text-emerald-300'
+                      : 'bg-slate-900/80 border-rose-500/30 text-rose-300'
+                  }`}
+                >
+                  <CheckCircle2 className="w-3 h-3 shrink-0" />
+                  <span className="truncate font-semibold">Anti-Teleportasi</span>
+                </div>
+
+                <div
+                  className={`px-2 py-1.5 rounded-lg border text-[10px] flex items-center gap-1.5 min-w-0 ${
+                    isGpsLocked && antiFakeAudit.checks.sensorHardwareValid
+                      ? 'bg-slate-900/80 border-emerald-500/30 text-emerald-300'
+                      : 'bg-slate-900/80 border-rose-500/30 text-rose-300'
+                  }`}
+                >
+                  <CheckCircle2 className="w-3 h-3 shrink-0" />
+                  <span className="truncate font-semibold">Koordinat Asli</span>
+                </div>
+              </div>
+
+              {/* Blocking Explanation Banner if Outside 25m or Fake GPS Detected or GPS Denied */}
+              {!canSubmitAttendance && (
+                <div className="p-2.5 rounded-lg bg-rose-950/90 border border-rose-500/50 text-[11px] text-rose-200 flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                  <div className="space-y-1 min-w-0 break-words">
+                    {gpsErrorMessage ? (
+                      <p className="font-semibold leading-snug">{gpsErrorMessage}</p>
+                    ) : isFakeGpsDetected ? (
+                      <>
+                        <p className="font-bold text-rose-300">
+                          TERDETEKSI INDIKASI FAKE GPS / MOCK LOCATION!
+                        </p>
+                        <ul className="list-disc list-inside space-y-0.5 text-[10px] text-rose-200">
+                          {antiFakeAudit.reasons.map((r, idx) => (
+                            <li key={idx}>{r}</li>
+                          ))}
+                        </ul>
+                      </>
+                    ) : distanceFromOffice !== null && distanceFromOffice > 25 ? (
+                      <p className="font-semibold leading-snug">
+                        <strong>TIDAK BISA ABSEN:</strong> Jarak posisi GPS Anda saat ini{' '}
+                        <strong>{distanceFromOffice} meter</strong> dari titik koordinat kantor (
+                        {OFFICE_REFERENCE_COORDS.latitude}, {OFFICE_REFERENCE_COORDS.longitude}).
+                        Batas maksimal absen adalah <strong>25 meter</strong> dari titik koordinat
+                        kantor.
+                      </p>
+                    ) : (
+                      <p className="font-semibold leading-snug">
+                        Sedang membaca titik koordinat GPS HP Anda... Pastikan Anda berada
+                        maksimal 25 meter dari titik koordinat kantor.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {blockedAttemptAlert && (
+                <div className="p-2.5 rounded-lg bg-rose-900/90 border border-rose-400 text-[11px] font-bold text-white flex items-start gap-2">
+                  <Lock className="w-4 h-4 text-rose-300 shrink-0 mt-0.5" />
+                  <span className="break-words">{blockedAttemptAlert}</span>
+                </div>
+              )}
             </div>
           </div>
 
@@ -1514,8 +1499,8 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
                   Belum Ada Jepretan Foto Absen Hari Ini
                 </p>
                 <p className="text-[10px] text-slate-400 mt-0.5">
-                  Pastikan Anda berada maksimal <strong>15 meter</strong> dari titik kantor (
-                  {OFFICE_REFERENCE_COORDS.shortAddress}) tanpa Fake GPS untuk memotret wajah & absen.
+                  Pastikan Anda berada maksimal <strong>25 meter</strong> dari titik koordinat kantor (
+                  {OFFICE_REFERENCE_COORDS.latitude}, {OFFICE_REFERENCE_COORDS.longitude}) tanpa Fake GPS untuk memotret wajah & absen.
                 </p>
               </div>
             )}

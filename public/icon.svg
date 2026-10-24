@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="tgiGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#059669" />
+      <stop offset="50%" stop-color="#0d9488" />
+      <stop offset="100%" stop-color="#4338ca" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#tgiGrad)" />
+  <rect x="44" y="44" width="424" height="424" rx="88" fill="none" stroke="#ffffff" stroke-opacity="0.18" stroke-width="6" />
+  <!-- Briefcase / Bag Icon representing PT Tas Grosir Import -->
+  <path d="M196 156V132C196 114.327 210.327 100 228 100H284C301.673 100 316 114.327 316 132V156H372C394.091 156 412 173.909 412 196V364C412 386.091 394.091 404 372 404H140C117.909 404 100 386.091 100 364V196C100 173.909 117.909 156 140 156H196ZM224 156H288V134C288 130.686 285.314 128 282 128H230C226.686 128 224 130.686 224 134V156Z" fill="#ffffff" fill-opacity="0.95" />
+  <!-- TGI Monogram & Checkmark Badge -->
+  <rect x="136" y="220" width="240" height="136" rx="24" fill="#064e3b" />
+  <text x="256" y="308" font-family="system-ui, -apple-system, sans-serif" font-size="84" font-weight="900" fill="#ffffff" text-anchor="middle" letter-spacing="4">TGI</text>
+  <circle cx="388" cy="148" r="42" fill="#10b981" stroke="#ffffff" stroke-width="8" />
+  <path d="M370 148L382 160L408 134" fill="none" stroke="#ffffff" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" />
+</svg>

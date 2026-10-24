@@ -46,6 +46,8 @@ import {
   Banknote,
   CalendarCheck2,
   Camera,
+  Home,
+  LayoutGrid,
 } from 'lucide-react';
 import {
   Employee,
@@ -78,6 +80,7 @@ import {
 } from '../utils/formatters';
 import { getEmployeeEffectivePin } from '../services/supabaseService';
 import { LiveFaceGpsAttendanceScanner } from './LiveFaceGpsAttendanceScanner';
+import { PWAInstallBanner } from './PWAInstallPrompt';
 
 interface EmployeePortalViewProps {
   currentEmployee: Employee;
@@ -99,7 +102,7 @@ interface EmployeePortalViewProps {
   onSelectEmployee: (empId: string) => void;
   onReportAssetIssue?: (assetId: string, notes: string) => void;
   notifications?: AppNotification[];
-  activePortalTabOverride?: 'payroll' | 'attendance' | 'leave' | 'claims' | 'cash_advance' | 'assets' | 'performance' | 'profile' | null;
+  activePortalTabOverride?: 'home' | 'payroll' | 'attendance' | 'leave' | 'claims' | 'cash_advance' | 'assets' | 'performance' | 'profile' | null;
   onOpenNotifications?: () => void;
   isAdminUnlocked?: boolean;
   onRequestAdminAccess?: () => void;
@@ -165,7 +168,8 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
   cashAdvances = [],
   onApplyCashAdvance,
 }) => {
-  const [activePortalTab, setActivePortalTab] = useState<'payroll' | 'attendance' | 'leave' | 'claims' | 'cash_advance' | 'assets' | 'performance' | 'profile'>('payroll');
+  const [activePortalTab, setActivePortalTab] = useState<'home' | 'payroll' | 'attendance' | 'leave' | 'claims' | 'cash_advance' | 'assets' | 'performance' | 'profile'>('home');
+  const [isMobileMenuSheetOpen, setIsMobileMenuSheetOpen] = useState(false);
   const [isSwitchProfileModalOpen, setIsSwitchProfileModalOpen] = useState(false);
   const [profileSearchQuery, setProfileSearchQuery] = useState('');
   const [pendingSwitchEmp, setPendingSwitchEmp] = useState<Employee | null>(null);
@@ -200,6 +204,15 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
   const [customClockInTime, setCustomClockInTime] = useState(myShift.checkInTime);
   const [customClockOutTime, setCustomClockOutTime] = useState(myShift.checkOutTime);
 
+  // Pastikan mode simulasi jam manual selalu nonaktif jika bukan Admin yang membuka kunci
+  React.useEffect(() => {
+    if (!isAdminUnlocked && useCustomClockTime) {
+      setUseCustomClockTime(false);
+    }
+  }, [isAdminUnlocked, useCustomClockTime]);
+
+  const isAdminSimulationActive = isAdminUnlocked && useCustomClockTime;
+
   React.useEffect(() => {
     setCustomClockInTime(myShift.checkInTime);
     setCustomClockOutTime(myShift.checkOutTime);
@@ -217,10 +230,10 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
   const shiftEvalPreview = useMemo(() => {
     const now = new Date();
     const nowStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-    const targetIn = useCustomClockTime ? customClockInTime : todayAttendance?.checkIn || nowStr;
-    const targetOut = useCustomClockTime ? customClockOutTime : todayAttendance?.checkOut || myShift.checkOutTime;
+    const targetIn = isAdminSimulationActive ? customClockInTime : todayAttendance?.checkIn || nowStr;
+    const targetOut = isAdminSimulationActive ? customClockOutTime : todayAttendance?.checkOut || myShift.checkOutTime;
     return evaluateAttendanceAgainstShift(targetIn, targetOut, myShift);
-  }, [useCustomClockTime, customClockInTime, customClockOutTime, todayAttendance, myShift]);
+  }, [isAdminSimulationActive, customClockInTime, customClockOutTime, todayAttendance, myShift]);
 
   // Count unread performance / bonus notifications for this employee
   const unreadKpiNotifs = useMemo(() => {
@@ -584,30 +597,42 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
   const totalDeduct = currentPay ? currentPay.totalDeductions : Math.round(grossSalary * 0.08);
   const takeHomePay = currentPay ? currentPay.takeHomePay : Math.max(0, grossSalary - totalDeduct);
 
+  const portalTabLabels: Record<typeof activePortalTab, string> = {
+    home: 'Beranda Ringkasan Karyawan',
+    attendance: 'Kamera Absen Wajah & GPS HP',
+    payroll: 'Gaji & Slip Gaji Pribadi',
+    leave: 'Pengajuan Cuti & Izin',
+    claims: 'Klaim Lembur & Reimbursement',
+    cash_advance: 'Pengajuan Kasbon & Cicilan',
+    assets: 'Inventaris & Aset Kantor Saya',
+    performance: 'Rapor Kinerja & KPI',
+    profile: 'Profil & Rekening Bank',
+  };
+
   return (
-    <div className="space-y-6 animate-in fade-in-50">
+    <div className="space-y-5 sm:space-y-6 pb-28 md:pb-6 animate-in fade-in-50 max-w-full overflow-x-hidden">
       {/* Top Banner: Employee Mode Active & Back to Admin Switcher */}
-      <div className="bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-700 rounded-2xl p-5 text-white shadow-md">
+      <div className="bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-700 rounded-2xl p-4 sm:p-5 text-white shadow-md">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
+          <div className="flex items-start sm:items-center gap-3.5 sm:gap-4 min-w-0">
             <img
               src={currentEmployee.avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=256&h=256&q=80'}
               alt={currentEmployee.fullName}
-              className="w-14 h-14 rounded-2xl object-cover ring-3 ring-white/30 shadow-md shrink-0"
+              className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl object-cover ring-3 ring-white/30 shadow-md shrink-0"
             />
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-white/20 backdrop-blur-xs text-white border border-white/20">
-                  Portal Layanan Mandiri (Self-Service)
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] sm:text-xs font-bold bg-white/20 backdrop-blur-xs text-white border border-white/20">
+                  Portal Karyawan
                 </span>
-                <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-400/30 text-emerald-100 border border-emerald-300/30">
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] sm:text-xs font-semibold bg-emerald-400/30 text-emerald-100 border border-emerald-300/30">
                   {currentEmployee.employmentStatus}
                 </span>
               </div>
-              <h1 className="text-xl sm:text-2xl font-bold text-white mt-1">
+              <h1 className="text-lg sm:text-2xl font-bold text-white mt-1 truncate">
                 Halo, {currentEmployee.fullName}
               </h1>
-              <p className="text-xs sm:text-sm text-emerald-100 mt-0.5">
+              <p className="text-xs sm:text-sm text-emerald-100 mt-0.5 truncate">
                 NIK: <span className="font-mono font-bold">{currentEmployee.nik}</span> •{' '}
                 {currentEmployee.role} ({currentEmployee.department})
               </p>
@@ -615,9 +640,9 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 <button
                   type="button"
                   onClick={() => setActivePortalTab('attendance')}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-white text-emerald-900 hover:bg-emerald-50 shadow-sm cursor-pointer transition-all"
+                  className="min-h-[38px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-white text-emerald-900 hover:bg-emerald-50 shadow-sm cursor-pointer transition-all"
                 >
-                  <Camera className="w-3.5 h-3.5 text-emerald-600" />
+                  <Camera className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
                   <span>
                     {todayAttendance?.checkIn
                       ? `Absen Wajah & GPS HP (${todayAttendance.checkIn})`
@@ -630,19 +655,21 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
 
           {/* Action Switchers: Protected against unauthorized employee switching */}
           {!isAdminUnlocked ? (
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
-              <div className="inline-flex items-center gap-2 px-3 py-2 bg-emerald-950/40 border border-emerald-400/30 rounded-xl text-emerald-100 text-xs">
-                <ShieldCheck className="w-4 h-4 text-emerald-300 shrink-0" />
-                <span className="font-semibold text-white truncate max-w-[170px]">
-                  Profil Anda: {currentEmployee.fullName}
-                </span>
-                <span className="text-[10px] bg-emerald-800/80 text-emerald-200 px-1.5 py-0.5 rounded font-mono shrink-0">
-                  {currentEmployee.nik}
-                </span>
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+              <div className="inline-flex items-center justify-between sm:justify-start gap-2 px-3 py-2 bg-emerald-950/40 border border-emerald-400/30 rounded-xl text-emerald-100 text-xs">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <ShieldCheck className="w-4 h-4 text-emerald-300 shrink-0" />
+                  <span className="font-semibold text-white truncate max-w-[145px]">
+                    {currentEmployee.fullName}
+                  </span>
+                  <span className="text-[10px] bg-emerald-800/80 text-emerald-200 px-1.5 py-0.5 rounded font-mono shrink-0">
+                    {currentEmployee.nik}
+                  </span>
+                </div>
                 <button
                   type="button"
                   onClick={() => setIsSwitchProfileModalOpen(true)}
-                  className="ml-1 text-[10px] bg-white/20 hover:bg-white/30 text-white px-2 py-0.5 rounded font-semibold cursor-pointer transition-colors"
+                  className="ml-1 text-[10px] bg-white/20 hover:bg-white/30 text-white px-2 py-1 rounded-lg font-semibold cursor-pointer transition-colors shrink-0"
                   title="Ganti ke akun karyawan Anda jika menggunakan perangkat bersama"
                 >
                   Ganti Akun
@@ -652,15 +679,15 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
               <button
                 type="button"
                 onClick={() => (onRequestAdminAccess ? onRequestAdminAccess() : onSwitchToAdminMode())}
-                className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-bold bg-white text-purple-900 hover:bg-purple-50 rounded-xl shadow-xs transition-all cursor-pointer hover:shadow-md"
+                className="min-h-[38px] inline-flex items-center justify-center gap-1.5 px-3.5 py-2 text-xs font-bold bg-white text-purple-900 hover:bg-purple-50 rounded-xl shadow-xs transition-all cursor-pointer hover:shadow-md"
                 title="Buka Panel HR & Payroll Admin (Perlu PIN Keamanan)"
               >
-                <Lock className="w-3.5 h-3.5 text-purple-600" />
+                <Lock className="w-3.5 h-3.5 text-purple-600 shrink-0" />
                 <span>Masuk Panel Admin (PIN)</span>
               </button>
             </div>
           ) : (
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
               {/* Quick Employee Selector for Admin Preview */}
               <div className="relative">
                 <select
@@ -683,8 +710,8 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 onClick={onSwitchToAdminMode}
                 className="inline-flex items-center justify-center gap-2 px-4 py-2 text-xs sm:text-sm font-bold bg-white text-emerald-800 hover:bg-emerald-50 rounded-xl shadow-xs transition-all cursor-pointer hover:shadow-md"
               >
-                <Shield className="w-4 h-4 text-emerald-600" />
-                Kembali ke Panel Admin
+                <Shield className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>Kembali ke Panel Admin</span>
               </button>
 
               {onLockAdmin && (
@@ -694,7 +721,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   className="inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-bold bg-emerald-950/40 hover:bg-rose-900/40 text-white rounded-xl border border-white/20 transition-all cursor-pointer"
                   title="Kunci Akses Admin dan Kembali ke Mode Karyawan Biasa"
                 >
-                  <Lock className="w-3.5 h-3.5 text-amber-300" />
+                  <Lock className="w-3.5 h-3.5 text-amber-300 shrink-0" />
                   <span className="hidden sm:inline">Kunci</span>
                 </button>
               )}
@@ -706,12 +733,12 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       {/* Unread Performance / Payroll Notification Alert Banner */}
       {unreadKpiNotifs.length > 0 && (
         <div className="bg-gradient-to-r from-violet-600 to-indigo-700 rounded-2xl p-4 text-white shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in-50">
-          <div className="flex items-start sm:items-center gap-3">
+          <div className="flex items-start sm:items-center gap-3 min-w-0">
             <div className="p-2 bg-white/20 rounded-xl shrink-0 backdrop-blur-xs">
               <Bell className="w-5 h-5 text-white animate-bounce" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-[10px] font-bold uppercase tracking-wider bg-white/25 px-2 py-0.5 rounded-full text-violet-100">
                   Notifikasi Kinerja ({unreadKpiNotifs.length})
                 </span>
@@ -746,30 +773,51 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
         </div>
       )}
 
-      {/* Navigation Sub-Tabs */}
-      <div className="bg-white rounded-2xl p-2 border border-slate-200 shadow-xs flex items-center gap-1 overflow-x-auto">
+      {/* PWA Install Banner for Mobile & Desktop Employees */}
+      <PWAInstallBanner />
+
+      {/* Mobile Active Section Header Bar (<768px) — Replaces Horizontal Scroll Tabs on Phones */}
+      <div className="md:hidden bg-white rounded-2xl px-3.5 py-2.5 border border-slate-200 shadow-2xs flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+          <span className="text-xs font-bold text-slate-800 truncate">
+            {portalTabLabels[activePortalTab]}
+          </span>
+        </div>
         <button
-          onClick={() => setActivePortalTab('payroll')}
-          className={`flex items-center gap-2 px-4 py-2.5 text-xs sm:text-sm font-semibold rounded-xl whitespace-nowrap transition-all cursor-pointer ${
-            activePortalTab === 'payroll'
+          type="button"
+          onClick={() => setIsMobileMenuSheetOpen(true)}
+          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold cursor-pointer shrink-0"
+        >
+          <LayoutGrid className="w-3.5 h-3.5 text-emerald-600" />
+          <span>Semua Menu</span>
+        </button>
+      </div>
+
+      {/* Desktop Navigation Sub-Tabs (≥768px) */}
+      <div className="hidden md:flex bg-white rounded-2xl p-2 border border-slate-200 shadow-xs items-center gap-1 overflow-x-auto">
+        <button
+          onClick={() => setActivePortalTab('home')}
+          className={`flex items-center gap-2 px-3.5 py-2.5 text-xs sm:text-sm font-semibold rounded-xl whitespace-nowrap transition-all cursor-pointer ${
+            activePortalTab === 'home'
               ? 'bg-emerald-600 text-white shadow-xs'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
           }`}
         >
-          <WalletCards className="w-4 h-4" />
-          Gaji & Slip Gaji Pribadi
+          <Home className="w-4 h-4" />
+          Beranda
         </button>
 
         <button
           onClick={() => setActivePortalTab('attendance')}
-          className={`flex items-center gap-2 px-4 py-2.5 text-xs sm:text-sm font-semibold rounded-xl whitespace-nowrap transition-all cursor-pointer ${
+          className={`flex items-center gap-2 px-3.5 py-2.5 text-xs sm:text-sm font-semibold rounded-xl whitespace-nowrap transition-all cursor-pointer ${
             activePortalTab === 'attendance'
               ? 'bg-emerald-600 text-white shadow-xs'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
           }`}
         >
-          <CalendarCheck2 className="w-4 h-4" />
-          Presensi & Absensi Mandiri
+          <Camera className="w-4 h-4" />
+          Kamera Absen & GPS
           {todayAttendance ? (
             <span className="w-2 h-2 rounded-full bg-emerald-300 ring-1 ring-white" title="Sudah Absen Hari Ini" />
           ) : (
@@ -778,15 +826,27 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
         </button>
 
         <button
+          onClick={() => setActivePortalTab('payroll')}
+          className={`flex items-center gap-2 px-3.5 py-2.5 text-xs sm:text-sm font-semibold rounded-xl whitespace-nowrap transition-all cursor-pointer ${
+            activePortalTab === 'payroll'
+              ? 'bg-emerald-600 text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+        >
+          <WalletCards className="w-4 h-4" />
+          Slip Gaji Pribadi
+        </button>
+
+        <button
           onClick={() => setActivePortalTab('leave')}
-          className={`flex items-center gap-2 px-4 py-2.5 text-xs sm:text-sm font-semibold rounded-xl whitespace-nowrap transition-all cursor-pointer ${
+          className={`flex items-center gap-2 px-3.5 py-2.5 text-xs sm:text-sm font-semibold rounded-xl whitespace-nowrap transition-all cursor-pointer ${
             activePortalTab === 'leave'
               ? 'bg-emerald-600 text-white shadow-xs'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
           }`}
         >
           <CalendarDays className="w-4 h-4" />
-          Pengajuan Cuti & Izin
+          Cuti & Izin
           {myLeaveRequests.filter((l) => l.status === 'Menunggu Persetujuan').length > 0 && (
             <span className="w-2 h-2 rounded-full bg-amber-400" />
           )}
@@ -794,26 +854,26 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
 
         <button
           onClick={() => setActivePortalTab('claims')}
-          className={`flex items-center gap-2 px-4 py-2.5 text-xs sm:text-sm font-semibold rounded-xl whitespace-nowrap transition-all cursor-pointer ${
+          className={`flex items-center gap-2 px-3.5 py-2.5 text-xs sm:text-sm font-semibold rounded-xl whitespace-nowrap transition-all cursor-pointer ${
             activePortalTab === 'claims'
               ? 'bg-emerald-600 text-white shadow-xs'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
           }`}
         >
           <Clock className="w-4 h-4" />
-          Klaim Lembur & Reimbursement
+          Lembur & Klaim
         </button>
 
         <button
           onClick={() => setActivePortalTab('cash_advance')}
-          className={`flex items-center gap-2 px-4 py-2.5 text-xs sm:text-sm font-semibold rounded-xl whitespace-nowrap transition-all cursor-pointer ${
+          className={`flex items-center gap-2 px-3.5 py-2.5 text-xs sm:text-sm font-semibold rounded-xl whitespace-nowrap transition-all cursor-pointer ${
             activePortalTab === 'cash_advance'
               ? 'bg-emerald-600 text-white shadow-xs'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
           }`}
         >
           <HandCoins className="w-4 h-4" />
-          <span>Pengajuan Kasbon & Cicilan ({myCashAdvances.length})</span>
+          <span>Kasbon ({myCashAdvances.length})</span>
           {myCashAdvances.some((c) => c.status === 'pending' || c.status === 'approved') && (
             <span className="w-2 h-2 rounded-full bg-amber-400" />
           )}
@@ -821,26 +881,26 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
 
         <button
           onClick={() => setActivePortalTab('assets')}
-          className={`flex items-center gap-2 px-4 py-2.5 text-xs sm:text-sm font-semibold rounded-xl whitespace-nowrap transition-all cursor-pointer ${
+          className={`flex items-center gap-2 px-3.5 py-2.5 text-xs sm:text-sm font-semibold rounded-xl whitespace-nowrap transition-all cursor-pointer ${
             activePortalTab === 'assets'
               ? 'bg-emerald-600 text-white shadow-xs'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
           }`}
         >
           <Boxes className="w-4 h-4" />
-          Aset Kantor Saya ({myAssets.length})
+          Aset ({myAssets.length})
         </button>
 
         <button
           onClick={() => setActivePortalTab('performance')}
-          className={`flex items-center gap-2 px-4 py-2.5 text-xs sm:text-sm font-semibold rounded-xl whitespace-nowrap transition-all cursor-pointer ${
+          className={`flex items-center gap-2 px-3.5 py-2.5 text-xs sm:text-sm font-semibold rounded-xl whitespace-nowrap transition-all cursor-pointer ${
             activePortalTab === 'performance'
               ? 'bg-emerald-600 text-white shadow-xs'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
           }`}
         >
           <Award className="w-4 h-4" />
-          <span>Rapor Kinerja & KPI ({myReviews.length})</span>
+          <span>Rapor KPI ({myReviews.length})</span>
           {unreadKpiNotifs.some(n => n.category === 'PERFORMANCE_REVIEW') && (
             <span className="w-2.5 h-2.5 rounded-full bg-amber-300 ring-2 ring-white animate-pulse" />
           )}
@@ -848,16 +908,260 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
 
         <button
           onClick={() => setActivePortalTab('profile')}
-          className={`flex items-center gap-2 px-4 py-2.5 text-xs sm:text-sm font-semibold rounded-xl whitespace-nowrap transition-all cursor-pointer ${
+          className={`flex items-center gap-2 px-3.5 py-2.5 text-xs sm:text-sm font-semibold rounded-xl whitespace-nowrap transition-all cursor-pointer ${
             activePortalTab === 'profile'
               ? 'bg-emerald-600 text-white shadow-xs'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
           }`}
         >
           <User className="w-4 h-4" />
-          Profil & Rekening Bank
+          Profil & Bank
         </button>
       </div>
+
+      {/* TAB 0: BERANDA RINGKASAN KARYAWAN (HOME) */}
+      {activePortalTab === 'home' && (
+        <div className="space-y-5">
+          {/* Card 1: Quick Live Face & GPS Attendance Action Card */}
+          <div className="bg-slate-900 rounded-2xl p-4 sm:p-5 text-white border border-slate-800 shadow-md">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="space-y-1.5">
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-[11px] font-bold">
+                  <MapPin className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Geofence Radius ≤ 25m Kantor & Anti-Fake GPS</span>
+                </div>
+                <h3 className="text-base sm:text-lg font-extrabold text-white">
+                  {todayAttendance?.checkIn
+                    ? `Presensi Hari Ini Tercatat (${todayAttendance.checkIn}${
+                        todayAttendance.checkOut ? ` – ${todayAttendance.checkOut}` : ''
+                      } WIB)`
+                    : 'Anda Belum Absen Masuk Hari Ini'}
+                </h3>
+                <p className="text-xs text-slate-300">
+                  Jadwal Shift: <strong className="text-emerald-400">{myShift.name}</strong> (
+                  <span className="font-mono tabular-nums">
+                    {myShift.checkInTime} – {myShift.checkOutTime} WIB
+                  </span>
+                  ) • Toleransi {myShift.gracePeriodMinutes} menit
+                </p>
+              </div>
+
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setActivePortalTab('attendance')}
+                  className="min-h-[46px] px-4 py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white text-xs sm:text-sm font-extrabold flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/25 cursor-pointer transition-all"
+                >
+                  <Camera className="w-4 h-4 shrink-0" />
+                  <span>
+                    {todayAttendance?.checkIn
+                      ? todayAttendance?.checkOut
+                        ? 'Lihat Bukti Absen & Kamera'
+                        : 'Buka Kamera & Absen Pulang'
+                      : 'Buka Kamera & Absen Masuk'}
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* 3-Card Summary Row: Slip Gaji, Sisa Cuti, & Klaim Lembur Per Menit */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Take Home Pay Summary */}
+            <div className="bg-gradient-to-br from-emerald-600 to-teal-700 rounded-2xl p-4 sm:p-5 text-white shadow-sm flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-100">
+                    Take Home Pay (Gaji Bersih)
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-white/20">
+                    {companyConfig.currentPayrollPeriod}
+                  </span>
+                </div>
+                <div className="text-2xl font-extrabold mt-2 tabular-nums tracking-tight">
+                  {formatCurrency(takeHomePay)}
+                </div>
+                <p className="text-[11px] text-emerald-100 mt-1">
+                  Rekening: {currentEmployee.bankName} ({currentEmployee.bankAccountNumber})
+                </p>
+              </div>
+              <div className="mt-4 pt-3 border-t border-white/20 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActivePortalTab('payroll')}
+                  className="flex-1 min-h-[38px] py-2 px-3 rounded-xl bg-white text-emerald-900 text-xs font-bold hover:bg-emerald-50 transition-colors cursor-pointer text-center"
+                >
+                  Rincian Gaji
+                </button>
+                {currentPay && (
+                  <button
+                    type="button"
+                    onClick={() => onOpenPayslip(currentPay)}
+                    className="min-h-[38px] py-2 px-3 rounded-xl bg-emerald-900/50 hover:bg-emerald-900/70 text-white border border-white/25 text-xs font-bold transition-colors cursor-pointer flex items-center gap-1"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>PDF</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Leave Balance Summary */}
+            <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-xs flex flex-col justify-between">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                    Sisa Cuti Tahunan
+                  </span>
+                  <div className="text-2xl font-extrabold text-slate-900 mt-1 tabular-nums">
+                    {currentEmployee.remainingLeaveDays}{' '}
+                    <span className="text-xs font-normal text-slate-500">Hari Tersisa</span>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-1">
+                    {myLeaveRequests.filter((l) => l.status === 'Menunggu Persetujuan').length} pengajuan menunggu HR
+                  </p>
+                </div>
+                <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl shrink-0">
+                  <CalendarDays className="w-5 h-5" />
+                </div>
+              </div>
+              <div className="mt-4 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setActivePortalTab('leave')}
+                  className="w-full min-h-[38px] py-2 px-3 rounded-xl bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 text-slate-700 text-xs font-bold transition-colors cursor-pointer"
+                >
+                  Ajukan Cuti / Izin Baru →
+                </button>
+              </div>
+            </div>
+
+            {/* Overtime Per Minute & Claims Summary */}
+            <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-xs flex flex-col justify-between">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                    Lembur Per Menit & Klaim
+                  </span>
+                  <div className="text-xl font-extrabold text-indigo-700 mt-1 tabular-nums">
+                    {formatRupiah(myOvertimeRatePerMinute)}{' '}
+                    <span className="text-xs font-normal text-slate-500">/ menit</span>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Total Lembur Disetujui:{' '}
+                    <strong className="text-emerald-700">
+                      {formatRupiah(
+                        myOvertimeRequests
+                          .filter((o) => o.status === 'Disetujui')
+                          .reduce((acc, o) => acc + o.calculatedPay, 0)
+                      )}
+                    </strong>
+                  </p>
+                </div>
+                <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl shrink-0">
+                  <Clock className="w-5 h-5" />
+                </div>
+              </div>
+              <div className="mt-4 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setActivePortalTab('claims')}
+                  className="w-full min-h-[38px] py-2 px-3 rounded-xl bg-slate-100 hover:bg-indigo-50 hover:text-indigo-700 text-slate-700 text-xs font-bold transition-colors cursor-pointer"
+                >
+                  Ajukan Klaim Lembur / Biaya →
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Native-App Quick Menu Grid (Great for Mobile Thumb Access) */}
+          <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-xs">
+            <h3 className="text-xs sm:text-sm font-bold text-slate-900 mb-3">
+              Menu Layanan Mandiri Karyawan
+            </h3>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 sm:gap-3">
+              {[
+                {
+                  id: 'attendance' as const,
+                  label: 'Kamera Absen',
+                  sub: 'Wajah & GPS ≤25m',
+                  icon: Camera,
+                  color: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+                },
+                {
+                  id: 'payroll' as const,
+                  label: 'Slip Gaji PDF',
+                  sub: companyConfig.currentPayrollPeriod,
+                  icon: WalletCards,
+                  color: 'bg-teal-50 text-teal-700 border-teal-200',
+                },
+                {
+                  id: 'leave' as const,
+                  label: 'Cuti & Izin',
+                  sub: `Sisa ${currentEmployee.remainingLeaveDays} Hari`,
+                  icon: CalendarDays,
+                  color: 'bg-blue-50 text-blue-700 border-blue-200',
+                },
+                {
+                  id: 'claims' as const,
+                  label: 'Lembur & Klaim',
+                  sub: `${formatRupiah(myOvertimeRatePerMinute)}/mnt`,
+                  icon: Clock,
+                  color: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+                },
+                {
+                  id: 'cash_advance' as const,
+                  label: 'Kasbon Gaji',
+                  sub: `${myCashAdvances.length} Pinjaman`,
+                  icon: HandCoins,
+                  color: 'bg-amber-50 text-amber-700 border-amber-200',
+                },
+                {
+                  id: 'assets' as const,
+                  label: 'Aset Kantor',
+                  sub: `${myAssets.length} Inventaris`,
+                  icon: Boxes,
+                  color: 'bg-cyan-50 text-cyan-700 border-cyan-200',
+                },
+                {
+                  id: 'performance' as const,
+                  label: 'Rapor KPI',
+                  sub: `${myReviews.length} Evaluasi`,
+                  icon: Award,
+                  color: 'bg-violet-50 text-violet-700 border-violet-200',
+                },
+                {
+                  id: 'profile' as const,
+                  label: 'Profil & Bank',
+                  sub: currentEmployee.bankName,
+                  icon: User,
+                  color: 'bg-slate-100 text-slate-700 border-slate-200',
+                },
+              ].map((item) => {
+                const IconComp = item.icon;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => setActivePortalTab(item.id)}
+                    className="min-h-[68px] p-3 rounded-xl border border-slate-200 hover:border-emerald-400 hover:bg-emerald-50/30 transition-all flex items-center gap-3 text-left cursor-pointer group"
+                  >
+                    <div className={`p-2.5 rounded-xl border shrink-0 ${item.color}`}>
+                      <IconComp className="w-4 h-4 sm:w-5 sm:h-5" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-xs font-bold text-slate-900 group-hover:text-emerald-800 truncate">
+                        {item.label}
+                      </div>
+                      <div className="text-[10px] text-slate-500 truncate mt-0.5">{item.sub}</div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* TAB 1: GAJI & SLIP GAJI */}
       {activePortalTab === 'payroll' && (
@@ -1169,74 +1473,88 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
               </div>
             </div>
 
-            {/* Option to toggle Real-Time Clock vs Custom Shift Time Simulation */}
+            {/* Real-Time Clock Enforcement & Admin-Locked Simulation Box */}
             <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <label className="flex items-center gap-2 text-xs font-bold text-slate-800 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={useCustomClockTime}
-                    onChange={(e) => setUseCustomClockTime(e.target.checked)}
-                    className="rounded text-emerald-600 focus:ring-emerald-500"
-                  />
-                  <span>Gunakan Input Jam Absen Manual / Simulasi Mengikuti Shift</span>
-                </label>
-
-                <span className="text-[11px] text-slate-500">
-                  {useCustomClockTime
-                    ? 'Mode input jam aktif: Anda dapat menguji jam masuk & pulang terhadap shift'
-                    : 'Mode jam real-time perangkat aktif'}
-                </span>
-              </div>
-
-              {useCustomClockTime && (
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-slate-200/80 items-end">
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                      Jam Absen Masuk (Check-In)
+              {isAdminUnlocked ? (
+                <>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <label className="flex items-center gap-2 text-xs font-bold text-slate-800 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={useCustomClockTime}
+                        onChange={(e) => setUseCustomClockTime(e.target.checked)}
+                        className="rounded text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <span>[Khusus Admin] Gunakan Simulasi Jam Absen Manual Mengikuti Shift</span>
                     </label>
-                    <input
-                      type="time"
-                      value={customClockInTime}
-                      onChange={(e) => setCustomClockInTime(e.target.value)}
-                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl font-mono text-xs font-bold text-slate-900"
-                    />
+
+                    <span className="text-[11px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-md">
+                      {isAdminSimulationActive
+                        ? 'Mode Uji Admin Aktif: Simulasi jam masuk & pulang'
+                        : 'Mode Jam Real-Time Perangkat Aktif'}
+                    </span>
                   </div>
-                  <div>
-                    <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                      Jam Absen Pulang (Check-Out)
-                    </label>
-                    <input
-                      type="time"
-                      value={customClockOutTime}
-                      onChange={(e) => setCustomClockOutTime(e.target.value)}
-                      className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl font-mono text-xs font-bold text-slate-900"
-                    />
+
+                  {isAdminSimulationActive && (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-slate-200/80 items-end">
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                          Simulasi Jam Masuk (Check-In)
+                        </label>
+                        <input
+                          type="time"
+                          value={customClockInTime}
+                          onChange={(e) => setCustomClockInTime(e.target.value)}
+                          className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl font-mono text-xs font-bold text-slate-900"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                          Simulasi Jam Pulang (Check-Out)
+                        </label>
+                        <input
+                          type="time"
+                          value={customClockOutTime}
+                          onChange={(e) => setCustomClockOutTime(e.target.value)}
+                          className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl font-mono text-xs font-bold text-slate-900"
+                        />
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCustomClockInTime(myShift.checkInTime);
+                            setCustomClockOutTime(myShift.checkOutTime);
+                          }}
+                          className="px-2.5 py-2 bg-white hover:bg-emerald-50 text-emerald-700 border border-slate-200 rounded-lg text-[11px] font-semibold cursor-pointer"
+                        >
+                          Sesuai Shift ({myShift.checkInTime} - {myShift.checkOutTime})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const [h, m] = myShift.checkInTime.split(':').map(Number);
+                            const lateTotal = ((h || 9) * 60 + (m || 0) + (myShift.gracePeriodMinutes || 5) + 15) % (24 * 60);
+                            const lateStr = `${String(Math.floor(lateTotal / 60)).padStart(2, '0')}:${String(lateTotal % 60).padStart(2, '0')}`;
+                            setCustomClockInTime(lateStr);
+                          }}
+                          className="px-2.5 py-2 bg-white hover:bg-amber-50 text-amber-700 border border-slate-200 rounded-lg text-[11px] font-semibold cursor-pointer"
+                        >
+                          Tes Terlambat
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
+                    <Lock className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    <span>Jam Absen Real-Time Terkunci Otomatis (Anti-Manipulasi Jam Masuk/Pulang)</span>
                   </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setCustomClockInTime(myShift.checkInTime);
-                        setCustomClockOutTime(myShift.checkOutTime);
-                      }}
-                      className="px-2.5 py-2 bg-white hover:bg-emerald-50 text-emerald-700 border border-slate-200 rounded-lg text-[11px] font-semibold cursor-pointer"
-                    >
-                      Sesuai Shift ({myShift.checkInTime} - {myShift.checkOutTime})
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const [h, m] = myShift.checkInTime.split(':').map(Number);
-                        const lateTotal = ((h || 9) * 60 + (m || 0) + (myShift.gracePeriodMinutes || 5) + 15) % (24 * 60);
-                        const lateStr = `${String(Math.floor(lateTotal / 60)).padStart(2, '0')}:${String(lateTotal % 60).padStart(2, '0')}`;
-                        setCustomClockInTime(lateStr);
-                      }}
-                      className="px-2.5 py-2 bg-white hover:bg-amber-50 text-amber-700 border border-slate-200 rounded-lg text-[11px] font-semibold cursor-pointer"
-                    >
-                      Tes Terlambat
-                    </button>
-                  </div>
+                  <span className="text-[11px] text-slate-500">
+                    Waktu absen dikunci mengikuti jam server & perangkat real-time
+                  </span>
                 </div>
               )}
 
@@ -1267,7 +1585,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 activeShift={myShift}
                 todayAttendance={todayAttendance}
                 todayDateStr={todayDateStr}
-                useCustomClockTime={useCustomClockTime}
+                useCustomClockTime={isAdminSimulationActive}
                 customClockInTime={customClockInTime}
                 customClockOutTime={customClockOutTime}
                 clockInNotes={clockInNotes}
@@ -1294,9 +1612,9 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
               />
             </div>
 
-          {/* Personal Attendance History Table */}
+          {/* Personal Attendance History Table (Mobile Cards + Desktop Table) */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-            <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+            <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-bold text-slate-900">
                   Riwayat Presensi, Foto Wajah & Titik Lokasi GPS Saya
@@ -1312,114 +1630,223 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 Belum ada riwayat presensi untuk akun Anda. Silakan klik tombol <strong>Jepret Foto Wajah & Absen Masuk</strong> pada kamera di atas.
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead>
-                    <tr className="bg-slate-50 text-slate-500 border-b border-slate-200 uppercase text-[10px] font-bold">
-                      <th className="py-3 px-4">Tanggal & Jam Real-Time</th>
-                      <th className="py-3 px-4">Bukti Foto Wajah</th>
-                      <th className="py-3 px-4">Jadwal Shift</th>
-                      <th className="py-3 px-4">Jam Masuk / Pulang</th>
-                      <th className="py-3 px-4">Status Evaluasi Shift</th>
-                      <th className="py-3 px-4">Detail Lokasi GPS HP</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {myAttendances.map((att) => {
-                      const schedIn = att.scheduledCheckIn || myShift.checkInTime;
-                      const schedOut = att.scheduledCheckOut || myShift.checkOutTime;
-                      const shiftLabel = att.shiftName || myShift.name;
-                      const photoToShow = att.facePhotoSnapshot || att.checkOutPhotoSnapshot;
-                      return (
-                        <tr key={att.id} className="hover:bg-slate-50/80">
-                          <td className="py-3 px-4 whitespace-nowrap">
-                            <span className="font-semibold text-slate-800 block">
+              <>
+                {/* Mobile Card View (<768px) — Zero Horizontal Scroll */}
+                <div className="md:hidden divide-y divide-slate-100">
+                  {myAttendances.map((att) => {
+                    const schedIn = att.scheduledCheckIn || myShift.checkInTime;
+                    const schedOut = att.scheduledCheckOut || myShift.checkOutTime;
+                    const shiftLabel = att.shiftName || myShift.name;
+                    const photoToShow = att.facePhotoSnapshot || att.checkOutPhotoSnapshot;
+                    return (
+                      <div key={att.id} className="p-4 space-y-3 hover:bg-slate-50/70">
+                        {/* Top Row: Date + Status Badge */}
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <span className="text-xs font-bold text-slate-900 block">
                               {formatIndoDate(att.date)}
                             </span>
                             {att.checkInFullTimestamp && (
-                              <span className="text-[10px] font-mono text-emerald-700 block mt-0.5">
+                              <span className="text-[10px] font-mono text-emerald-700 block mt-0.5 tabular-nums">
                                 {att.checkInFullTimestamp}
                               </span>
                             )}
-                          </td>
-                          <td className="py-3 px-4">
-                            {photoToShow ? (
+                          </div>
+                          <span
+                            className={`px-2 py-0.5 rounded-md text-[10px] font-bold shrink-0 ${
+                              att.status === 'Hadir Tepat Waktu'
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                : att.status === 'Terlambat'
+                                ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                : 'bg-blue-50 text-blue-700 border border-blue-200'
+                            }`}
+                          >
+                            {att.status}
+                            {att.lateMinutes > 0 ? ` (${att.lateMinutes} mnt)` : ''}
+                          </span>
+                        </div>
+
+                        {/* Middle Row: Photo Thumbnail + CheckIn/Out Times */}
+                        <div className="flex items-center gap-3 bg-slate-50 p-2.5 rounded-xl border border-slate-200/70">
+                          {photoToShow ? (
+                            <button
+                              type="button"
+                              onClick={() => setPreviewAttendanceRecord(att)}
+                              className="relative shrink-0 cursor-pointer group"
+                            >
+                              <img
+                                src={photoToShow}
+                                alt="Foto Absen"
+                                className="w-14 h-14 rounded-xl object-cover border border-emerald-300 shadow-2xs"
+                              />
+                              <span className="absolute bottom-0.5 right-0.5 bg-emerald-600 text-white text-[9px] font-bold px-1 rounded">
+                                Foto
+                              </span>
+                            </button>
+                          ) : (
+                            <div className="w-14 h-14 rounded-xl bg-slate-200/70 flex items-center justify-center text-[10px] text-slate-400 shrink-0">
+                              No Foto
+                            </div>
+                          )}
+
+                          <div className="min-w-0 flex-1 space-y-1 text-xs">
+                            <div className="font-semibold text-slate-800 truncate">
+                              {shiftLabel}{' '}
+                              <span className="text-[10px] font-mono text-slate-500">
+                                ({schedIn}–{schedOut})
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[11px] tabular-nums">
+                              <span className="text-emerald-700 font-bold">
+                                Masuk: {att.checkIn || '-'}
+                              </span>
+                              <span className="text-indigo-700 font-bold">
+                                Pulang: {att.checkOut || '-'} ({att.workHours}j)
+                              </span>
+                            </div>
+                            {photoToShow && (
                               <button
                                 type="button"
                                 onClick={() => setPreviewAttendanceRecord(att)}
-                                className="flex items-center gap-2 group cursor-pointer text-left"
+                                className="text-[11px] font-bold text-emerald-700 underline cursor-pointer"
                               >
-                                <img
-                                  src={photoToShow}
-                                  alt="Foto Absen"
-                                  className="w-12 h-10 rounded-lg object-cover border border-emerald-300 shadow-2xs group-hover:ring-2 group-hover:ring-emerald-500 transition-all"
-                                />
-                                <div>
-                                  <span className="text-[11px] font-bold text-emerald-700 group-hover:underline block">
-                                    Lihat Foto & GPS
-                                  </span>
-                                  <span className="text-[10px] text-slate-400 block">
-                                    Watermark Real-Time
-                                  </span>
-                                </div>
+                                Lihat Bukti Foto & Watermark GPS →
                               </button>
-                            ) : (
-                              <span className="text-[11px] text-slate-400 italic">
-                                Tanpa Foto
-                              </span>
                             )}
-                          </td>
-                          <td className="py-3 px-4">
-                            <span className="font-semibold text-slate-800 block">{shiftLabel}</span>
-                            <span className="text-[10px] font-mono text-slate-500">
-                              Jadwal: {schedIn} - {schedOut} WIB
-                            </span>
-                          </td>
-                          <td className="py-3 px-4 font-mono">
-                            <span className="text-emerald-700 font-bold">
-                              Masuk: {att.checkIn || '-'}
-                            </span>
-                            <span className="block text-indigo-700 font-bold text-[11px]">
-                              Pulang: {att.checkOut || '-'} ({att.workHours}j)
-                            </span>
-                          </td>
-                          <td className="py-3 px-4">
-                            <span
-                              className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
-                                att.status === 'Hadir Tepat Waktu'
-                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                  : att.status === 'Terlambat'
-                                  ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                                  : 'bg-blue-50 text-blue-700 border border-blue-200'
-                              }`}
-                            >
-                              {att.status}
-                              {att.lateMinutes > 0 ? ` (${att.lateMinutes} mnt)` : ''}
-                            </span>
-                            {(att.earlyLeaveMinutes || 0) > 0 && (
-                              <span className="block text-[10px] text-rose-600 font-medium mt-0.5">
-                                Pulang cepat {att.earlyLeaveMinutes} mnt
-                              </span>
-                            )}
-                          </td>
-                          <td className="py-3 px-4 max-w-xs">
-                            <div className="text-[11px] font-medium text-slate-800 line-clamp-2">
+                          </div>
+                        </div>
+
+                        {/* Bottom Row: GPS Location & Distance */}
+                        <div className="text-[11px] text-slate-600 space-y-0.5">
+                          <div className="flex items-start gap-1.5">
+                            <MapPin className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                            <span className="font-medium text-slate-800 break-words">
                               {att.locationAddress || att.notes || '-'}
+                            </span>
+                          </div>
+                          {att.locationCoords && (
+                            <div className="pl-5 text-[10px] font-mono text-slate-500 tabular-nums break-all">
+                              GPS: {att.locationCoords.latitude.toFixed(6)},{' '}
+                              {att.locationCoords.longitude.toFixed(6)}
+                              {att.distanceMeters !== undefined ? ` (${att.distanceMeters}m ≤ 25m)` : ''}
                             </div>
-                            {att.locationCoords && (
-                              <div className="text-[10px] font-mono text-slate-500 mt-0.5">
-                                GPS: {att.locationCoords.latitude.toFixed(6)},{' '}
-                                {att.locationCoords.longitude.toFixed(6)} (±
-                                {att.locationCoords.accuracy}m)
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Desktop Table View (≥768px) */}
+                <div className="hidden md:block overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-slate-50 text-slate-500 border-b border-slate-200 uppercase text-[10px] font-bold">
+                        <th className="py-3 px-4">Tanggal & Jam Real-Time</th>
+                        <th className="py-3 px-4">Bukti Foto Wajah</th>
+                        <th className="py-3 px-4">Jadwal Shift</th>
+                        <th className="py-3 px-4">Jam Masuk / Pulang</th>
+                        <th className="py-3 px-4">Status Evaluasi Shift</th>
+                        <th className="py-3 px-4">Detail Lokasi GPS HP</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {myAttendances.map((att) => {
+                        const schedIn = att.scheduledCheckIn || myShift.checkInTime;
+                        const schedOut = att.scheduledCheckOut || myShift.checkOutTime;
+                        const shiftLabel = att.shiftName || myShift.name;
+                        const photoToShow = att.facePhotoSnapshot || att.checkOutPhotoSnapshot;
+                        return (
+                          <tr key={att.id} className="hover:bg-slate-50/80">
+                            <td className="py-3 px-4 whitespace-nowrap">
+                              <span className="font-semibold text-slate-800 block">
+                                {formatIndoDate(att.date)}
+                              </span>
+                              {att.checkInFullTimestamp && (
+                                <span className="text-[10px] font-mono text-emerald-700 block mt-0.5 tabular-nums">
+                                  {att.checkInFullTimestamp}
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-3 px-4">
+                              {photoToShow ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setPreviewAttendanceRecord(att)}
+                                  className="flex items-center gap-2 group cursor-pointer text-left"
+                                >
+                                  <img
+                                    src={photoToShow}
+                                    alt="Foto Absen"
+                                    className="w-12 h-10 rounded-lg object-cover border border-emerald-300 shadow-2xs group-hover:ring-2 group-hover:ring-emerald-500 transition-all"
+                                  />
+                                  <div>
+                                    <span className="text-[11px] font-bold text-emerald-700 group-hover:underline block">
+                                      Lihat Foto & GPS
+                                    </span>
+                                    <span className="text-[10px] text-slate-400 block">
+                                      Watermark Real-Time
+                                    </span>
+                                  </div>
+                                </button>
+                              ) : (
+                                <span className="text-[11px] text-slate-400 italic">
+                                  Tanpa Foto
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-3 px-4">
+                              <span className="font-semibold text-slate-800 block">{shiftLabel}</span>
+                              <span className="text-[10px] font-mono text-slate-500 tabular-nums">
+                                Jadwal: {schedIn} - {schedOut} WIB
+                              </span>
+                            </td>
+                            <td className="py-3 px-4 font-mono tabular-nums">
+                              <span className="text-emerald-700 font-bold">
+                                Masuk: {att.checkIn || '-'}
+                              </span>
+                              <span className="block text-indigo-700 font-bold text-[11px]">
+                                Pulang: {att.checkOut || '-'} ({att.workHours}j)
+                              </span>
+                            </td>
+                            <td className="py-3 px-4">
+                              <span
+                                className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                                  att.status === 'Hadir Tepat Waktu'
+                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                    : att.status === 'Terlambat'
+                                    ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                    : 'bg-blue-50 text-blue-700 border border-blue-200'
+                                }`}
+                              >
+                                {att.status}
+                                {att.lateMinutes > 0 ? ` (${att.lateMinutes} mnt)` : ''}
+                              </span>
+                              {(att.earlyLeaveMinutes || 0) > 0 && (
+                                <span className="block text-[10px] text-rose-600 font-medium mt-0.5">
+                                  Pulang cepat {att.earlyLeaveMinutes} mnt
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-3 px-4 max-w-xs">
+                              <div className="text-[11px] font-medium text-slate-800 line-clamp-2">
+                                {att.locationAddress || att.notes || '-'}
                               </div>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+                              {att.locationCoords && (
+                                <div className="text-[10px] font-mono text-slate-500 mt-0.5 tabular-nums">
+                                  GPS: {att.locationCoords.latitude.toFixed(6)},{' '}
+                                  {att.locationCoords.longitude.toFixed(6)}
+                                  {att.distanceMeters !== undefined ? ` (${att.distanceMeters}m ≤ 25m)` : ''}
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             )}
           </div>
 
@@ -1486,8 +1913,10 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                         <span className="text-slate-500">Titik Koordinat GPS HP:</span>
                         <span className="font-mono font-bold text-emerald-700">
                           Lat {previewAttendanceRecord.locationCoords.latitude.toFixed(6)}°, Long{' '}
-                          {previewAttendanceRecord.locationCoords.longitude.toFixed(6)}° (Akurasi ±
-                          {previewAttendanceRecord.locationCoords.accuracy}m)
+                          {previewAttendanceRecord.locationCoords.longitude.toFixed(6)}°
+                          {previewAttendanceRecord.distanceMeters !== undefined
+                            ? ` (Jarak: ${previewAttendanceRecord.distanceMeters}m / Maks 25m)`
+                            : ''}
                         </span>
                       </div>
                     )}
@@ -1516,7 +1945,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
               </div>
               <div>
                 <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Sisa Cuti Tahunan</p>
-                <h3 className="text-2xl font-bold text-slate-900 mt-0.5">
+                <h3 className="text-2xl font-bold text-slate-900 mt-0.5 tabular-nums">
                   {currentEmployee.remainingLeaveDays} <span className="text-sm font-normal text-slate-400">Hari</span>
                 </h3>
                 <p className="text-xs text-emerald-600 mt-0.5">Dari hak 12 hari/tahun</p>
@@ -1529,7 +1958,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
               </div>
               <div>
                 <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Cuti Terpakai</p>
-                <h3 className="text-2xl font-bold text-slate-900 mt-0.5">
+                <h3 className="text-2xl font-bold text-slate-900 mt-0.5 tabular-nums">
                   {Math.max(0, 12 - currentEmployee.remainingLeaveDays)}{' '}
                   <span className="text-sm font-normal text-slate-400">Hari</span>
                 </h3>
@@ -1543,7 +1972,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
               </div>
               <div>
                 <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Menunggu Persetujuan</p>
-                <h3 className="text-2xl font-bold text-amber-700 mt-0.5">
+                <h3 className="text-2xl font-bold text-amber-700 mt-0.5 tabular-nums">
                   {myLeaveRequests.filter((l) => l.status === 'Menunggu Persetujuan').length}{' '}
                   <span className="text-sm font-normal text-slate-400">Pengajuan</span>
                 </h3>
@@ -1553,7 +1982,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
           </div>
 
           {/* Action Header */}
-          <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-xs space-y-4">
+          <div className="bg-white rounded-2xl p-4 sm:p-6 border border-slate-200 shadow-xs space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
                 <h3 className="text-base font-bold text-slate-900">Riwayat Pengajuan Cuti & Izin</h3>
@@ -1563,15 +1992,55 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
               </div>
               <button
                 onClick={() => setIsLeaveModalOpen(true)}
-                className="inline-flex items-center gap-2 px-4 py-2 text-xs sm:text-sm font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-xs transition-colors self-start sm:self-auto cursor-pointer"
+                className="min-h-[42px] inline-flex items-center justify-center gap-2 px-4 py-2 text-xs sm:text-sm font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-xs transition-colors w-full sm:w-auto cursor-pointer"
               >
                 <Plus className="w-4 h-4" />
                 Buat Pengajuan Cuti Baru
               </button>
             </div>
 
-            {/* Leave History Table */}
-            <div className="overflow-x-auto">
+            {/* Mobile Card View for Leave Requests (<768px) */}
+            <div className="md:hidden divide-y divide-slate-100 border border-slate-100 rounded-xl">
+              {myLeaveRequests.length === 0 ? (
+                <div className="p-6 text-center text-xs text-slate-400">
+                  Belum ada riwayat pengajuan cuti. Klik tombol di atas untuk mengajukan.
+                </div>
+              ) : (
+                myLeaveRequests.map((leave) => (
+                  <div key={leave.id} className="p-3.5 space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <span className="text-xs font-bold text-slate-900 block">{leave.type}</span>
+                        <span className="text-[11px] text-slate-500 block">
+                          {leave.startDate} s/d {leave.endDate} ({leave.totalDays} Hari)
+                        </span>
+                      </div>
+                      <span
+                        className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold shrink-0 ${
+                          leave.status === 'Disetujui'
+                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                            : leave.status === 'Ditolak'
+                            ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                            : 'bg-amber-100 text-amber-800 border border-amber-200'
+                        }`}
+                      >
+                        {leave.status}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-700 bg-slate-50 p-2 rounded-lg border border-slate-100">
+                      {leave.reason}
+                    </p>
+                    <div className="flex items-center justify-between text-[10px] text-slate-400">
+                      <span>Diajukan: {leave.appliedAt}</span>
+                      <span>Reviewer: {leave.approvedBy || '-'}</span>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Desktop Leave History Table (≥768px) */}
+            <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-left text-xs border-collapse">
                 <thead>
                   <tr className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
@@ -3489,6 +3958,275 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Mobile Bottom Sheet Drawer for Secondary Employee Portal Menus (<768px) */}
+      {isMobileMenuSheetOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-end justify-center md:hidden animate-in fade-in">
+          <div className="bg-white w-full rounded-t-3xl p-5 shadow-2xl border-t border-slate-200 space-y-4 max-h-[82vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div>
+                <h4 className="text-sm font-extrabold text-slate-900">
+                  Menu Lengkap Portal Karyawan
+                </h4>
+                <p className="text-[11px] text-slate-500">
+                  Pilih fitur layanan mandiri {currentEmployee.fullName} ({currentEmployee.nik})
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsMobileMenuSheetOpen(false)}
+                className="p-2 rounded-xl bg-slate-100 text-slate-500 hover:text-slate-800 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2.5">
+              {[
+                {
+                  id: 'home' as const,
+                  label: 'Beranda Utama',
+                  desc: 'Ringkasan & Pintasan',
+                  icon: Home,
+                  badge: '',
+                },
+                {
+                  id: 'attendance' as const,
+                  label: 'Kamera Absen',
+                  desc: 'Foto Wajah & GPS ≤25m',
+                  icon: Camera,
+                  badge: todayAttendance ? 'Sudah Absen' : 'Wajib Absen',
+                },
+                {
+                  id: 'payroll' as const,
+                  label: 'Slip Gaji Pribadi',
+                  desc: companyConfig.currentPayrollPeriod,
+                  icon: WalletCards,
+                  badge: 'PDF',
+                },
+                {
+                  id: 'leave' as const,
+                  label: 'Cuti & Izin',
+                  desc: `Sisa ${currentEmployee.remainingLeaveDays} Hari`,
+                  icon: CalendarDays,
+                  badge: '',
+                },
+                {
+                  id: 'claims' as const,
+                  label: 'Lembur & Klaim',
+                  desc: 'Hitungan Per Menit',
+                  icon: Clock,
+                  badge: `${myOvertimeRequests.length}`,
+                },
+                {
+                  id: 'cash_advance' as const,
+                  label: 'Kasbon & Cicilan',
+                  desc: 'Potong Gaji Otomatis',
+                  icon: HandCoins,
+                  badge: `${myCashAdvances.length}`,
+                },
+                {
+                  id: 'assets' as const,
+                  label: 'Aset Kantor Saya',
+                  desc: 'Inventaris & Laporan',
+                  icon: Boxes,
+                  badge: `${myAssets.length}`,
+                },
+                {
+                  id: 'performance' as const,
+                  label: 'Rapor Kinerja KPI',
+                  desc: 'Skor & Bonus Kinerja',
+                  icon: Award,
+                  badge: `${myReviews.length}`,
+                },
+                {
+                  id: 'profile' as const,
+                  label: 'Profil & Rekening',
+                  desc: currentEmployee.bankName,
+                  icon: User,
+                  badge: '',
+                },
+              ].map((item) => {
+                const IconComp = item.icon;
+                const isActive = activePortalTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => {
+                      setActivePortalTab(item.id);
+                      setIsMobileMenuSheetOpen(false);
+                    }}
+                    className={`min-h-[64px] p-3 rounded-2xl border text-left flex items-start gap-2.5 transition-all cursor-pointer ${
+                      isActive
+                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                        : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200'
+                    }`}
+                  >
+                    <IconComp
+                      className={`w-4 h-4 shrink-0 mt-0.5 ${
+                        isActive ? 'text-white' : 'text-emerald-600'
+                      }`}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs font-bold truncate">{item.label}</div>
+                      <div
+                        className={`text-[10px] truncate mt-0.5 ${
+                          isActive ? 'text-emerald-100' : 'text-slate-500'
+                        }`}
+                      >
+                        {item.desc}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsMobileMenuSheetOpen(false);
+                  setIsSwitchProfileModalOpen(true);
+                }}
+                className="flex-1 min-h-[42px] py-2.5 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
+              >
+                Ganti Akun Karyawan (PIN)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsMobileMenuSheetOpen(false);
+                  if (onRequestAdminAccess && !isAdminUnlocked) {
+                    onRequestAdminAccess();
+                  } else {
+                    onSwitchToAdminMode();
+                  }
+                }}
+                className="flex-1 min-h-[42px] py-2.5 px-3 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-900 border border-purple-200 text-xs font-bold cursor-pointer flex items-center justify-center gap-1.5"
+              >
+                <Lock className="w-3.5 h-3.5 text-purple-600" />
+                <span>Panel Admin</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Fixed Native-Style Mobile Bottom Navigation Bar (<768px, md:hidden) */}
+      <nav
+        aria-label="Navigasi Bawah Portal Karyawan"
+        className="fixed bottom-0 left-0 right-0 z-40 md:hidden bg-white/95 backdrop-blur-md border-t border-slate-200 shadow-[0_-6px_24px_rgba(15,23,42,0.08)] px-2 pb-1.5 pt-1"
+      >
+        <div className="grid grid-cols-5 items-center max-w-md mx-auto">
+          {/* 1. Home */}
+          <button
+            type="button"
+            onClick={() => {
+              setActivePortalTab('home');
+              setIsMobileMenuSheetOpen(false);
+            }}
+            className={`min-h-[52px] flex flex-col items-center justify-center gap-0.5 rounded-xl transition-colors cursor-pointer ${
+              activePortalTab === 'home'
+                ? 'text-emerald-600 font-extrabold'
+                : 'text-slate-500 hover:text-slate-800 font-semibold'
+            }`}
+          >
+            <Home className="w-5 h-5" />
+            <span className="text-[10px] leading-tight">Home</span>
+          </button>
+
+          {/* 2. Slip Gaji */}
+          <button
+            type="button"
+            onClick={() => {
+              setActivePortalTab('payroll');
+              setIsMobileMenuSheetOpen(false);
+            }}
+            className={`min-h-[52px] flex flex-col items-center justify-center gap-0.5 rounded-xl transition-colors cursor-pointer ${
+              activePortalTab === 'payroll'
+                ? 'text-emerald-600 font-extrabold'
+                : 'text-slate-500 hover:text-slate-800 font-semibold'
+            }`}
+          >
+            <WalletCards className="w-5 h-5" />
+            <span className="text-[10px] leading-tight">Slip Gaji</span>
+          </button>
+
+          {/* 3. Kamera Absen (Prominent Center One-Handed Thumb Action) */}
+          <button
+            type="button"
+            onClick={() => {
+              setActivePortalTab('attendance');
+              setIsMobileMenuSheetOpen(false);
+            }}
+            className="flex flex-col items-center justify-center cursor-pointer group -mt-4"
+          >
+            <div
+              className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-transform active:scale-95 relative ${
+                activePortalTab === 'attendance'
+                  ? 'bg-gradient-to-br from-emerald-500 to-teal-700 text-white ring-4 ring-emerald-100 shadow-emerald-600/35'
+                  : 'bg-gradient-to-br from-emerald-600 to-teal-600 text-white ring-4 ring-white shadow-emerald-600/25'
+              }`}
+            >
+              <Camera className="w-5 h-5" />
+              <span
+                className={`absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ring-2 ring-white ${
+                  todayAttendance ? 'bg-emerald-300' : 'bg-amber-400 animate-pulse'
+                }`}
+              />
+            </div>
+            <span
+              className={`text-[10px] mt-1 leading-tight ${
+                activePortalTab === 'attendance'
+                  ? 'text-emerald-700 font-extrabold'
+                  : 'text-slate-700 font-bold'
+              }`}
+            >
+              Kamera Absen
+            </span>
+          </button>
+
+          {/* 4. Cuti/Izin */}
+          <button
+            type="button"
+            onClick={() => {
+              setActivePortalTab('leave');
+              setIsMobileMenuSheetOpen(false);
+            }}
+            className={`min-h-[52px] flex flex-col items-center justify-center gap-0.5 rounded-xl transition-colors cursor-pointer relative ${
+              activePortalTab === 'leave'
+                ? 'text-emerald-600 font-extrabold'
+                : 'text-slate-500 hover:text-slate-800 font-semibold'
+            }`}
+          >
+            <div className="relative">
+              <CalendarDays className="w-5 h-5" />
+              {myLeaveRequests.filter((l) => l.status === 'Menunggu Persetujuan').length > 0 && (
+                <span className="absolute -top-1 -right-1.5 w-2 h-2 rounded-full bg-amber-500 ring-1 ring-white" />
+              )}
+            </div>
+            <span className="text-[10px] leading-tight">Cuti/Izin</span>
+          </button>
+
+          {/* 5. Lainnya (Opens Full Portal Menu Sheet) */}
+          <button
+            type="button"
+            onClick={() => setIsMobileMenuSheetOpen((prev) => !prev)}
+            className={`min-h-[52px] flex flex-col items-center justify-center gap-0.5 rounded-xl transition-colors cursor-pointer ${
+              isMobileMenuSheetOpen ||
+              ['claims', 'cash_advance', 'assets', 'performance', 'profile'].includes(activePortalTab)
+                ? 'text-emerald-600 font-extrabold'
+                : 'text-slate-500 hover:text-slate-800 font-semibold'
+            }`}
+          >
+            <LayoutGrid className="w-5 h-5" />
+            <span className="text-[10px] leading-tight">Lainnya</span>
+          </button>
+        </div>
+      </nav>
     </div>
   );
 };
+
