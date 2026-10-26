@@ -33,7 +33,6 @@ import {
   AppNotification,
 } from '../types';
 import { NotificationCenterModal } from './NotificationCenterModal';
-import { PWAInstallButton, OfflineIndicator } from './PWAInstallPrompt';
 
 interface HeaderProps {
   onOpenSidebar: () => void;
@@ -147,7 +146,6 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
-      <OfflineIndicator />
       {/* Main Top Navigation Row */}
       <div className="h-16 px-3 sm:px-5 lg:px-6 flex items-center justify-between gap-2 sm:gap-3">
         {/* Left: Hamburger (Admin Mobile) + Company Identity & Cut-off Period */}
@@ -330,9 +328,6 @@ export const Header: React.FC<HeaderProps> = ({
               )}
             </div>
           )}
-
-          {/* PWA Install App Button (Mobile & Desktop) */}
-          <PWAInstallButton />
 
           {/* Mode Tampilan Switcher: Hanya tampil jika sesi Admin terbuka (isAdminUnlocked). Jika karyawan login dengan NIK & PIN (!isAdminUnlocked), seluruh navigasi ke Dashboard Admin HR disembunyikan! */}
           {dashboardMode === 'employee' ? (

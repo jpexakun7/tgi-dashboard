@@ -8,16 +8,10 @@ if ('serviceWorker' in navigator) {
       .getRegistrations()
       .then((registrations) => {
         for (const reg of registrations) {
-          if (reg.active?.scriptURL.includes('dev-sw.js')) {
-            reg.unregister().catch(() => {});
-          }
+          reg.unregister().catch(() => {});
         }
       })
       .catch(() => {});
-
-    navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => {
-      // Silently ignore if service worker registration is restricted in iframe preview
-    });
   });
 }
 

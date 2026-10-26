@@ -89,7 +89,6 @@ import {
 import { getEmployeeEffectivePin } from '../services/supabaseService';
 import { validateImageFile, compressImage, compressVideoFrame } from '../utils/imageUtils';
 import { LiveFaceGpsAttendanceScanner } from './LiveFaceGpsAttendanceScanner';
-import { PWAInstallBanner } from './PWAInstallPrompt';
 
 interface EmployeePortalViewProps {
   currentEmployee: Employee;
@@ -1174,9 +1173,6 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
           </div>
         </div>
       )}
-
-      {/* PWA Install Banner for Mobile & Desktop Employees */}
-      <PWAInstallBanner />
 
       {/* Mobile Active Section Header Bar (<768px) — Replaces Horizontal Scroll Tabs on Phones */}
       <div className="md:hidden bg-white rounded-2xl px-3.5 py-2.5 border border-slate-200 shadow-2xs flex items-center justify-between gap-2">
