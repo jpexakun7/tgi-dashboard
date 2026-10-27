@@ -99,82 +99,74 @@ export const PayrollTrendChart: React.FC<PayrollTrendChartProps> = ({
     };
   }, [currentPayrolls, employees]);
 
-  // Construct 6-month historical dataset
+  // Construct 6-month dataset dynamically from real active employees & payrolls
   const rawSixMonthData: MonthlyPayrollData[] = useMemo(() => {
+    const activeEmps = employees.filter((e) => e.isActive !== false);
+    const monthsMeta = [
+      { key: '2026-05', label: 'Mei 2026', short: 'Mei', endIso: '2026-05-31' },
+      { key: '2026-06', label: 'Juni 2026', short: 'Jun', endIso: '2026-06-30' },
+      { key: '2026-07', label: 'Juli 2026', short: 'Jul', endIso: '2026-07-31' },
+      { key: '2026-08', label: 'Agustus 2026', short: 'Agu', endIso: '2026-08-31' },
+      { key: '2026-09', label: 'September 2026', short: 'Sep', endIso: '2026-09-30' },
+    ];
+
+    const historicalMonths: MonthlyPayrollData[] = monthsMeta.map((m) => {
+      const empsInMonth = activeEmps.filter((e) => !e.joinDate || e.joinDate <= m.endIso);
+      const count = empsInMonth.length;
+      if (count === 0) {
+        return {
+          monthKey: m.key,
+          monthLabel: m.label,
+          shortLabel: m.short,
+          year: 2026,
+          totalTHP: 0,
+          totalGross: 0,
+          baseSalary: 0,
+          allowanceAndOvertime: 0,
+          totalDeductions: 0,
+          employeeCount: 0,
+          avgTHP: 0,
+          notes: `Belum ada karyawan aktif sebelum periode ini`,
+        };
+      }
+      const empIdSet = new Set(empsInMonth.map((e) => e.id));
+      const matchedPays = currentPayrolls.filter((p) => empIdSet.has(p.employeeId));
+      const totalTHP = matchedPays.reduce((s, p) => s + p.takeHomePay, 0);
+      const totalGross = matchedPays.reduce((s, p) => s + p.totalGrossSalary, 0);
+      const baseSalary = matchedPays.reduce((s, p) => s + p.baseSalary, 0);
+      const allowanceAndOvertime = matchedPays.reduce(
+        (s, p) =>
+          s +
+          p.allowancePosition +
+          p.allowanceTransport +
+          p.allowanceMeal +
+          p.allowanceCommunication +
+          p.overtimePay +
+          (p.bonus || 0),
+        0
+      );
+      const totalDeductions = matchedPays.reduce((s, p) => s + p.totalDeductions, 0);
+      return {
+        monthKey: m.key,
+        monthLabel: m.label,
+        shortLabel: m.short,
+        year: 2026,
+        totalTHP,
+        totalGross,
+        baseSalary,
+        allowanceAndOvertime,
+        totalDeductions,
+        employeeCount: count,
+        avgTHP: count > 0 ? Math.round(totalTHP / count) : 0,
+        notes: `Realisasi payroll ${count} staf aktif PT Tas Grosir Import`,
+      };
+    });
+
     return [
-      {
-        monthKey: '2026-05',
-        monthLabel: 'Mei 2026',
-        shortLabel: 'Mei',
-        year: 2026,
-        totalTHP: 78500000,
-        totalGross: 85900000,
-        baseSalary: 64800000,
-        allowanceAndOvertime: 21100000,
-        totalDeductions: 7400000,
-        employeeCount: 7,
-        avgTHP: 11214285,
-        notes: 'Penyesuaian operasional awal Kuartal II',
-      },
-      {
-        monthKey: '2026-06',
-        monthLabel: 'Juni 2026',
-        shortLabel: 'Jun',
-        year: 2026,
-        totalTHP: 83200000,
-        totalGross: 91400000,
-        baseSalary: 64800000,
-        allowanceAndOvertime: 26600000,
-        totalDeductions: 8200000,
-        employeeCount: 7,
-        avgTHP: 11885714,
-        notes: 'Insentif penjualan tengah tahun & kampanye grosir',
-      },
-      {
-        monthKey: '2026-07',
-        monthLabel: 'Juli 2026',
-        shortLabel: 'Jul',
-        year: 2026,
-        totalTHP: 81400000,
-        totalGross: 89300000,
-        baseSalary: 64800000,
-        allowanceAndOvertime: 24500000,
-        totalDeductions: 7900000,
-        employeeCount: 7,
-        avgTHP: 11628571,
-        notes: 'Normalisasi jam lembur logistik & packing',
-      },
-      {
-        monthKey: '2026-08',
-        monthLabel: 'Agustus 2026',
-        shortLabel: 'Agu',
-        year: 2026,
-        totalTHP: 88900000,
-        totalGross: 97800000,
-        baseSalary: 74800000,
-        allowanceAndOvertime: 23000000,
-        totalDeductions: 8900000,
-        employeeCount: 8,
-        avgTHP: 11112500,
-        notes: 'Penerimaan staf baru (UI/UX Developer) & bonus kemerdekaan',
-      },
-      {
-        monthKey: '2026-09',
-        monthLabel: 'September 2026',
-        shortLabel: 'Sep',
-        year: 2026,
-        totalTHP: 91200000,
-        totalGross: 100500000,
-        baseSalary: 74800000,
-        allowanceAndOvertime: 25700000,
-        totalDeductions: 9300000,
-        employeeCount: 8,
-        avgTHP: 11400000,
-        notes: 'Lembur intensif bongkar kontainer tas import 15 ton',
-      },
+      ...historicalMonths,
       {
         monthKey: '2026-10',
-        monthLabel: 'Oktober 2026 (Berjalan)',
+        monthLabel: `${companyConfig?.currentPayrollPeriod || 'Oktober 2026'} (Berjalan)`,
         shortLabel: 'Okt*',
         year: 2026,
         totalTHP: currentMonthAggregates.totalTHP,
@@ -184,11 +176,11 @@ export const PayrollTrendChart: React.FC<PayrollTrendChartProps> = ({
         totalDeductions: currentMonthAggregates.totalDeductions,
         employeeCount: currentMonthAggregates.employeeCount,
         avgTHP: currentMonthAggregates.avgTHP,
-        notes: 'Periode aktif: Termasuk potongan cicilan kasbon staf & PPh 21 TER',
+        notes: `Periode aktif (${currentMonthAggregates.employeeCount} karyawan): Termasuk PPh 21 TER, BPJS & potongan presensi`,
         isCurrentMonth: true,
       },
     ];
-  }, [currentMonthAggregates]);
+  }, [currentMonthAggregates, employees, currentPayrolls, companyConfig?.currentPayrollPeriod]);
 
   // Filtered by selected timeRange
   const trendData = useMemo(() => {

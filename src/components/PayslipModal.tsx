@@ -1,7 +1,8 @@
 import React from 'react';
 import { Employee, PayrollRecord, CompanyConfig } from '../types';
 import { formatRupiah, terbilangRupiah, formatIndoDate, getOvertimeRatePerMinute } from '../utils/formatters';
-import { X, Printer, Download, CheckCircle, ShieldCheck, Building2 } from 'lucide-react';
+import { getPayslipWhatsAppUrl, getPayslipEmailUrl } from '../utils/notificationHelper';
+import { X, Printer, Download, CheckCircle, ShieldCheck, Building2, MessageCircle, Mail } from 'lucide-react';
 
 interface PayslipModalProps {
   payroll: PayrollRecord | null;
@@ -34,7 +35,7 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 print:p-0 print:bg-white print:fixed">
       <div className="relative w-full max-w-4xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh] print:max-h-none print:shadow-none print:border-none print:rounded-none">
         {/* Modal Action Bar (Hidden during print) */}
-        <div className="flex items-center justify-between px-6 py-4 bg-slate-50 border-b border-slate-200 print:hidden">
+        <div className="flex flex-wrap items-center justify-between gap-2 px-6 py-4 bg-slate-50 border-b border-slate-200 print:hidden">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center font-bold text-sm">
               TGI
@@ -44,7 +45,25 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
               <p className="text-xs text-slate-500">{payroll.referenceNumber}</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <a
+              href={getPayslipWhatsAppUrl(employee, payroll, companyConfig)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors shadow-2xs"
+              title={`Kirim Notifikasi WA Slip Gaji ke ${employee.fullName} (${employee.phone || 'No HP kosong'})`}
+            >
+              <MessageCircle className="w-3.5 h-3.5" />
+              <span>Kirim Notifikasi WA</span>
+            </a>
+            <a
+              href={getPayslipEmailUrl(employee, payroll, companyConfig)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-blue-700 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors shadow-2xs"
+              title={`Kirim Email Slip Gaji ke ${employee.fullName} (${employee.email || 'Email kosong'})`}
+            >
+              <Mail className="w-3.5 h-3.5 text-blue-600" />
+              <span>Kirim Email</span>
+            </a>
             <button
               onClick={handlePrint}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 transition-colors shadow-2xs cursor-pointer"
@@ -212,14 +231,38 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
                   </div>
                   <span className="font-medium text-rose-600">{formatRupiah(payroll.bpjsJpEmployee)}</span>
                 </div>
-                {payroll.lateDeduction > 0 && (
-                  <div className="flex justify-between py-2 px-4">
+                {payroll.isLateFeeWaived ? (
+                  <div className="flex justify-between py-2 px-4 bg-indigo-50/70 border-l-2 border-indigo-500">
                     <div>
-                      <span className="text-slate-700 block">Potongan Keterlambatan</span>
-                      <span className="text-[10px] text-rose-400">Denda jam presensi</span>
+                      <span className="text-slate-900 font-semibold block">
+                        Potongan Keterlambatan &amp; Absen (Dispensasi Denda)
+                      </span>
+                      <span className="text-[10px] text-indigo-700 font-medium block">
+                        {payroll.attendanceDeductionNotes ||
+                          `Dispensasi Denda Absensi (Tugas Luar / Kebijakan HR): Bebas Potongan`}
+                      </span>
                     </div>
-                    <span className="font-medium text-rose-600">{formatRupiah(payroll.lateDeduction)}</span>
+                    <span className="font-bold text-indigo-700">Rp 0</span>
                   </div>
+                ) : (
+                  payroll.lateDeduction > 0 && (
+                    <div className="flex justify-between py-2 px-4 bg-rose-50/70 border-l-2 border-rose-500">
+                      <div>
+                        <span className="text-slate-900 font-semibold block">
+                          Potongan Keterlambatan &amp; Absen
+                        </span>
+                        <span className="text-[10px] text-rose-700 font-medium block">
+                          {payroll.attendanceDeductionNotes ||
+                            `Potongan Terlambat ${payroll.lateFrequency || 1}x / ${
+                              payroll.totalLateMinutes || 0
+                            } mnt: -${formatRupiah(payroll.lateDeduction)}`}
+                        </span>
+                      </div>
+                      <span className="font-bold text-rose-700">
+                        -{formatRupiah(payroll.lateDeduction)}
+                      </span>
+                    </div>
+                  )
                 )}
                 {payroll.otherDeductions > 0 && (
                   <div className="flex justify-between py-2 px-4">

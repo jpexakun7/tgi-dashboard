@@ -55,6 +55,103 @@ const DEPARTMENT_COLORS: { [key: string]: string } = {
   'Human Resources & GA': '#8b5cf6', // Purple-500
   'Pemasaran & Bisnis': '#ec4899', // Pink-500
   'Layanan Pelanggan': '#06b6d4', // Cyan-500
+  'Gudang': '#0d9488', // Teal-600
+  'Packing': '#6366f1', // Indigo-500
+  'Ekspedisi': '#ea580c', // Orange-600
+  'Admin Marketplace': '#e11d48', // Rose-600
+};
+
+const FALLBACK_PALETTE = [
+  '#0d9488',
+  '#6366f1',
+  '#ea580c',
+  '#e11d48',
+  '#0284c7',
+  '#8b5cf6',
+  '#10b981',
+  '#f59e0b',
+];
+
+const getDepartmentColor = (dept: string, idx = 0): string => {
+  if (DEPARTMENT_COLORS[dept]) return DEPARTMENT_COLORS[dept];
+  let hash = 0;
+  for (let i = 0; i < dept.length; i++) {
+    hash = dept.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return FALLBACK_PALETTE[Math.abs(hash + idx) % FALLBACK_PALETTE.length];
+};
+
+const createDefaultKpiForCustomDepartment = (
+  deptName: string,
+  deptEmps: Employee[]
+): DepartmentKpiData => {
+  const leadEmp = deptEmps[0];
+  const slug = deptName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+  return {
+    department: deptName,
+    leadName: leadEmp ? leadEmp.fullName : `Koordinator ${deptName}`,
+    leadRole: leadEmp
+      ? `${leadEmp.role} (${deptEmps.length} Staf Aktif: ${deptEmps.map((e) => e.fullName).join(', ')})`
+      : `Divisi ${deptName}`,
+    leadAvatar:
+      leadEmp?.avatarUrl ||
+      'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=256&h=256&q=80',
+    overallScore: 93.5,
+    grade: 'A',
+    status: 'on_track',
+    quarter: 'Q4 2026',
+    trend: [
+      { quarter: 'Q1 2026', score: 90.0 },
+      { quarter: 'Q2 2026', score: 91.5 },
+      { quarter: 'Q3 2026', score: 92.8 },
+      { quarter: 'Q4 2026', score: 93.5 },
+    ],
+    metrics: [
+      {
+        id: `kpi-${slug}-1`,
+        name: `Target Penyelesaian Tugas Harian (${deptName})`,
+        category: 'Produktivitas & Kecepatan',
+        target: '≥ 95%',
+        actual: '96.5%',
+        unit: '%',
+        weight: 40,
+        achievementRate: 96.5,
+        status: 'exceeded',
+        notes: `Seluruh target harian tim ${deptName} diselesaikan tepat waktu sesuai standar SOP.`,
+      },
+      {
+        id: `kpi-${slug}-2`,
+        name: `Akurasi Kerja & Minim Kesalahan Operasional`,
+        category: 'Kualitas & Ketelitian',
+        target: '≥ 98%',
+        actual: '98.2%',
+        unit: '%',
+        weight: 35,
+        achievementRate: 98.2,
+        status: 'on_track',
+        notes: `Tingkat ketelitian kerja staf ${deptName} terjaga dengan baik.`,
+      },
+      {
+        id: `kpi-${slug}-3`,
+        name: `Kedisiplinan Presensi & Kepatuhan Shift`,
+        category: 'Kedisiplinan SDM',
+        target: '≥ 95%',
+        actual: '95.0%',
+        unit: '%',
+        weight: 25,
+        achievementRate: 95.0,
+        status: 'on_track',
+        notes: `Kehadiran anggota tim ${deptName} terkendali sesuai jadwal shift.`,
+      },
+    ],
+    keyStrengths: [
+      `Koordinasi kerja tim ${deptName} (${deptEmps.map((e) => e.fullName).join(', ')}) berjalan responsif dan terukur.`,
+      `Pencapaian SLA harian divisi ${deptName} konsisten melampaui target minimum 90%.`,
+    ],
+    areasOfImprovement: [
+      `Optimalisasi alur kerja dan pelaporan berkala pada divisi ${deptName}.`,
+    ],
+  };
 };
 
 export const DepartmentKpiView: React.FC<DepartmentKpiViewProps> = ({ employees }) => {
@@ -95,67 +192,118 @@ export const DepartmentKpiView: React.FC<DepartmentKpiViewProps> = ({ employees 
     }, 3500);
   };
 
+  // Active employees & active departments map
+  const activeEmployees = useMemo(
+    () => employees.filter((e) => e.isActive !== false),
+    [employees]
+  );
+
+  // Dynamically derive unique active departments from employees (Array.from(new Set(...)))
+  // and bind leadName/leadRole/leadAvatar dynamically to real employees in that department
+  const activeKpiData = useMemo(() => {
+    const deptEmpsMap: Record<string, Employee[]> = {};
+    activeEmployees.forEach((emp) => {
+      const dept = emp.department?.trim() || 'Operasional';
+      if (!deptEmpsMap[dept]) deptEmpsMap[dept] = [];
+      deptEmpsMap[dept].push(emp);
+    });
+
+    const uniqueActiveDepartments = Array.from(
+      new Set(activeEmployees.map((e) => e.department?.trim() || 'Operasional'))
+    );
+
+    return uniqueActiveDepartments.map((deptName) => {
+      const deptEmps = deptEmpsMap[deptName] || [];
+      const leadEmp = deptEmps[0];
+      const existingKpi = kpiData.find((d) => d.department === deptName);
+      const baseKpi = existingKpi || createDefaultKpiForCustomDepartment(deptName, deptEmps);
+
+      return {
+        ...baseKpi,
+        leadName: leadEmp ? leadEmp.fullName : baseKpi.leadName,
+        leadRole: leadEmp
+          ? `${leadEmp.role} (${deptEmps.length} Staf Aktif: ${deptEmps
+              .map((e) => e.fullName)
+              .join(', ')})`
+          : baseKpi.leadRole,
+        leadAvatar: leadEmp?.avatarUrl || baseKpi.leadAvatar,
+      };
+    });
+  }, [kpiData, activeEmployees]);
+
   // Filtered department list
   const filteredDepartments = useMemo(() => {
-    if (selectedDeptFilter === 'ALL') return kpiData;
-    return kpiData.filter((d) => d.department === selectedDeptFilter);
-  }, [kpiData, selectedDeptFilter]);
+    if (selectedDeptFilter === 'ALL') return activeKpiData;
+    return activeKpiData.filter((d) => d.department === selectedDeptFilter);
+  }, [activeKpiData, selectedDeptFilter]);
 
-  // Aggregate Company KPIs
+  // Aggregate Company KPIs (strictly across active departments)
   const companyAverageScore = useMemo(() => {
-    if (kpiData.length === 0) return 0;
-    const sum = kpiData.reduce((acc, curr) => acc + curr.overallScore, 0);
-    return Math.round((sum / kpiData.length) * 10) / 10;
-  }, [kpiData]);
+    if (activeKpiData.length === 0) return 0;
+    const sum = activeKpiData.reduce((acc, curr) => acc + curr.overallScore, 0);
+    return Math.round((sum / activeKpiData.length) * 10) / 10;
+  }, [activeKpiData]);
 
   const topDepartment = useMemo(() => {
-    return [...kpiData].sort((a, b) => b.overallScore - a.overallScore)[0];
-  }, [kpiData]);
+    return [...activeKpiData].sort((a, b) => b.overallScore - a.overallScore)[0];
+  }, [activeKpiData]);
 
   const totalMetricsCount = useMemo(() => {
-    return kpiData.reduce((acc, curr) => acc + curr.metrics.length, 0);
-  }, [kpiData]);
+    return activeKpiData.reduce((acc, curr) => acc + curr.metrics.length, 0);
+  }, [activeKpiData]);
 
-  // Bar chart data for departments comparison
+  const exceededDeptsCount = useMemo(
+    () => activeKpiData.filter((d) => d.status === 'exceeded').length,
+    [activeKpiData]
+  );
+  const onTrackDeptsCount = useMemo(
+    () => activeKpiData.filter((d) => d.status === 'on_track').length,
+    [activeKpiData]
+  );
+
+  // Bar chart data for active departments comparison
   const barChartData = useMemo(() => {
-    return kpiData.map((d) => ({
+    return activeKpiData.map((d, idx) => ({
       name: d.department.length > 15 ? d.department.substring(0, 14) + '...' : d.department,
       fullName: d.department,
       skor: d.overallScore,
       target: 90.0,
-      color: DEPARTMENT_COLORS[d.department] || '#10b981',
+      color: getDepartmentColor(d.department, idx),
     }));
-  }, [kpiData]);
+  }, [activeKpiData]);
 
   // Radar chart data
   const radarChartData = useMemo(() => {
-    return kpiData.map((d) => ({
+    return activeKpiData.map((d) => ({
       subject: d.department.replace('& ', ''),
       score: d.overallScore,
       benchmark: 90,
       fullMark: 100,
     }));
-  }, [kpiData]);
+  }, [activeKpiData]);
 
-  // Trend data across quarters
+  // Trend data across quarters (strictly for active departments)
   const trendData = useMemo(() => {
     const quarters = ['Q1 2026', 'Q2 2026', 'Q3 2026', 'Q4 2026'];
     return quarters.map((q) => {
       const row: any = { quarter: q };
-      kpiData.forEach((d) => {
+      activeKpiData.forEach((d) => {
         const item = d.trend.find((t) => t.quarter === q);
         row[d.department] = item ? item.score : d.overallScore;
       });
       return row;
     });
-  }, [kpiData]);
+  }, [activeKpiData]);
 
-  // Handle Edit Metric Form Submit
+  // Handle Edit Metric Form Submit (supports both initial & custom departments)
   const handleSaveMetric = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingDept || !editingMetric) return;
 
-    const updatedDepartments = kpiData.map((dept) => {
+    const existsInKpiData = kpiData.some((d) => d.department === editingDept.department);
+    const sourceList = existsInKpiData ? kpiData : [...kpiData, editingDept];
+
+    const updatedDepartments = sourceList.map((dept) => {
       if (dept.department === editingDept.department) {
         const updatedMetrics = dept.metrics.map((m) =>
           m.id === editingMetric.id ? editingMetric : m
@@ -179,7 +327,12 @@ export const DepartmentKpiView: React.FC<DepartmentKpiViewProps> = ({ employees 
           ...dept,
           overallScore: newScore,
           grade: newGrade,
-          status: newScore >= 95 ? ('exceeded' as KpiStatus) : newScore >= 85 ? ('on_track' as KpiStatus) : ('needs_attention' as KpiStatus),
+          status:
+            newScore >= 95
+              ? ('exceeded' as KpiStatus)
+              : newScore >= 85
+              ? ('on_track' as KpiStatus)
+              : ('needs_attention' as KpiStatus),
           metrics: updatedMetrics,
         };
       }
@@ -210,7 +363,7 @@ export const DepartmentKpiView: React.FC<DepartmentKpiViewProps> = ({ employees 
     ];
 
     const rows: string[][] = [];
-    kpiData.forEach((dept) => {
+    activeKpiData.forEach((dept) => {
       dept.metrics.forEach((m) => {
         rows.push([
           `"${dept.department}"`,
@@ -341,17 +494,19 @@ export const DepartmentKpiView: React.FC<DepartmentKpiViewProps> = ({ employees 
           </div>
           <div className="mt-3">
             <h3 className="text-base sm:text-lg font-bold text-slate-900 truncate">
-              {topDepartment?.department || 'Keuangan'}
+              {topDepartment?.department || 'Operasional'}
             </h3>
             <div className="flex items-center gap-2 mt-1">
-              <span className="text-xl font-black text-blue-600">{topDepartment?.overallScore}%</span>
+              <span className="text-xl font-black text-blue-600">
+                {topDepartment ? `${topDepartment.overallScore}%` : '0%'}
+              </span>
               <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
-                Predikat {topDepartment?.grade}
+                Predikat {topDepartment?.grade || '-'}
               </span>
             </div>
           </div>
           <p className="mt-2 text-xs text-slate-500 truncate">
-            Lead: {topDepartment?.leadName}
+            PIC: {topDepartment?.leadName || '-'}
           </p>
         </div>
 
@@ -372,7 +527,7 @@ export const DepartmentKpiView: React.FC<DepartmentKpiViewProps> = ({ employees 
             <span className="text-xs text-slate-500 font-medium">Indikator Kinerja</span>
           </div>
           <p className="mt-2 text-xs text-slate-500">
-            Terbagi rata di 6 unit divisi bisnis
+            Pada {activeKpiData.length} departemen aktif ({activeKpiData.map((d) => d.department).join(', ') || '-'})
           </p>
         </div>
 
@@ -380,7 +535,7 @@ export const DepartmentKpiView: React.FC<DepartmentKpiViewProps> = ({ employees 
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-              Status Capaian Divisi
+              Status Capaian Divisi Aktif
             </span>
             <div className="p-2 rounded-xl bg-teal-50 text-teal-600">
               <ShieldCheck className="w-5 h-5" />
@@ -388,12 +543,12 @@ export const DepartmentKpiView: React.FC<DepartmentKpiViewProps> = ({ employees 
           </div>
           <div className="mt-3 flex items-baseline gap-2">
             <h3 className="text-2xl sm:text-3xl font-black text-slate-900">
-              6 / 6
+              {exceededDeptsCount + onTrackDeptsCount} / {activeKpiData.length}
             </h3>
             <span className="text-xs text-emerald-600 font-bold">100% On Track</span>
           </div>
           <p className="mt-2 text-xs text-slate-500">
-            5 Melebihi Target • 1 Sesuai Target
+            {exceededDeptsCount} Melebihi Target • {onTrackDeptsCount} Sesuai Target
           </p>
         </div>
       </div>
@@ -522,30 +677,34 @@ export const DepartmentKpiView: React.FC<DepartmentKpiViewProps> = ({ employees 
                   }}
                 />
                 <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '12px' }} />
-                <Area type="monotone" dataKey="Keuangan & Akuntansi" stroke="#10b981" fill="#10b981" fillOpacity={0.15} />
-                <Area type="monotone" dataKey="Teknologi & IT" stroke="#0284c7" fill="#0284c7" fillOpacity={0.15} />
-                <Area type="monotone" dataKey="Pemasaran & Bisnis" stroke="#ec4899" fill="#ec4899" fillOpacity={0.15} />
-                <Area type="monotone" dataKey="Layanan Pelanggan" stroke="#06b6d4" fill="#06b6d4" fillOpacity={0.15} />
-                <Area type="monotone" dataKey="Human Resources & GA" stroke="#8b5cf6" fill="#8b5cf6" fillOpacity={0.15} />
-                <Area type="monotone" dataKey="Operasional" stroke="#f59e0b" fill="#f59e0b" fillOpacity={0.15} />
+                {activeKpiData.map((d) => (
+                  <Area
+                    key={d.department}
+                    type="monotone"
+                    dataKey={d.department}
+                    stroke={DEPARTMENT_COLORS[d.department] || '#10b981'}
+                    fill={DEPARTMENT_COLORS[d.department] || '#10b981'}
+                    fillOpacity={0.15}
+                  />
+                ))}
               </AreaChart>
             </ResponsiveContainer>
           </div>
         )}
       </div>
 
-      {/* Filter and Search Bar for Departments */}
+      {/* Filter and Search Bar for Active Departments */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
         <div className="flex items-center gap-2">
           <Filter className="w-4 h-4 text-slate-400" />
-          <span className="text-xs font-bold text-slate-700">Filter Departemen:</span>
+          <span className="text-xs font-bold text-slate-700">Filter Departemen Aktif:</span>
           <select
             value={selectedDeptFilter}
             onChange={(e) => setSelectedDeptFilter(e.target.value)}
             className="text-xs bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-slate-700 focus:outline-hidden focus:ring-2 focus:ring-emerald-400 cursor-pointer"
           >
-            <option value="ALL">Semua Departemen ({kpiData.length})</option>
-            {kpiData.map((d) => (
+            <option value="ALL">Semua Departemen Aktif ({activeKpiData.length})</option>
+            {activeKpiData.map((d) => (
               <option key={d.department} value={d.department}>
                 {d.department} ({d.overallScore}%)
               </option>

@@ -68,18 +68,37 @@ export const EmployeeDemographicsCharts: React.FC<EmployeeDemographicsChartsProp
   const totalCount = filteredEmployees.length;
   const activeCount = filteredEmployees.filter((e) => e.isActive).length;
 
-  // Gender counts
+  // Unique departments that actually have employees
+  const availableDepartments = useMemo(() => {
+    const deptCounts: Record<string, number> = {};
+    employees.forEach((e) => {
+      const d = e.department?.trim() || 'Operasional';
+      deptCounts[d] = (deptCounts[d] || 0) + 1;
+    });
+    return Object.entries(deptCounts)
+      .filter(([, count]) => count > 0)
+      .sort((a, b) => b[1] - a[1]);
+  }, [employees]);
+
+  // Gender counts & real department distribution per gender
   const genderStats = useMemo(() => {
     let pria = 0;
     let wanita = 0;
     let lainnya = 0;
+    const maleDeptMap: Record<string, number> = {};
+    const femaleDeptMap: Record<string, number> = {};
+    const allDeptSet = new Set<string>();
 
     filteredEmployees.forEach((e) => {
       const g = e.gender;
+      const dept = e.department?.trim() || 'Operasional';
+      allDeptSet.add(dept);
       if (g === 'Laki-laki') {
         pria += 1;
+        maleDeptMap[dept] = (maleDeptMap[dept] || 0) + 1;
       } else if (g === 'Perempuan') {
         wanita += 1;
+        femaleDeptMap[dept] = (femaleDeptMap[dept] || 0) + 1;
       } else {
         lainnya += 1;
       }
@@ -89,6 +108,21 @@ export const EmployeeDemographicsCharts: React.FC<EmployeeDemographicsChartsProp
     const wanitaPct = totalCount > 0 ? Math.round((wanita / totalCount) * 100) : 0;
     const lainnyaPct = totalCount > 0 ? Math.round((lainnya / totalCount) * 100) : 0;
 
+    const maleSortedDepts = Object.entries(maleDeptMap).sort((a, b) => b[1] - a[1]);
+    const femaleSortedDepts = Object.entries(femaleDeptMap).sort((a, b) => b[1] - a[1]);
+
+    const maleDeptList = maleSortedDepts.map(([d]) => d);
+    const femaleDeptList = femaleSortedDepts.map(([d]) => d);
+
+    const maleDeptSubtitle =
+      maleDeptList.length > 0 ? `Divisi ${maleDeptList.join(', ')}` : 'Belum ada staf pria pada filter ini';
+    const femaleDeptSubtitle =
+      femaleDeptList.length > 0 ? `Divisi ${femaleDeptList.join(', ')}` : 'Belum ada staf wanita pada filter ini';
+
+    const maleMajorityDept = maleSortedDepts[0]?.[0] || '-';
+    const femaleMajorityDept = femaleSortedDepts[0]?.[0] || '-';
+    const allActiveDeptsLabel = Array.from(allDeptSet).join(', ') || 'Operasional';
+
     return {
       pria,
       wanita,
@@ -96,6 +130,11 @@ export const EmployeeDemographicsCharts: React.FC<EmployeeDemographicsChartsProp
       priaPct,
       wanitaPct,
       lainnyaPct,
+      maleDeptSubtitle,
+      femaleDeptSubtitle,
+      maleMajorityDept,
+      femaleMajorityDept,
+      allActiveDeptsLabel,
     };
   }, [filteredEmployees, totalCount]);
 
@@ -202,7 +241,7 @@ export const EmployeeDemographicsCharts: React.FC<EmployeeDemographicsChartsProp
             </div>
           </div>
 
-          {/* Department Filter dropdown */}
+          {/* Department Filter dropdown (Only real departments with employees) */}
           <div className="flex items-center gap-2">
             <Filter className="w-3.5 h-3.5 text-slate-300" />
             <select
@@ -211,12 +250,11 @@ export const EmployeeDemographicsCharts: React.FC<EmployeeDemographicsChartsProp
               className="text-xs bg-slate-800/90 hover:bg-slate-800 border border-slate-700 rounded-xl px-3 py-1.5 text-white focus:outline-hidden focus:ring-2 focus:ring-emerald-400 cursor-pointer"
             >
               <option value="ALL">Semua Departemen ({employees.length})</option>
-              <option value="Teknologi & IT">Teknologi & IT</option>
-              <option value="Keuangan & Akuntansi">Keuangan & Akuntansi</option>
-              <option value="Operasional">Operasional</option>
-              <option value="Human Resources & GA">Human Resources & GA</option>
-              <option value="Pemasaran & Bisnis">Pemasaran & Bisnis</option>
-              <option value="Layanan Pelanggan">Layanan Pelanggan</option>
+              {availableDepartments.map(([deptName, count]) => (
+                <option key={deptName} value={deptName}>
+                  {deptName} ({count})
+                </option>
+              ))}
             </select>
           </div>
         </div>
@@ -444,7 +482,7 @@ export const EmployeeDemographicsCharts: React.FC<EmployeeDemographicsChartsProp
                     </div>
                     <div>
                       <h5 className="text-xs font-bold text-slate-900">Karyawan Pria (Laki-laki)</h5>
-                      <p className="text-[11px] text-slate-500">Divisi Teknis, Gudang, & Analis</p>
+                      <p className="text-[11px] text-slate-500">{genderStats.maleDeptSubtitle}</p>
                     </div>
                   </div>
                   <div className="text-right">
@@ -457,7 +495,7 @@ export const EmployeeDemographicsCharts: React.FC<EmployeeDemographicsChartsProp
                 </div>
                 <div className="mt-2.5 flex items-center justify-between text-[11px] text-slate-600">
                   <span>Kontribusi kuota: {genderStats.pria} dari {totalCount} staf</span>
-                  <span className="font-semibold text-blue-700">Mayoritas: Lapangan & IT</span>
+                  <span className="font-semibold text-blue-700">Mayoritas: {genderStats.maleMajorityDept}</span>
                 </div>
               </div>
 
@@ -469,7 +507,7 @@ export const EmployeeDemographicsCharts: React.FC<EmployeeDemographicsChartsProp
                     </div>
                     <div>
                       <h5 className="text-xs font-bold text-slate-900">Karyawan Wanita (Perempuan)</h5>
-                      <p className="text-[11px] text-slate-500">Divisi HR, Marketing, & CS</p>
+                      <p className="text-[11px] text-slate-500">{genderStats.femaleDeptSubtitle}</p>
                     </div>
                   </div>
                   <div className="text-right">
@@ -482,19 +520,21 @@ export const EmployeeDemographicsCharts: React.FC<EmployeeDemographicsChartsProp
                 </div>
                 <div className="mt-2.5 flex items-center justify-between text-[11px] text-slate-600">
                   <span>Kontribusi kuota: {genderStats.wanita} dari {totalCount} staf</span>
-                  <span className="font-semibold text-pink-700">Mayoritas: HR & Pemasaran</span>
+                  <span className="font-semibold text-pink-700">Mayoritas: {genderStats.femaleMajorityDept}</span>
                 </div>
               </div>
 
               <div className="p-3.5 rounded-xl border border-slate-200 bg-white">
-                <div className="flex items-center justify-between text-xs">
+                <div className="flex items-center justify-between text-xs gap-2">
                   <span className="font-semibold text-slate-700">Kesimpulan Kesetaraan Gender:</span>
                   <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                    Proporsional & Seimbang
+                    Rasio {genderStats.pria} Pria : {genderStats.wanita} Wanita ({genderStats.priaPct}% : {genderStats.wanitaPct}%)
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
-                  Struktur sumber daya manusia PT Tas Grosir Import memiliki distribusi gender yang sehat dengan partisipasi aktif tenaga kerja wanita pada posisi strategis pemasaran & SDM, serta laki-laki pada bidang rekayasa teknis & logistik.
+                  {totalCount > 0
+                    ? `Struktur SDM PT Tas Grosir Import saat ini terdiri dari ${totalCount} karyawan (${genderStats.pria} Laki-laki / ${genderStats.priaPct}% dan ${genderStats.wanita} Perempuan / ${genderStats.wanitaPct}%) yang bekerja aktif pada departemen ${genderStats.allActiveDeptsLabel} (mayoritas pria di ${genderStats.maleMajorityDept}, mayoritas wanita di ${genderStats.femaleMajorityDept}).`
+                    : 'Belum ada data karyawan aktif yang terdaftar untuk dianalisis.'}
                 </p>
               </div>
             </div>

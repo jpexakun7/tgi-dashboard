@@ -82,10 +82,14 @@ import {
   calculateMinutesBetweenTimes,
   getEmployeeShift,
   evaluateAttendanceAgainstShift,
+  deduplicateDailyAttendances,
+  calculateEmployeeAttendancePenalty,
+  getAttendancePenaltyPolicy,
   formatNpwpInput,
   getNpwpStatusInfo,
   getContractValidityInfo,
 } from '../utils/formatters';
+import { formatWhatsAppPhone } from '../utils/notificationHelper';
 import { getEmployeeEffectivePin } from '../services/supabaseService';
 import { validateImageFile, compressImage, compressVideoFrame } from '../utils/imageUtils';
 import { LiveFaceGpsAttendanceScanner } from './LiveFaceGpsAttendanceScanner';
@@ -226,9 +230,31 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     setCustomClockOutTime(myShift.checkOutTime);
   }, [myShift.id, myShift.checkInTime, myShift.checkOutTime]);
 
+  const penaltyPolicy = useMemo(
+    () => getAttendancePenaltyPolicy(companyConfig.attendancePenaltyPolicy),
+    [companyConfig.attendancePenaltyPolicy]
+  );
+
   const myAttendances = useMemo(() => {
-    return attendances.filter((a) => a.employeeId === currentEmployee.id);
-  }, [attendances, currentEmployee.id]);
+    const raw = attendances.filter((a) => a.employeeId === currentEmployee.id);
+    return deduplicateDailyAttendances(
+      raw,
+      [currentEmployee],
+      companyConfig.workShifts,
+      penaltyPolicy
+    );
+  }, [attendances, currentEmployee, companyConfig.workShifts, penaltyPolicy]);
+
+  const myPenaltySummary = useMemo(
+    () =>
+      calculateEmployeeAttendancePenalty(
+        currentEmployee,
+        myAttendances,
+        companyConfig.workShifts,
+        penaltyPolicy
+      ),
+    [currentEmployee, myAttendances, companyConfig.workShifts, penaltyPolicy]
+  );
 
   const todayDateStr = new Date().toISOString().split('T')[0];
   const todayAttendance = useMemo(() => {
@@ -240,8 +266,18 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     const nowStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
     const targetIn = isAdminSimulationActive ? customClockInTime : todayAttendance?.checkIn || nowStr;
     const targetOut = isAdminSimulationActive ? customClockOutTime : todayAttendance?.checkOut || myShift.checkOutTime;
-    return evaluateAttendanceAgainstShift(targetIn, targetOut, myShift);
-  }, [isAdminSimulationActive, customClockInTime, customClockOutTime, todayAttendance, myShift]);
+    const effectiveGrace = penaltyPolicy.useShiftGracePeriod
+      ? myShift.gracePeriodMinutes
+      : penaltyPolicy.gracePeriodMinutes;
+    return evaluateAttendanceAgainstShift(targetIn, targetOut, myShift, effectiveGrace);
+  }, [
+    isAdminSimulationActive,
+    customClockInTime,
+    customClockOutTime,
+    todayAttendance,
+    myShift,
+    penaltyPolicy,
+  ]);
 
   // Count unread performance / bonus notifications for this employee
   const unreadKpiNotifs = useMemo(() => {
@@ -1741,10 +1777,22 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                       - {formatCurrency(currentPay ? currentPay.pph21TER : Math.round(grossSalary * 0.025))}
                     </span>
                   </div>
-                  {currentPay && currentPay.lateDeduction > 0 && (
-                    <div className="flex justify-between items-center text-amber-800 bg-amber-50 px-2 py-1 rounded">
-                      <span>Potongan Keterlambatan Absensi</span>
-                      <span className="font-semibold">- {formatCurrency(currentPay.lateDeduction)}</span>
+                  {(currentPay?.lateDeduction || myPenaltySummary.totalDeductionAmount) > 0 && (
+                    <div className="flex justify-between items-start text-amber-900 bg-amber-50 border border-amber-200 px-2.5 py-2 rounded-lg gap-2">
+                      <div>
+                        <span className="font-bold block">
+                          Potongan Keterlambatan &amp; Absen
+                        </span>
+                        <span className="text-[11px] text-rose-700 font-semibold block mt-0.5">
+                          {currentPay?.attendanceDeductionNotes || myPenaltySummary.deductionNotes}
+                        </span>
+                      </div>
+                      <span className="font-bold text-rose-700 shrink-0">
+                        -{' '}
+                        {formatCurrency(
+                          currentPay?.lateDeduction ?? myPenaltySummary.totalDeductionAmount
+                        )}
+                      </span>
                     </div>
                   )}
                   {currentPay && (currentPay.cashAdvanceDeduction || 0) > 0 && (
@@ -4254,29 +4302,71 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5 text-xs">
               {/* Kontak & Domisili */}
               <div className="space-y-3.5">
-                <h4 className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
-                  <Phone className="w-4 h-4 text-emerald-600" />
-                  Informasi Kontak & Akun
-                </h4>
+                <div className="flex items-center justify-between gap-2">
+                  <h4 className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
+                    <Phone className="w-4 h-4 text-emerald-600" />
+                    Informasi Kontak WhatsApp &amp; Email Notifikasi
+                  </h4>
+                  {(profileForm.phone !== currentEmployee.phone ||
+                    profileForm.email !== currentEmployee.email) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const updated: Employee = {
+                          ...currentEmployee,
+                          phone: profileForm.phone.trim(),
+                          email: profileForm.email.trim(),
+                        };
+                        onUpdateProfile(updated);
+                        setProfileUploadBanner(
+                          `Nomor WhatsApp (${
+                            formatWhatsAppPhone(profileForm.phone) || '-'
+                          }) & Email (${
+                            profileForm.email
+                          }) berhasil disimpan dan disinkronkan ke Supabase!`
+                        );
+                        setTimeout(() => setProfileUploadBanner(null), 4500);
+                      }}
+                      className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer shadow-2xs"
+                    >
+                      <Check className="w-3 h-3" />
+                      <span>Simpan WA &amp; Email</span>
+                    </button>
+                  )}
+                </div>
 
                 <div>
-                  <label className="block font-medium text-slate-600 mb-1">Nomor Telepon / WhatsApp</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block font-medium text-slate-600">
+                      Nomor Telepon / WhatsApp Aktif
+                    </label>
+                    <span className="text-[10px] font-mono font-bold text-green-700 bg-green-50 px-2 py-0.5 rounded border border-green-200">
+                      Format WA: {formatWhatsAppPhone(profileForm.phone) ? `+${formatWhatsAppPhone(profileForm.phone)}` : 'Belum diisi'}
+                    </span>
+                  </div>
                   <input
                     type="text"
                     required
                     value={profileForm.phone}
                     onChange={(e) => setProfileForm({ ...profileForm, phone: e.target.value })}
-                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-hidden"
+                    placeholder="Contoh: 0812-3456-7890 (Otomatis diformat ke 628...)"
+                    className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-hidden font-mono"
                   />
+                  <span className="text-[10px] text-slate-400 mt-0.5 block">
+                    Digunakan untuk menerima notifikasi Slip Gaji, Persetujuan Cuti/Kasbon &amp; Kontrak via WhatsApp
+                  </span>
                 </div>
 
                 <div>
-                  <label className="block font-medium text-slate-600 mb-1">Email Perusahaan</label>
+                  <label className="block font-medium text-slate-600 mb-1">
+                    Alamat Email (Penerima Slip Gaji Resmi)
+                  </label>
                   <input
                     type="email"
                     required
                     value={profileForm.email}
                     onChange={(e) => setProfileForm({ ...profileForm, email: e.target.value })}
+                    placeholder="nama@tasgrosirimport.co.id"
                     className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-hidden"
                   />
                 </div>

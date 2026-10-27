@@ -16,6 +16,8 @@ import {
   X,
   Download,
   CheckCircle2,
+  MessageCircle,
+  ExternalLink,
 } from 'lucide-react';
 import { Employee, LeaveRequest, OvertimeRequest } from '../types';
 import {
@@ -27,6 +29,11 @@ import {
   formatOvertimeMinutes,
   calculateMinutesBetweenTimes,
 } from '../utils/formatters';
+import {
+  getLeaveStatusWhatsAppUrl,
+  getOvertimeStatusWhatsAppUrl,
+  formatWhatsAppPhone,
+} from '../utils/notificationHelper';
 import { validateImageFile, compressImage } from '../utils/imageUtils';
 
 interface LeaveAndOvertimeProps {
@@ -72,6 +79,16 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
     imageUrl: string;
     fileName?: string;
   } | null>(null);
+
+  // State untuk opsi cepat "Kirim Notifikasi WA ke Karyawan" setelah Admin klik Setujui / Tolak
+  const [waQuickPrompt, setWaQuickPrompt] = useState<{
+    kind: 'leave' | 'overtime';
+    status: 'Disetujui' | 'Ditolak';
+    emp?: Employee;
+    leave?: LeaveRequest;
+    overtime?: OvertimeRequest;
+  } | null>(null);
+  const [adminWaNote, setAdminWaNote] = useState<string>('');
 
   // Overtime Form State (Hitungan Per Menit)
   const [otEmpId, setOtEmpId] = useState(employees[0]?.id || '');
@@ -202,6 +219,98 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
           )}
         </div>
       </div>
+
+      {/* Banner Cepat Kirim Notifikasi WA ke Karyawan saat Admin klik Setujui / Tolak */}
+      {waQuickPrompt && (
+        <div
+          className={`p-4 rounded-2xl border shadow-sm flex flex-col gap-3 animate-in fade-in ${
+            waQuickPrompt.status === 'Disetujui'
+              ? 'bg-emerald-50/90 border-emerald-300'
+              : 'bg-rose-50/90 border-rose-300'
+          }`}
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <div
+                className={`p-2 rounded-xl shrink-0 ${
+                  waQuickPrompt.status === 'Disetujui'
+                    ? 'bg-emerald-600 text-white'
+                    : 'bg-rose-600 text-white'
+                }`}
+              >
+                <MessageCircle className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="text-xs sm:text-sm font-bold text-slate-900">
+                  Pengajuan {waQuickPrompt.kind === 'leave' ? 'Cuti / Izin' : 'Lembur'}{' '}
+                  {waQuickPrompt.emp?.fullName || 'Karyawan'} telah{' '}
+                  <span
+                    className={
+                      waQuickPrompt.status === 'Disetujui' ? 'text-emerald-700' : 'text-rose-700'
+                    }
+                  >
+                    {waQuickPrompt.status.toUpperCase()}
+                  </span>
+                </h4>
+                <p className="text-[11px] text-slate-600 mt-0.5">
+                  Nomor WA Karyawan:{' '}
+                  <strong className="font-mono text-slate-800">
+                    {formatWhatsAppPhone(waQuickPrompt.emp?.phone)
+                      ? `+${formatWhatsAppPhone(waQuickPrompt.emp?.phone)}`
+                      : 'Belum diisi (akan membuka kontak WA)'}
+                  </strong>{' '}
+                  — Tambahkan catatan admin (opsional) lalu klik tombol di bawah untuk mengirim WA otomatis.
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setWaQuickPrompt(null)}
+              className="self-end sm:self-center p-1 text-slate-400 hover:text-slate-700 rounded-lg cursor-pointer"
+              title="Tutup panel notifikasi"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+            <input
+              type="text"
+              value={adminWaNote}
+              onChange={(e) => setAdminWaNote(e.target.value)}
+              placeholder="Ketik catatan admin HRD untuk disertakan di pesan WhatsApp (opsional)..."
+              className="flex-1 px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-800 focus:outline-hidden focus:border-emerald-600"
+            />
+            <a
+              href={
+                waQuickPrompt.kind === 'leave' && waQuickPrompt.leave
+                  ? getLeaveStatusWhatsAppUrl(
+                      waQuickPrompt.emp,
+                      waQuickPrompt.leave,
+                      waQuickPrompt.status,
+                      adminWaNote
+                    )
+                  : waQuickPrompt.overtime
+                  ? getOvertimeStatusWhatsAppUrl(
+                      waQuickPrompt.emp,
+                      waQuickPrompt.overtime,
+                      waQuickPrompt.status,
+                      adminWaNote
+                    )
+                  : '#'
+              }
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl text-xs inline-flex items-center justify-center gap-1.5 shadow-sm shrink-0 transition-colors"
+            >
+              <MessageCircle className="w-4 h-4" />
+              <span>Kirim Notifikasi WA ke Karyawan</span>
+              <ExternalLink className="w-3.5 h-3.5" />
+            </a>
+          </div>
+        </div>
+      )}
 
       {/* Segmented Tab Controls */}
       <div className="flex border-b border-slate-200">
@@ -348,22 +457,61 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
                           {leave.status === 'Menunggu Persetujuan' ? (
                             <div className="flex items-center justify-center gap-1.5">
                               <button
-                                onClick={() => onApproveLeave(leave.id)}
+                                onClick={() => {
+                                  onApproveLeave(leave.id);
+                                  setAdminWaNote(
+                                    'Permohonan cuti/izin Anda telah disetujui HRD PT Tas Grosir Import. Pastikan serah terima pekerjaan telah dikoordinasikan.'
+                                  );
+                                  setWaQuickPrompt({
+                                    kind: 'leave',
+                                    status: 'Disetujui',
+                                    emp,
+                                    leave: { ...leave, status: 'Disetujui' },
+                                  });
+                                }}
                                 className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-lg text-xs cursor-pointer"
                               >
                                 Setujui
                               </button>
                               <button
-                                onClick={() => onRejectLeave(leave.id)}
+                                onClick={() => {
+                                  onRejectLeave(leave.id);
+                                  setAdminWaNote(
+                                    'Mohon maaf, permohonan cuti/izin belum dapat disetujui dikarenakan jadwal operasional yang padat.'
+                                  );
+                                  setWaQuickPrompt({
+                                    kind: 'leave',
+                                    status: 'Ditolak',
+                                    emp,
+                                    leave: { ...leave, status: 'Ditolak' },
+                                  });
+                                }}
                                 className="px-2 py-1 bg-white hover:bg-rose-50 text-rose-600 border border-slate-300 rounded-lg text-xs cursor-pointer"
                               >
                                 Tolak
                               </button>
                             </div>
                           ) : (
-                            <span className="text-[11px] text-slate-500">
-                              {leave.approvedBy || 'Telah diproses'}
-                            </span>
+                            <div className="flex flex-col items-center justify-center gap-1">
+                              <a
+                                href={getLeaveStatusWhatsAppUrl(
+                                  emp,
+                                  leave,
+                                  leave.status,
+                                  adminWaNote
+                                )}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-2.5 py-1 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-lg text-[11px] inline-flex items-center gap-1 shadow-2xs transition-colors"
+                                title={`Kirim Notifikasi WA Status Cuti (${leave.status}) ke ${emp?.fullName}`}
+                              >
+                                <MessageCircle className="w-3 h-3" />
+                                <span>Kirim Notifikasi WA ke Karyawan</span>
+                              </a>
+                              <span className="text-[10px] text-slate-400">
+                                {leave.approvedBy || 'Telah diproses'}
+                              </span>
+                            </div>
                           )}
                         </td>
                       </tr>
@@ -473,20 +621,59 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
                           {ot.status === 'Menunggu Persetujuan' ? (
                             <div className="flex items-center justify-center gap-1.5">
                               <button
-                                onClick={() => onApproveOvertime(ot.id)}
+                                onClick={() => {
+                                  onApproveOvertime(ot.id);
+                                  setAdminWaNote(
+                                    'Klaim lembur Anda telah disetujui HRD dan otomatis masuk ke perhitungan Slip Gaji periode berjalan.'
+                                  );
+                                  setWaQuickPrompt({
+                                    kind: 'overtime',
+                                    status: 'Disetujui',
+                                    emp,
+                                    overtime: { ...ot, status: 'Disetujui' },
+                                  });
+                                }}
                                 className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg text-xs cursor-pointer"
                               >
                                 Setujui
                               </button>
                               <button
-                                onClick={() => onRejectOvertime(ot.id)}
+                                onClick={() => {
+                                  onRejectOvertime(ot.id);
+                                  setAdminWaNote(
+                                    'Klaim lembur belum dapat disetujui. Silakan hubungi Admin HRD untuk konfirmasi.'
+                                  );
+                                  setWaQuickPrompt({
+                                    kind: 'overtime',
+                                    status: 'Ditolak',
+                                    emp,
+                                    overtime: { ...ot, status: 'Ditolak' },
+                                  });
+                                }}
                                 className="px-2 py-1 bg-white hover:bg-rose-50 text-rose-600 border border-slate-300 rounded-lg text-xs cursor-pointer"
                               >
                                 Tolak
                               </button>
                             </div>
                           ) : (
-                            <span className="text-[11px] text-slate-500">Telah diverifikasi</span>
+                            <div className="flex flex-col items-center justify-center gap-1">
+                              <a
+                                href={getOvertimeStatusWhatsAppUrl(
+                                  emp,
+                                  ot,
+                                  ot.status,
+                                  adminWaNote
+                                )}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="px-2.5 py-1 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-lg text-[11px] inline-flex items-center gap-1 shadow-2xs transition-colors"
+                                title={`Kirim Notifikasi WA Status Lembur (${ot.status}) ke ${emp?.fullName}`}
+                              >
+                                <MessageCircle className="w-3 h-3" />
+                                <span>Kirim Notifikasi WA ke Karyawan</span>
+                              </a>
+                              <span className="text-[10px] text-slate-400">Telah diverifikasi</span>
+                            </div>
                           )}
                         </td>
                       </tr>

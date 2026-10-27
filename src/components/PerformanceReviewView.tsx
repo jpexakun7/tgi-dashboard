@@ -266,6 +266,18 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
     };
   }, [reviews]);
 
+  // Dynamic unique departments from real employees & reviews
+  const uniqueDepartments = useMemo(() => {
+    return Array.from(
+      new Set(
+        [
+          ...employees.map((e) => e.department?.trim()),
+          ...reviews.map((r) => r.employeeDepartment?.trim()),
+        ].filter((d): d is string => Boolean(d))
+      )
+    );
+  }, [employees, reviews]);
+
   // Filtered reviews
   const filteredReviews = useMemo(() => {
     return reviews.filter((r) => {
@@ -714,13 +726,12 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
             onChange={(e) => setSelectedDept(e.target.value)}
             className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-700 focus:outline-hidden cursor-pointer"
           >
-            <option value="ALL">Semua Departemen</option>
-            <option value="Teknologi & IT">Teknologi & IT</option>
-            <option value="Keuangan & Akuntansi">Keuangan & Akuntansi</option>
-            <option value="Operasional">Operasional</option>
-            <option value="Human Resources & GA">Human Resources & GA</option>
-            <option value="Pemasaran & Bisnis">Pemasaran & Bisnis</option>
-            <option value="Layanan Pelanggan">Layanan Pelanggan</option>
+            <option value="ALL">Semua Departemen ({uniqueDepartments.length})</option>
+            {uniqueDepartments.map((dept) => (
+              <option key={dept} value={dept}>
+                {dept}
+              </option>
+            ))}
           </select>
 
           {/* Grade */}
@@ -1652,12 +1663,11 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-slate-800 font-medium cursor-pointer"
                   >
                     <option value="Semua Departemen">Semua Departemen</option>
-                    <option value="Teknologi & IT">Teknologi & IT</option>
-                    <option value="Keuangan & Akuntansi">Keuangan & Akuntansi</option>
-                    <option value="Operasional">Operasional</option>
-                    <option value="Human Resources & GA">Human Resources & GA</option>
-                    <option value="Pemasaran & Bisnis">Pemasaran & Bisnis</option>
-                    <option value="Layanan Pelanggan">Layanan Pelanggan</option>
+                    {uniqueDepartments.map((dept) => (
+                      <option key={dept} value={dept}>
+                        {dept}
+                      </option>
+                    ))}
                   </select>
                 </div>
 
@@ -1768,12 +1778,11 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-slate-800 font-medium cursor-pointer"
                   >
                     <option value="Semua Departemen">Semua Departemen</option>
-                    <option value="Teknologi & IT">Teknologi & IT</option>
-                    <option value="Keuangan & Akuntansi">Keuangan & Akuntansi</option>
-                    <option value="Operasional">Operasional</option>
-                    <option value="Human Resources & GA">Human Resources & GA</option>
-                    <option value="Pemasaran & Bisnis">Pemasaran & Bisnis</option>
-                    <option value="Layanan Pelanggan">Layanan Pelanggan</option>
+                    {uniqueDepartments.map((dept) => (
+                      <option key={dept} value={dept}>
+                        {dept}
+                      </option>
+                    ))}
                   </select>
                 </div>
               </div>

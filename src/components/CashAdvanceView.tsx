@@ -27,6 +27,8 @@ import {
   ChevronDown,
   Info,
   CalendarCheck,
+  MessageCircle,
+  ExternalLink,
 } from 'lucide-react';
 import {
   CashAdvance,
@@ -40,6 +42,7 @@ import {
   CompanyConfig,
 } from '../types';
 import { formatRupiah, formatIndoDate } from '../utils/formatters';
+import { getCashAdvanceStatusWhatsAppUrl, formatWhatsAppPhone } from '../utils/notificationHelper';
 
 interface CashAdvanceViewProps {
   cashAdvances: CashAdvance[];
@@ -90,6 +93,14 @@ export function CashAdvanceView({
   // Reject Modal
   const [rejectModalAdvance, setRejectModalAdvance] = useState<CashAdvance | null>(null);
   const [rejectionReason, setRejectionReason] = useState<string>('');
+
+  // Quick WhatsApp Notification Prompt after Admin clicks Setujui / Tolak / Cairkan
+  const [waQuickPrompt, setWaQuickPrompt] = useState<{
+    advance: CashAdvance;
+    status: CashAdvanceStatus;
+    emp?: Employee;
+  } | null>(null);
+  const [adminWaNote, setAdminWaNote] = useState<string>('');
 
   // Admin New Advance Modal
   const [isCreateModalOpen, setIsCreateModalOpen] = useState<boolean>(false);
@@ -227,10 +238,27 @@ export function CashAdvanceView({
 
   const handleConfirmDisburse = () => {
     if (!disburseModalAdvance) return;
+    const refStr = disburseReference || `DISB-${Date.now().toString().slice(-6)}`;
     onDisburseCashAdvance(disburseModalAdvance.id, {
       method: disburseMethod,
-      reference: disburseReference || `DISB-${Date.now().toString().slice(-6)}`,
+      reference: refStr,
       notes: disburseNotes,
+    });
+    const emp = employees.find((e) => e.id === disburseModalAdvance.employeeId);
+    setAdminWaNote(
+      disburseNotes ||
+        `Dana kasbon sebesar ${formatRupiah(disburseModalAdvance.amount)} telah dicairkan via ${disburseMethod} (Ref: ${refStr}).`
+    );
+    setWaQuickPrompt({
+      advance: {
+        ...disburseModalAdvance,
+        status: 'disbursed',
+        disbursementMethod: disburseMethod,
+        disbursementReference: refStr,
+        notes: disburseNotes,
+      },
+      status: 'disbursed',
+      emp,
     });
     setDisburseModalAdvance(null);
   };
@@ -243,6 +271,17 @@ export function CashAdvanceView({
   const handleConfirmReject = () => {
     if (!rejectModalAdvance || !rejectionReason.trim()) return;
     onRejectCashAdvance(rejectModalAdvance.id, rejectionReason.trim());
+    const emp = employees.find((e) => e.id === rejectModalAdvance.employeeId);
+    setAdminWaNote(rejectionReason.trim());
+    setWaQuickPrompt({
+      advance: {
+        ...rejectModalAdvance,
+        status: 'rejected',
+        rejectionReason: rejectionReason.trim(),
+      },
+      status: 'rejected',
+      emp,
+    });
     setRejectModalAdvance(null);
   };
 
@@ -330,6 +369,92 @@ export function CashAdvanceView({
           </button>
         </div>
       </div>
+
+      {/* Banner Cepat Kirim Notifikasi WA ke Karyawan setelah Setujui / Tolak / Cairkan */}
+      {waQuickPrompt && (
+        <div
+          className={`p-4 rounded-2xl border shadow-sm flex flex-col gap-3 animate-in fade-in ${
+            waQuickPrompt.status === 'rejected'
+              ? 'bg-rose-50/90 border-rose-300'
+              : 'bg-emerald-50/90 border-emerald-300'
+          }`}
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <div
+                className={`p-2 rounded-xl shrink-0 ${
+                  waQuickPrompt.status === 'rejected'
+                    ? 'bg-rose-600 text-white'
+                    : 'bg-emerald-600 text-white'
+                }`}
+              >
+                <MessageCircle className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="text-xs sm:text-sm font-bold text-slate-900">
+                  Pengajuan Kasbon {waQuickPrompt.advance.employeeName} (
+                  {formatRupiah(waQuickPrompt.advance.amount)}) telah{' '}
+                  <span
+                    className={
+                      waQuickPrompt.status === 'rejected' ? 'text-rose-700' : 'text-emerald-700'
+                    }
+                  >
+                    {waQuickPrompt.status === 'approved'
+                      ? 'DISETUJUI'
+                      : waQuickPrompt.status === 'disbursed'
+                      ? 'DICAIRKAN'
+                      : 'DITOLAK'}
+                  </span>
+                </h4>
+                <p className="text-[11px] text-slate-600 mt-0.5">
+                  Nomor WA Karyawan:{' '}
+                  <strong className="font-mono text-slate-800">
+                    {formatWhatsAppPhone(waQuickPrompt.emp?.phone)
+                      ? `+${formatWhatsAppPhone(waQuickPrompt.emp?.phone)}`
+                      : 'Belum diisi (akan membuka kontak WA)'}
+                  </strong>{' '}
+                  — Sesuaikan catatan admin di bawah lalu klik tombol untuk mengirim WhatsApp.
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setWaQuickPrompt(null)}
+              className="self-end sm:self-center p-1 text-slate-400 hover:text-slate-700 rounded-lg cursor-pointer"
+              title="Tutup panel notifikasi"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+            <input
+              type="text"
+              value={adminWaNote}
+              onChange={(e) => setAdminWaNote(e.target.value)}
+              placeholder="Catatan admin / finance untuk disertakan di pesan WhatsApp..."
+              className="flex-1 px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-800 focus:outline-hidden focus:border-emerald-600"
+            />
+            <a
+              href={getCashAdvanceStatusWhatsAppUrl(
+                waQuickPrompt.emp,
+                waQuickPrompt.advance,
+                waQuickPrompt.status,
+                adminWaNote,
+                companyConfig.companyName
+              )}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl text-xs inline-flex items-center justify-center gap-1.5 shadow-sm shrink-0 transition-colors"
+            >
+              <MessageCircle className="w-4 h-4" />
+              <span>Kirim Notifikasi WA ke Karyawan</span>
+              <ExternalLink className="w-3.5 h-3.5" />
+            </a>
+          </div>
+        </div>
+      )}
 
       {/* Metric Highlights */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -622,7 +747,17 @@ export function CashAdvanceView({
                             <>
                               <button
                                 type="button"
-                                onClick={() => onApproveCashAdvance(adv.id)}
+                                onClick={() => {
+                                  const note =
+                                    'Permohonan kasbon Anda telah disetujui HRD PT Tas Grosir Import dan segera diproses pencairannya oleh tim Finance.';
+                                  onApproveCashAdvance(adv.id, note);
+                                  setAdminWaNote(note);
+                                  setWaQuickPrompt({
+                                    advance: { ...adv, status: 'approved', notes: note },
+                                    status: 'approved',
+                                    emp,
+                                  });
+                                }}
                                 className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold cursor-pointer transition-all flex items-center gap-1 shadow-xs"
                               >
                                 <Check className="w-3.5 h-3.5" />
@@ -669,6 +804,26 @@ export function CashAdvanceView({
                               <Receipt className="w-3.5 h-3.5 text-amber-600" />
                               <span>Potong Gaji</span>
                             </button>
+                          )}
+
+                          {/* Tombol Kirim Notifikasi WA ke Karyawan untuk kasbon yang sudah diproses */}
+                          {adv.status !== 'pending' && (
+                            <a
+                              href={getCashAdvanceStatusWhatsAppUrl(
+                                emp,
+                                adv,
+                                adv.status,
+                                adv.rejectionReason || adv.notes,
+                                companyConfig.companyName
+                              )}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="px-2.5 py-1.5 rounded-lg bg-green-600 hover:bg-green-700 text-white text-xs font-bold inline-flex items-center gap-1 shadow-2xs transition-colors"
+                              title={`Kirim Notifikasi WA Status Kasbon ke ${adv.employeeName}`}
+                            >
+                              <MessageCircle className="w-3.5 h-3.5" />
+                              <span>Kirim Notifikasi WA ke Karyawan</span>
+                            </a>
                           )}
                         </div>
                       </td>

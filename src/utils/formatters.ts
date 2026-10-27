@@ -1,4 +1,11 @@
-import { Employee, PayrollRecord, PTKPStatus, WorkShift } from '../types';
+import {
+  Employee,
+  PayrollRecord,
+  PTKPStatus,
+  WorkShift,
+  AttendanceRecord,
+  AttendancePenaltyPolicy,
+} from '../types';
 
 export function formatRupiah(amount: number): string {
   return new Intl.NumberFormat('id-ID', {
@@ -283,27 +290,86 @@ export const DEFAULT_WORK_SHIFTS: WorkShift[] = [
   },
 ];
 
-// Ambil jadwal shift kerja karyawan yang berlaku
+// Ambil jadwal shift kerja karyawan yang berlaku (mendukung pencocokan berdasarkan ID maupun Kode Shift seperti SHF-01)
 export function getEmployeeShift(
   employee?: Partial<Employee> | null,
   shifts?: WorkShift[]
 ): WorkShift {
   const list = shifts && shifts.length > 0 ? shifts : DEFAULT_WORK_SHIFTS;
   if (employee?.shiftId) {
-    const matched = list.find((s) => s.id === employee.shiftId);
+    const matched = list.find(
+      (s) => s.id === employee.shiftId || s.code === employee.shiftId
+    );
     if (matched) return matched;
   }
   return list.find((s) => s.isDefault) || list[0] || DEFAULT_WORK_SHIFTS[0];
 }
 
+// Aturan Denda Keterlambatan & Potongan Absen Default (Bisa Dikustomisasi Admin)
+export const DEFAULT_ATTENDANCE_PENALTY_POLICY: AttendancePenaltyPolicy = {
+  enabled: true,
+  gracePeriodMinutes: 15, // Default toleransi keterlambatan 15 menit
+  useShiftGracePeriod: false, // Default mengikuti gracePeriodMinutes di panel aturan denda (15 menit)
+  latePenaltyScheme: 'flat_per_incident', // 'flat_per_incident' | 'per_minute' | 'daily_allowance_cut'
+  flatLatePenaltyAmount: 25000, // Rp 25.000 / kejadian terlambat
+  perMinutePenaltyAmount: 1000, // Rp 1.000 / menit terlambat
+  dailyAllowanceCutPercentage: 100, // Potong 100% tunjangan makan/transport harian
+  alphaPenaltyScheme: 'proportional_25', // 'proportional_25' (1/25 x Gaji Pokok) | 'fixed_amount'
+  alphaWorkingDaysDivisor: 25, // Pembagi proporsional 25 hari kerja
+  fixedAlphaPenaltyAmount: 150000, // Rp 150.000 / hari Alpha
+};
+
+export function getAttendancePenaltyPolicy(
+  custom?: Partial<AttendancePenaltyPolicy> | null
+): AttendancePenaltyPolicy {
+  return {
+    ...DEFAULT_ATTENDANCE_PENALTY_POLICY,
+    ...(custom || {}),
+    enabled: custom?.enabled !== undefined ? Boolean(custom.enabled) : true,
+    gracePeriodMinutes:
+      custom?.gracePeriodMinutes !== undefined
+        ? Math.max(0, Number(custom.gracePeriodMinutes) || 0)
+        : DEFAULT_ATTENDANCE_PENALTY_POLICY.gracePeriodMinutes,
+    useShiftGracePeriod:
+      custom?.useShiftGracePeriod !== undefined ? Boolean(custom.useShiftGracePeriod) : false,
+    latePenaltyScheme: custom?.latePenaltyScheme || DEFAULT_ATTENDANCE_PENALTY_POLICY.latePenaltyScheme,
+    flatLatePenaltyAmount:
+      custom?.flatLatePenaltyAmount !== undefined
+        ? Math.max(0, Number(custom.flatLatePenaltyAmount) || 0)
+        : DEFAULT_ATTENDANCE_PENALTY_POLICY.flatLatePenaltyAmount,
+    perMinutePenaltyAmount:
+      custom?.perMinutePenaltyAmount !== undefined
+        ? Math.max(0, Number(custom.perMinutePenaltyAmount) || 0)
+        : DEFAULT_ATTENDANCE_PENALTY_POLICY.perMinutePenaltyAmount,
+    dailyAllowanceCutPercentage:
+      custom?.dailyAllowanceCutPercentage !== undefined
+        ? Math.min(100, Math.max(0, Number(custom.dailyAllowanceCutPercentage) || 0))
+        : DEFAULT_ATTENDANCE_PENALTY_POLICY.dailyAllowanceCutPercentage,
+    alphaPenaltyScheme:
+      custom?.alphaPenaltyScheme || DEFAULT_ATTENDANCE_PENALTY_POLICY.alphaPenaltyScheme,
+    alphaWorkingDaysDivisor:
+      custom?.alphaWorkingDaysDivisor !== undefined
+        ? Math.max(1, Number(custom.alphaWorkingDaysDivisor) || 25)
+        : DEFAULT_ATTENDANCE_PENALTY_POLICY.alphaWorkingDaysDivisor,
+    fixedAlphaPenaltyAmount:
+      custom?.fixedAlphaPenaltyAmount !== undefined
+        ? Math.max(0, Number(custom.fixedAlphaPenaltyAmount) || 0)
+        : DEFAULT_ATTENDANCE_PENALTY_POLICY.fixedAlphaPenaltyAmount,
+  };
+}
+
 // Evaluasi jam masuk & pulang terhadap jadwal shift yang ditentukan
+// Menghitung otomatis Durasi Terlambat (Menit) berdasarkan selisih Jam Masuk karyawan dengan Jam Masuk Shift
+// Contoh: Shift 08:00, masuk 09:48 = terlambat 108 menit
 export function evaluateAttendanceAgainstShift(
   checkIn: string,
   checkOut: string,
-  shift: WorkShift
+  shift: WorkShift,
+  overrideGracePeriodMinutes?: number
 ): {
   status: 'Hadir Tepat Waktu' | 'Terlambat';
   lateMinutes: number;
+  rawLateMinutes: number;
   earlyLeaveMinutes: number;
   workHours: number;
   maxAllowedCheckIn: string;
@@ -316,7 +382,10 @@ export function evaluateAttendanceAgainstShift(
     scheduledEnd += 24 * 60;
   }
 
-  const grace = Math.max(0, Number(shift.gracePeriodMinutes) || 0);
+  const grace =
+    overrideGracePeriodMinutes !== undefined
+      ? Math.max(0, Number(overrideGracePeriodMinutes) || 0)
+      : Math.max(0, Number(shift.gracePeriodMinutes) || 0);
   const maxAllowedTotal = (scheduledStart + grace) % (24 * 60);
   const maxAllowedCheckIn = `${String(Math.floor(maxAllowedTotal / 60)).padStart(2, '0')}:${String(
     maxAllowedTotal % 60
@@ -324,12 +393,16 @@ export function evaluateAttendanceAgainstShift(
 
   // Parse actual checkIn
   const [ch, cm] = (checkIn || '').split(':').map(Number);
+  let rawLateMinutes = 0;
   let lateMinutes = 0;
   if (!isNaN(ch) && !isNaN(cm)) {
     let actualStart = ch * 60 + cm;
     // Handle overnight shift where scheduledStart is e.g. 21:00 and actualStart is 00:30
     if (scheduledStart >= 18 * 60 && actualStart < 6 * 60) {
       actualStart += 24 * 60;
+    }
+    if (actualStart > scheduledStart) {
+      rawLateMinutes = actualStart - scheduledStart;
     }
     if (actualStart > scheduledStart + grace) {
       lateMinutes = actualStart - scheduledStart;
@@ -375,13 +448,311 @@ export function evaluateAttendanceAgainstShift(
   return {
     status,
     lateMinutes,
+    rawLateMinutes,
     earlyLeaveMinutes,
     workHours,
     maxAllowedCheckIn,
   };
 }
 
-// Hitung Payroll Karyawan Lengkap sesuai Regulasi Indonesia (Lembur dihitung Per Menit)
+// Helper konversi jam HH:mm ke menit untuk pengurutan log masuk pertama
+function parseTimeToMins(t?: string): number {
+  if (!t || t === '-') return 99999;
+  const [h, m] = t.split(':').map(Number);
+  if (isNaN(h) || isNaN(m)) return 99999;
+  return h * 60 + m;
+}
+
+// Deduplikasi & Akurasi Presensi Harian:
+// Hanya mengambil 1 log masuk pertama per karyawan per tanggal (menggabungkan jam pulang terbaru pada hari yang sama)
+// serta menghitung ulang Durasi Terlambat (Menit) berdasarkan selisih Jam Masuk dengan Jam Masuk Shift.
+export function deduplicateDailyAttendances(
+  attendances: AttendanceRecord[],
+  employees?: Employee[],
+  shifts?: WorkShift[],
+  penaltyPolicy?: Partial<AttendancePenaltyPolicy> | null
+): AttendanceRecord[] {
+  if (!Array.isArray(attendances) || attendances.length === 0) return [];
+  const policy = getAttendancePenaltyPolicy(penaltyPolicy);
+  const empMap = new Map<string, Employee>();
+  (employees || []).forEach((e) => empMap.set(e.id, e));
+
+  const grouped = new Map<string, AttendanceRecord[]>();
+  for (const att of attendances) {
+    if (!att || !att.employeeId || !att.date) continue;
+    const key = `${att.employeeId}__${att.date}`;
+    const list = grouped.get(key) || [];
+    list.push(att);
+    grouped.set(key, list);
+  }
+
+  const deduplicated: AttendanceRecord[] = [];
+
+  grouped.forEach((recordsOnSameDay) => {
+    // Sort by earliest valid checkIn time so we strictly take the 1st check-in log of that date
+    const sorted = [...recordsOnSameDay].sort(
+      (a, b) => parseTimeToMins(a.checkIn) - parseTimeToMins(b.checkIn)
+    );
+    const primary = sorted[0];
+
+    // Merge latest valid checkOut from any record on the same day
+    let mergedCheckOut = primary.checkOut;
+    let mergedCheckOutPhoto = primary.checkOutPhotoSnapshot;
+    let mergedCheckOutTimestamp = primary.checkOutFullTimestamp;
+    let mergedCheckOutCoords = primary.checkOutLocationCoords;
+    let mergedCheckOutAddress = primary.checkOutLocationAddress;
+
+    for (const r of sorted) {
+      if (r.checkOut && r.checkOut !== '-' && r.checkOut.trim() !== '') {
+        mergedCheckOut = r.checkOut;
+        mergedCheckOutPhoto = r.checkOutPhotoSnapshot || mergedCheckOutPhoto;
+        mergedCheckOutTimestamp = r.checkOutFullTimestamp || mergedCheckOutTimestamp;
+        mergedCheckOutCoords = r.checkOutLocationCoords || mergedCheckOutCoords;
+        mergedCheckOutAddress = r.checkOutLocationAddress || mergedCheckOutAddress;
+      }
+    }
+
+    const emp = empMap.get(primary.employeeId);
+    const empShift = getEmployeeShift(emp, shifts);
+    const scheduledIn = empShift.checkInTime || primary.scheduledCheckIn || '09:00';
+    const scheduledOut = empShift.checkOutTime || primary.scheduledCheckOut || '17:30';
+    const effectiveShift: WorkShift = {
+      ...empShift,
+      checkInTime: scheduledIn,
+      checkOutTime: scheduledOut,
+    };
+
+    const isNonPresentStatus =
+      primary.status === 'Sakit' ||
+      primary.status === 'Izin' ||
+      primary.status === 'Cuti' ||
+      primary.status === 'Alpa';
+
+    const hasValidCheckIn =
+      !isNonPresentStatus &&
+      Boolean(primary.checkIn && primary.checkIn !== '-' && primary.checkIn.includes(':'));
+
+    if (hasValidCheckIn) {
+      const effectiveGrace = policy.useShiftGracePeriod
+        ? empShift.gracePeriodMinutes
+        : policy.gracePeriodMinutes;
+      const evalRes = evaluateAttendanceAgainstShift(
+        primary.checkIn,
+        mergedCheckOut,
+        effectiveShift,
+        effectiveGrace
+      );
+
+      const finalStatus = primary.isManualStatus ? primary.status : evalRes.status;
+      const finalLateMins = primary.isManualStatus
+        ? primary.status === 'Hadir Tepat Waktu'
+          ? 0
+          : primary.lateMinutes > 0
+          ? primary.lateMinutes
+          : Math.max(1, evalRes.rawLateMinutes || evalRes.lateMinutes)
+        : evalRes.lateMinutes;
+
+      deduplicated.push({
+        ...primary,
+        checkOut: mergedCheckOut,
+        checkOutPhotoSnapshot: mergedCheckOutPhoto,
+        checkOutFullTimestamp: mergedCheckOutTimestamp,
+        checkOutLocationCoords: mergedCheckOutCoords,
+        checkOutLocationAddress: mergedCheckOutAddress,
+        scheduledCheckIn: scheduledIn,
+        scheduledCheckOut: scheduledOut,
+        shiftId: empShift.id || primary.shiftId,
+        shiftName: empShift.name || primary.shiftName,
+        lateMinutes: finalLateMins,
+        earlyLeaveMinutes: evalRes.earlyLeaveMinutes,
+        workHours: evalRes.workHours,
+        status: finalStatus,
+      });
+    } else {
+      deduplicated.push({
+        ...primary,
+        checkOut: isNonPresentStatus ? '-' : mergedCheckOut,
+        lateMinutes: 0,
+        earlyLeaveMinutes: 0,
+        workHours: isNonPresentStatus ? 0 : primary.workHours || 0,
+      });
+    }
+  });
+
+  // Sort deduplicated records by date descending, then checkIn descending
+  return deduplicated.sort((a, b) => {
+    if (a.date !== b.date) return b.date.localeCompare(a.date);
+    return parseTimeToMins(b.checkIn) - parseTimeToMins(a.checkIn);
+  });
+}
+
+// Ambil 1 log presensi terbaru per karyawan aktif untuk ringkasan "Kehadiran Hari Ini" di Dashboard
+// (Mencegah terhitung ganda seperti 7/4 hadir jika karyawan punya log di beberapa hari atau absen 2x)
+export function getTodayDeduplicatedAttendances(
+  attendances: AttendanceRecord[],
+  activeEmployees: Employee[],
+  shifts?: WorkShift[],
+  penaltyPolicy?: Partial<AttendancePenaltyPolicy> | null
+): AttendanceRecord[] {
+  const activeIdSet = new Set(activeEmployees.map((e) => e.id));
+  const dedupedAll = deduplicateDailyAttendances(
+    attendances.filter((a) => activeIdSet.has(a.employeeId)),
+    activeEmployees,
+    shifts,
+    penaltyPolicy
+  );
+
+  if (dedupedAll.length === 0) return [];
+
+  const todayIso = new Date().toISOString().split('T')[0];
+  const hasTodayLogs = dedupedAll.some((a) => a.date === todayIso);
+  if (hasTodayLogs) {
+    return dedupedAll.filter((a) => a.date === todayIso);
+  }
+
+  // Fallback: take at most 1 latest attendance log per active employee
+  const latestPerEmployee = new Map<string, AttendanceRecord>();
+  for (const att of dedupedAll) {
+    if (!latestPerEmployee.has(att.employeeId)) {
+      latestPerEmployee.set(att.employeeId, att);
+    }
+  }
+  return Array.from(latestPerEmployee.values());
+}
+
+export interface EmployeeAttendancePenaltySummary {
+  employeeId: string;
+  presentDaysCount: number;
+  onTimeDaysCount: number;
+  lateFrequency: number; // Berapa kali/hari terlambat melewati toleransi
+  totalLateMinutes: number; // Total durasi terlambat (menit)
+  latePenaltyAmount: number; // Nominal denda terlambat (Rp)
+  alphaDaysCount: number; // Jumlah hari Alpha / Mangkir
+  alphaPenaltyAmount: number; // Nominal potongan Alpha (Rp)
+  sickOrLeaveDaysCount: number; // Jumlah hari Sakit / Izin / Cuti
+  totalDeductionAmount: number; // Total gabungan (latePenaltyAmount + alphaPenaltyAmount)
+  deductionNotes: string; // Contoh: "Potongan Terlambat 4x / 210 mnt: -Rp 100.000"
+  deduplicatedRecords: AttendanceRecord[];
+}
+
+// Hitung otomatis Frekuensi Terlambat, Total Menit Terlambat, Alpha, dan Nominal Potongan per Karyawan
+export function calculateEmployeeAttendancePenalty(
+  employee: Employee,
+  attendances: AttendanceRecord[],
+  shifts?: WorkShift[],
+  penaltyPolicy?: Partial<AttendancePenaltyPolicy> | null
+): EmployeeAttendancePenaltySummary {
+  const policy = getAttendancePenaltyPolicy(penaltyPolicy);
+  const empAttendances = (attendances || []).filter((a) => a.employeeId === employee.id);
+  const deduped = deduplicateDailyAttendances(empAttendances, [employee], shifts, policy);
+
+  let presentDaysCount = 0;
+  let onTimeDaysCount = 0;
+  let lateFrequency = 0;
+  let totalLateMinutes = 0;
+  let alphaDaysCount = 0;
+  let sickOrLeaveDaysCount = 0;
+
+  for (const rec of deduped) {
+    if (rec.status === 'Alpa') {
+      alphaDaysCount += 1;
+    } else if (rec.status === 'Sakit' || rec.status === 'Izin' || rec.status === 'Cuti') {
+      sickOrLeaveDaysCount += 1;
+    } else if (rec.status === 'Terlambat' || rec.lateMinutes > 0) {
+      presentDaysCount += 1;
+      lateFrequency += 1;
+      totalLateMinutes += Math.max(0, Math.round(rec.lateMinutes || 0));
+    } else if (rec.status === 'Hadir Tepat Waktu') {
+      presentDaysCount += 1;
+      onTimeDaysCount += 1;
+    }
+  }
+
+  let latePenaltyAmount = 0;
+  let alphaPenaltyAmount = 0;
+
+  if (policy.enabled) {
+    // 1. Kalkulasi Denda Keterlambatan sesuai Skema Admin
+    if (lateFrequency > 0 && totalLateMinutes > 0) {
+      if (policy.latePenaltyScheme === 'flat_per_incident') {
+        latePenaltyAmount = Math.round(lateFrequency * policy.flatLatePenaltyAmount);
+      } else if (policy.latePenaltyScheme === 'per_minute') {
+        latePenaltyAmount = Math.round(totalLateMinutes * policy.perMinutePenaltyAmount);
+      } else if (policy.latePenaltyScheme === 'daily_allowance_cut') {
+        const mealAndTransport =
+          (Number(employee.allowances?.meal) || 0) + (Number(employee.allowances?.transport) || 0);
+        const divisor = Math.max(1, policy.alphaWorkingDaysDivisor || 25);
+        const dailyAllowance =
+          mealAndTransport > 0 ? Math.round(mealAndTransport / divisor) : 50000;
+        const cutPerIncident = Math.round(
+          dailyAllowance * (policy.dailyAllowanceCutPercentage / 100)
+        );
+        latePenaltyAmount = Math.round(lateFrequency * cutPerIncident);
+      }
+    }
+
+    // 2. Kalkulasi Potongan Alpha / Mangkir sesuai Skema Admin
+    if (alphaDaysCount > 0) {
+      if (policy.alphaPenaltyScheme === 'proportional_25') {
+        const divisor = Math.max(1, policy.alphaWorkingDaysDivisor || 25);
+        const perDayBase = Math.round((Number(employee.baseSalary) || 0) / divisor);
+        alphaPenaltyAmount = Math.round(alphaDaysCount * perDayBase);
+      } else {
+        alphaPenaltyAmount = Math.round(alphaDaysCount * policy.fixedAlphaPenaltyAmount);
+      }
+    }
+  }
+
+  const totalDeductionAmount = latePenaltyAmount + alphaPenaltyAmount;
+
+  let deductionNotes = 'Disiplin Penuh (0x Terlambat • 0 Alpha)';
+  if (lateFrequency > 0 && alphaDaysCount > 0) {
+    deductionNotes = `Potongan Terlambat ${lateFrequency}x / ${totalLateMinutes} mnt (-${formatRupiah(
+      latePenaltyAmount
+    )}) & Alpha ${alphaDaysCount}x (-${formatRupiah(alphaPenaltyAmount)})`;
+  } else if (lateFrequency > 0) {
+    deductionNotes = `Potongan Terlambat ${lateFrequency}x / ${totalLateMinutes} mnt: -${formatRupiah(
+      latePenaltyAmount
+    )}`;
+  } else if (alphaDaysCount > 0) {
+    deductionNotes = `Potongan Alpha / Mangkir ${alphaDaysCount}x: -${formatRupiah(
+      alphaPenaltyAmount
+    )}`;
+  }
+
+  return {
+    employeeId: employee.id,
+    presentDaysCount,
+    onTimeDaysCount,
+    lateFrequency,
+    totalLateMinutes,
+    latePenaltyAmount,
+    alphaDaysCount,
+    alphaPenaltyAmount,
+    sickOrLeaveDaysCount,
+    totalDeductionAmount,
+    deductionNotes,
+    deduplicatedRecords: deduped,
+  };
+}
+
+export interface PayrollAttendancePenaltyMeta {
+  lateFrequency?: number;
+  totalLateMinutes?: number;
+  latePenaltyAmount?: number;
+  alphaDaysCount?: number;
+  alphaPenaltyAmount?: number;
+  attendanceDeductionNotes?: string;
+  customLateDeduction?: number;
+  isLateFeeWaived?: boolean;
+  originalLateDeduction?: number;
+  waiverReason?: string;
+  isLocked?: boolean;
+  lockedAt?: string;
+  penaltyPolicy?: Partial<AttendancePenaltyPolicy> | null;
+}
+
+// Hitung Payroll Karyawan Lengkap sesuai Regulasi Indonesia (Lembur dihitung Per Menit & Potongan Terlambat/Absen Otomatis)
 export function calculatePayroll(
   employee: Employee,
   period: string,
@@ -389,10 +760,16 @@ export function calculatePayroll(
   bonus: number = 0,
   lateMinutes: number = 0,
   cashAdvanceDeduction: number = 0,
-  cashAdvanceNotes?: string
+  cashAdvanceNotes?: string,
+  attendancePenaltyMeta?: PayrollAttendancePenaltyMeta
 ): PayrollRecord {
   const baseSalary = Number(employee.baseSalary) || 0;
-  const allowances = employee.allowances || { position: 0, transport: 0, meal: 0, communication: 0 };
+  const allowances = employee.allowances || {
+    position: 0,
+    transport: 0,
+    meal: 0,
+    communication: 0,
+  };
   const position = Number(allowances.position) || 0;
   const transport = Number(allowances.transport) || 0;
   const meal = Number(allowances.meal) || 0;
@@ -403,10 +780,97 @@ export function calculatePayroll(
   const normalizedMinutes = Math.max(0, Math.round(overtimeMinutes));
   const overtimePay = Math.round(normalizedMinutes * overtimeRatePerMinute);
 
-  const totalGrossSalary = baseSalary + position + transport + meal + communication + overtimePay + bonus;
+  const totalGrossSalary =
+    baseSalary + position + transport + meal + communication + overtimePay + bonus;
 
-  // Denda Keterlambatan: Rp 2.000 / menit terlambat (kebijakan perusahaan)
-  const lateDeduction = lateMinutes > 15 ? Math.round((lateMinutes - 15) * 2000) : 0;
+  // Denda Keterlambatan & Potongan Absen (Otomatis dari Rekap Presensi atau Parameter)
+  const policy = getAttendancePenaltyPolicy(attendancePenaltyMeta?.penaltyPolicy);
+  const resolvedTotalLateMins =
+    attendancePenaltyMeta?.totalLateMinutes !== undefined
+      ? Math.max(0, Math.round(attendancePenaltyMeta.totalLateMinutes))
+      : Math.max(0, Math.round(lateMinutes));
+  const resolvedLateFreq =
+    attendancePenaltyMeta?.lateFrequency !== undefined
+      ? Math.max(0, Math.round(attendancePenaltyMeta.lateFrequency))
+      : resolvedTotalLateMins > policy.gracePeriodMinutes
+      ? 1
+      : 0;
+  const resolvedAlphaDays = Math.max(0, Math.round(attendancePenaltyMeta?.alphaDaysCount || 0));
+
+  let latePenaltyAmount = 0;
+  let alphaPenaltyAmount = 0;
+  let lateDeduction = 0;
+
+  if (attendancePenaltyMeta?.customLateDeduction !== undefined) {
+    lateDeduction = Math.max(0, Math.round(attendancePenaltyMeta.customLateDeduction));
+    latePenaltyAmount =
+      attendancePenaltyMeta.latePenaltyAmount !== undefined
+        ? attendancePenaltyMeta.latePenaltyAmount
+        : lateDeduction;
+    alphaPenaltyAmount = attendancePenaltyMeta.alphaPenaltyAmount || 0;
+  } else if (policy.enabled) {
+    if (resolvedLateFreq > 0 && resolvedTotalLateMins > 0) {
+      if (policy.latePenaltyScheme === 'flat_per_incident') {
+        latePenaltyAmount = Math.round(resolvedLateFreq * policy.flatLatePenaltyAmount);
+      } else if (policy.latePenaltyScheme === 'per_minute') {
+        latePenaltyAmount = Math.round(resolvedTotalLateMins * policy.perMinutePenaltyAmount);
+      } else if (policy.latePenaltyScheme === 'daily_allowance_cut') {
+        const divisor = Math.max(1, policy.alphaWorkingDaysDivisor || 25);
+        const dailyAllow =
+          meal + transport > 0 ? Math.round((meal + transport) / divisor) : 50000;
+        const cutPerDay = Math.round(dailyAllow * (policy.dailyAllowanceCutPercentage / 100));
+        latePenaltyAmount = Math.round(resolvedLateFreq * cutPerDay);
+      }
+    }
+
+    if (resolvedAlphaDays > 0) {
+      if (policy.alphaPenaltyScheme === 'proportional_25') {
+        const divisor = Math.max(1, policy.alphaWorkingDaysDivisor || 25);
+        alphaPenaltyAmount = Math.round(resolvedAlphaDays * (baseSalary / divisor));
+      } else {
+        alphaPenaltyAmount = Math.round(resolvedAlphaDays * policy.fixedAlphaPenaltyAmount);
+      }
+    }
+
+    lateDeduction = latePenaltyAmount + alphaPenaltyAmount;
+  }
+
+  const originalLateDeduction =
+    attendancePenaltyMeta?.originalLateDeduction !== undefined
+      ? attendancePenaltyMeta.originalLateDeduction
+      : lateDeduction;
+  const isLateFeeWaived = Boolean(attendancePenaltyMeta?.isLateFeeWaived);
+  const waiverReason = attendancePenaltyMeta?.waiverReason;
+
+  if (isLateFeeWaived) {
+    lateDeduction = 0;
+    latePenaltyAmount = 0;
+    alphaPenaltyAmount = 0;
+  }
+
+  let attendanceDeductionNotes = attendancePenaltyMeta?.attendanceDeductionNotes;
+  if (isLateFeeWaived) {
+    attendanceDeductionNotes =
+      originalLateDeduction > 0
+        ? `Dispensasi Denda Absensi (${waiverReason || 'Tugas Luar / Kebijakan HR'}): Rp 0 (Bebas Denda Semula -${formatRupiah(
+            originalLateDeduction
+          )})`
+        : `Dispensasi Denda Absensi Aktif (${waiverReason || 'Tugas Luar / Kebijakan HR'}): Rp 0`;
+  } else if (!attendanceDeductionNotes) {
+    if (resolvedLateFreq > 0 && resolvedAlphaDays > 0) {
+      attendanceDeductionNotes = `Potongan Terlambat ${resolvedLateFreq}x / ${resolvedTotalLateMins} mnt (-${formatRupiah(
+        latePenaltyAmount
+      )}) & Alpha ${resolvedAlphaDays}x (-${formatRupiah(alphaPenaltyAmount)})`;
+    } else if (resolvedLateFreq > 0 && lateDeduction > 0) {
+      attendanceDeductionNotes = `Potongan Terlambat ${resolvedLateFreq}x / ${resolvedTotalLateMins} mnt: -${formatRupiah(
+        lateDeduction
+      )}`;
+    } else if (resolvedAlphaDays > 0 && lateDeduction > 0) {
+      attendanceDeductionNotes = `Potongan Alpha / Mangkir ${resolvedAlphaDays}x: -${formatRupiah(
+        alphaPenaltyAmount
+      )}`;
+    }
+  }
 
   // BPJS Kesehatan: Max batas atas Rp 12.000.000
   const bpjsKesBase = Math.min(baseSalary + position, 12000000);
@@ -425,7 +889,7 @@ export function calculatePayroll(
 
   // JKK & JKM (Ditanggung perusahaan seluruhnya)
   const bpjsJkkEmployer = Math.round(bpjsJhtBase * 0.0024); // 0.24% risiko rendah
-  const bpjsJkmEmployer = Math.round(bpjsJhtBase * 0.003);  // 0.3%
+  const bpjsJkmEmployer = Math.round(bpjsJhtBase * 0.003); // 0.3%
 
   // PPh 21 TER Ketentuan Terbaru 2026 (Sistem Coretax DJP)
   const category = getTERCategory(employee.ptkpStatus);
@@ -460,6 +924,15 @@ export function calculatePayroll(
     bonus,
     totalGrossSalary,
     lateDeduction,
+    originalLateDeduction,
+    isLateFeeWaived,
+    waiverReason,
+    lateFrequency: resolvedLateFreq,
+    totalLateMinutes: resolvedTotalLateMins,
+    latePenaltyAmount,
+    alphaDaysCount: resolvedAlphaDays,
+    alphaPenaltyAmount,
+    attendanceDeductionNotes,
     bpjsKesehatanEmployee,
     bpjsKesehatanEmployer,
     bpjsJhtEmployee,
@@ -477,6 +950,8 @@ export function calculatePayroll(
     paymentStatus: 'Lunas',
     paymentDate: new Date().toISOString().split('T')[0],
     referenceNumber,
+    isLocked: attendancePenaltyMeta?.isLocked,
+    lockedAt: attendancePenaltyMeta?.lockedAt,
   };
 }
 
@@ -678,5 +1153,100 @@ export function getContractValidityInfo(employee?: Partial<Employee> | null): {
     warningMessage: null,
   };
 }
+
+// Deteksi Rekening Bank Duplikat (>= 2 karyawan memiliki nomor rekening sama persis) atau Belum Valid (< 10 digit)
+export interface BankAccountValidationResult {
+  isInvalid: boolean;
+  isDuplicate: boolean;
+  isTooShort: boolean;
+  digitCount: number;
+  cleanAccountNumber: string;
+  duplicateEmployeeNames: string[];
+  badgeLabel: string;
+  detailReason: string;
+}
+
+export function evaluateBankAccountValidity(
+  employee?: Partial<Employee> | null,
+  allEmployees: Employee[] = []
+): BankAccountValidationResult {
+  const cleanAccountNumber = (employee?.bankAccountNumber || '').replace(/\D/g, '');
+  const digitCount = cleanAccountNumber.length;
+  const isTooShort = digitCount < 10;
+
+  const activeEmployees = allEmployees.filter((e) => e.isActive !== false);
+  const matchingEmployees =
+    digitCount > 0
+      ? activeEmployees.filter(
+          (e) => (e.bankAccountNumber || '').replace(/\D/g, '') === cleanAccountNumber
+        )
+      : [];
+
+  const isDuplicate = matchingEmployees.length >= 2;
+  const duplicateEmployeeNames = matchingEmployees
+    .filter((e) => e.id !== employee?.id)
+    .map((e) => e.fullName);
+
+  const isInvalid = isDuplicate || isTooShort;
+  const badgeLabel = 'Rekening Duplikat / Perlu Cek';
+
+  let detailReason = 'Rekening Valid';
+  if (isDuplicate && isTooShort) {
+    detailReason = `Nomor rekening duplikat dengan ${duplicateEmployeeNames.join(', ')} & kurang dari 10 digit (${digitCount} digit)`;
+  } else if (isDuplicate) {
+    detailReason = `Nomor rekening (${cleanAccountNumber}) sama persis dengan: ${duplicateEmployeeNames.join(', ')}`;
+  } else if (isTooShort) {
+    detailReason =
+      digitCount === 0
+        ? 'Nomor rekening bank belum diisi'
+        : `Nomor rekening kurang dari 10 digit (${digitCount} digit)`;
+  }
+
+  return {
+    isInvalid,
+    isDuplicate,
+    isTooShort,
+    digitCount,
+    cleanAccountNumber,
+    duplicateEmployeeNames,
+    badgeLabel,
+    detailReason,
+  };
+}
+
+// Format Berita Transfer Bank singkat seperti "Gaji Okt 2026 PT TGI"
+export function formatBankTransferRemark(period: string, companyShortName: string = 'PT TGI'): string {
+  const monthShortMap: Record<string, string> = {
+    januari: 'Jan',
+    februari: 'Feb',
+    maret: 'Mar',
+    april: 'Apr',
+    mei: 'Mei',
+    juni: 'Jun',
+    juli: 'Jul',
+    agustus: 'Agu',
+    september: 'Sep',
+    oktober: 'Okt',
+    november: 'Nov',
+    desember: 'Des',
+  };
+
+  const parts = (period || 'Oktober 2026').trim().split(/\s+/);
+  const firstWord = (parts[0] || '').toLowerCase();
+  const shortMonth = monthShortMap[firstWord] || parts[0] || 'Okt';
+  const yearPart = parts.slice(1).join(' ') || '2026';
+
+  return `Gaji ${shortMonth} ${yearPart} ${companyShortName}`.trim();
+}
+
+export const AVAILABLE_PAYROLL_PERIODS: string[] = [
+  'Agustus 2026',
+  'September 2026',
+  'Oktober 2026',
+  'November 2026',
+  'Desember 2026',
+  'Januari 2027',
+];
+
 
 

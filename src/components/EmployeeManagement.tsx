@@ -33,6 +33,9 @@ import {
   Star,
   FileCheck2,
   Calendar,
+  MessageCircle,
+  ExternalLink,
+  AlertTriangle,
 } from 'lucide-react';
 import { Employee, Department, EmploymentStatus, PTKPStatus, CompanyAsset, PerformanceReview } from '../types';
 import {
@@ -41,7 +44,13 @@ import {
   formatNpwpInput,
   getNpwpStatusInfo,
   getContractValidityInfo,
+  evaluateBankAccountValidity,
 } from '../utils/formatters';
+import {
+  getContractReminderWhatsAppUrl,
+  getContractReminderEmailUrl,
+  formatWhatsAppPhone,
+} from '../utils/notificationHelper';
 import { validateImageFile, compressImage, compressVideoFrame } from '../utils/imageUtils';
 import { EmployeeDemographicsCharts } from './EmployeeDemographicsCharts';
 
@@ -517,6 +526,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
     const currentYear = new Date().getFullYear();
     const nikTrimmed = formData.nik?.trim() || `TGI-${currentYear}-${String(employees.length + 1).padStart(3, '0')}`;
     const emailTrimmed = formData.email?.trim() || `${fullNameTrimmed.toLowerCase().replace(/\s+/g, '.')}@tgi.co.id`;
+    const departmentTrimmed = formData.department?.trim() || editingEmployee?.department || 'Operasional';
 
     stopFormCamera();
 
@@ -527,6 +537,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         fullName: fullNameTrimmed,
         nik: nikTrimmed,
         email: emailTrimmed,
+        department: departmentTrimmed,
         ktpNumber: formData.ktpNumber?.replace(/\D/g, '').slice(0, 16) || editingEmployee.ktpNumber,
         npwp: formData.npwp?.trim() || editingEmployee.npwp,
         contractStartDate: formData.contractStartDate || formData.joinDate || editingEmployee.contractStartDate,
@@ -538,6 +549,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         contractDocumentUrl: formData.contractDocumentUrl || editingEmployee.contractDocumentUrl,
         contractDocumentName: formData.contractDocumentName || editingEmployee.contractDocumentName,
         contractUpdatedAt: formData.contractUpdatedAt || editingEmployee.contractUpdatedAt,
+        birthDate: formData.birthDate || editingEmployee.birthDate,
         baseSalary: Number(formData.baseSalary) || editingEmployee.baseSalary || 5000000,
         allowances: {
           position: Number(formData.allowances?.position) || 0,
@@ -549,7 +561,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         facePhotoUrl: formData.facePhotoUrl || formData.avatarUrl || editingEmployee.facePhotoUrl,
       };
       onUpdateEmployee(updated);
-      showToast(`Data karyawan ${updated.fullName} berhasil diperbarui & tersinkronisasi!`);
+      showToast(`Data karyawan ${updated.fullName} (Divisi: ${updated.department}) berhasil diperbarui & tersinkronisasi!`);
     } else {
       const joinDt = formData.joinDate || new Date().toISOString().split('T')[0];
       const newEmp: Employee = {
@@ -565,7 +577,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         facePhotoUrl: formData.facePhotoUrl || formData.avatarUrl,
         role: formData.role?.trim() || 'Staff Operasional',
         gender: formData.gender || 'Laki-laki',
-        department: (formData.department as Department) || 'Operasional',
+        department: departmentTrimmed,
         employmentStatus: (formData.employmentStatus as EmploymentStatus) || 'PKWT (Kontrak)',
         joinDate: joinDt,
         contractStartDate: formData.contractStartDate || joinDt,
@@ -575,6 +587,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         contractDocumentUrl: formData.contractDocumentUrl || undefined,
         contractDocumentName: formData.contractDocumentName || undefined,
         contractUpdatedAt: formData.contractUpdatedAt || undefined,
+        birthDate: formData.birthDate || undefined,
         baseSalary: Number(formData.baseSalary) || 5000000,
         allowances: {
           position: Number(formData.allowances?.position) || 0,
@@ -658,6 +671,34 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
     link.click();
     document.body.removeChild(link);
   };
+
+  // Dynamic unique departments from real employees in database
+  const uniqueDepartments = React.useMemo(() => {
+    return Array.from(
+      new Set(
+        employees
+          .map((e) => e.department?.trim())
+          .filter((d): d is string => Boolean(d))
+      )
+    );
+  }, [employees]);
+
+  // Suggestions for custom department input (existing database departments + common operational presets)
+  const departmentSuggestions = React.useMemo(() => {
+    const commonPresets = [
+      'Operasional',
+      'Gudang',
+      'Packing',
+      'Ekspedisi',
+      'Admin Marketplace',
+      'Layanan Pelanggan',
+      'Pemasaran & Bisnis',
+      'Keuangan & Akuntansi',
+      'Human Resources & GA',
+      'Teknologi & IT',
+    ];
+    return Array.from(new Set([...uniqueDepartments, ...commonPresets]));
+  }, [uniqueDepartments]);
 
   // Filtered employees
   const filtered = employees.filter((emp) => {
@@ -766,13 +807,15 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
             onChange={(e) => setSelectedDept(e.target.value)}
             className="px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-700 focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20 cursor-pointer"
           >
-            <option value="ALL">Semua Departemen</option>
-            <option value="Teknologi & IT">Teknologi & IT</option>
-            <option value="Keuangan & Akuntansi">Keuangan & Akuntansi</option>
-            <option value="Operasional">Operasional</option>
-            <option value="Human Resources & GA">Human Resources & GA</option>
-            <option value="Pemasaran & Bisnis">Pemasaran & Bisnis</option>
-            <option value="Layanan Pelanggan">Layanan Pelanggan</option>
+            <option value="ALL">Semua Departemen ({employees.length})</option>
+            {uniqueDepartments.map((dept) => {
+              const count = employees.filter((e) => e.department?.trim() === dept).length;
+              return (
+                <option key={dept} value={dept}>
+                  {dept} ({count})
+                </option>
+              );
+            })}
           </select>
 
           <select
@@ -787,6 +830,35 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
           </select>
         </div>
       </div>
+
+      {/* Peringatan Deteksi Rekening Bank Duplikat / Belum Valid */}
+      {(() => {
+        const invalidBankEmps = employees.filter(
+          (e) => e.isActive !== false && evaluateBankAccountValidity(e, employees).isInvalid
+        );
+        if (invalidBankEmps.length === 0) return null;
+        return (
+          <div className="bg-amber-50 border border-amber-300 rounded-2xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-2.5 text-xs">
+              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-bold text-amber-950">
+                  Deteksi Rekening Duplikat / Perlu Cek ({invalidBankEmps.length} Karyawan):
+                </span>{' '}
+                <span className="text-amber-800">
+                  Terdapat karyawan dengan nomor rekening bank yang sama persis (&ge; 2 orang) atau kurang dari 10 digit:{' '}
+                  <strong className="font-bold">
+                    {invalidBankEmps
+                      .map((e) => `${e.fullName} (${e.bankName} ${e.bankAccountNumber || '-'})`)
+                      .join(', ')}
+                  </strong>
+                  . Silakan perbarui nomor rekening sebelum pencairan Payroll.
+                </span>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Employees Table */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
@@ -807,6 +879,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
               {filtered.map((emp) => {
                 const contractInfo = getContractValidityInfo(emp);
                 const npwpInfo = getNpwpStatusInfo(emp.npwp, emp.ktpNumber);
+                const bankCheck = evaluateBankAccountValidity(emp, employees);
                 return (
                 <tr key={emp.id} className="hover:bg-slate-50/70 transition-colors">
                   <td className="py-3 px-4">
@@ -935,7 +1008,33 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                         s/d {emp.contractEndDate}
                       </span>
                     )}
-                    <span className="block text-[10px] text-slate-400">
+                    {!contractInfo.isPermanent &&
+                      (contractInfo.isExpiringSoon ||
+                        contractInfo.isExpired ||
+                        (contractInfo.daysRemaining !== null &&
+                          contractInfo.daysRemaining <= 30)) && (
+                        <div className="mt-1.5">
+                          <a
+                            href={getContractReminderWhatsAppUrl(
+                              emp,
+                              contractInfo.daysRemaining
+                            )}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={() =>
+                              showToast(
+                                `Membuka WhatsApp pengingat kontrak PKWT untuk ${emp.fullName}...`
+                              )
+                            }
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-green-600 hover:bg-green-700 text-white text-[10px] font-bold shadow-2xs transition-colors"
+                            title={`Kirim pengingat berakhirnya kontrak kerja PKWT (${contractInfo.badgeText}) via WhatsApp ke ${emp.fullName}`}
+                          >
+                            <MessageCircle className="w-3 h-3" />
+                            <span>Ingatkan Kontrak (WA)</span>
+                          </a>
+                        </div>
+                      )}
+                    <span className="block text-[10px] text-slate-400 mt-0.5">
                       Sisa Cuti: {emp.remainingLeaveDays} hari
                     </span>
                   </td>
@@ -949,9 +1048,25 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                   </td>
                   <td className="py-3 px-4">
                     <span className="font-medium text-slate-800 block">
-                      {emp.bankName} - {emp.bankAccountNumber}
+                      {emp.bankName} - {emp.bankAccountNumber || '-'}
                     </span>
-                    <span className="text-[10px] text-slate-400">a/n {emp.bankAccountHolder}</span>
+                    <span className="text-[10px] text-slate-400 block">
+                      a/n {emp.bankAccountHolder}
+                    </span>
+                    {bankCheck.isInvalid && (
+                      <div className="mt-1">
+                        <span
+                          title={bankCheck.detailReason}
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 border border-amber-300 text-[10px] font-bold shadow-2xs"
+                        >
+                          <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />
+                          <span>{bankCheck.badgeLabel}</span>
+                        </span>
+                        <span className="block text-[9px] text-amber-700 font-medium mt-0.5">
+                          {bankCheck.detailReason}
+                        </span>
+                      </div>
+                    )}
                   </td>
                   <td className="py-3 px-4">
                     <div className="flex items-center gap-1 flex-wrap">
@@ -1134,11 +1249,72 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
               </div>
 
               <div className="p-3.5 bg-slate-50 rounded-xl space-y-2 border border-slate-100">
-                <span className="font-semibold text-slate-700 block border-b pb-1">Kontak &amp; Rekening</span>
-                <div className="flex justify-between"><span className="text-slate-500">Email:</span><span className="font-medium">{viewingEmployee.email}</span></div>
-                <div className="flex justify-between"><span className="text-slate-500">Telepon:</span><span className="font-medium">{viewingEmployee.phone}</span></div>
-                <div className="flex justify-between"><span className="text-slate-500">Bank:</span><span className="font-medium">{viewingEmployee.bankName} - {viewingEmployee.bankAccountNumber}</span></div>
-                <div className="flex justify-between"><span className="text-slate-500">Atas Nama:</span><span className="font-medium">{viewingEmployee.bankAccountHolder}</span></div>
+                <div className="flex items-center justify-between border-b pb-1">
+                  <span className="font-semibold text-slate-700">Kontak (WA/Email) &amp; Rekening</span>
+                  <span className="text-[10px] text-emerald-700 font-semibold">Tersinkron Supabase</span>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] text-slate-500 block">Email Karyawan (Kantor / Pribadi):</label>
+                  <input
+                    type="email"
+                    value={viewingEmployee.email || ''}
+                    onChange={(e) => {
+                      const updated: Employee = {
+                        ...viewingEmployee,
+                        email: e.target.value,
+                      };
+                      setViewingEmployee(updated);
+                      onUpdateEmployee(updated);
+                    }}
+                    placeholder="nama@tasgrosirimport.co.id"
+                    className="w-full px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-xs font-medium text-slate-800"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] text-slate-500">Nomor WhatsApp / HP:</label>
+                    <span className="text-[10px] font-mono text-green-700 font-semibold">
+                      wa.me/{formatWhatsAppPhone(viewingEmployee.phone) || '-'}
+                    </span>
+                  </div>
+                  <input
+                    type="text"
+                    value={viewingEmployee.phone || ''}
+                    onChange={(e) => {
+                      const updated: Employee = {
+                        ...viewingEmployee,
+                        phone: e.target.value,
+                      };
+                      setViewingEmployee(updated);
+                      onUpdateEmployee(updated);
+                    }}
+                    placeholder="0812-3456-7890"
+                    className="w-full px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-xs font-mono font-semibold text-slate-800"
+                  />
+                </div>
+                <div className="flex justify-between pt-1">
+                  <span className="text-slate-500">Bank:</span>
+                  <span className="font-medium">
+                    {viewingEmployee.bankName} - {viewingEmployee.bankAccountNumber}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Atas Nama:</span>
+                  <span className="font-medium">{viewingEmployee.bankAccountHolder}</span>
+                </div>
+                {evaluateBankAccountValidity(viewingEmployee, employees).isInvalid && (
+                  <div className="pt-1">
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 border border-amber-300 text-[10px] font-bold">
+                      <AlertTriangle className="w-3 h-3 text-amber-600 shrink-0" />
+                      <span>
+                        {evaluateBankAccountValidity(viewingEmployee, employees).badgeLabel}
+                      </span>
+                    </span>
+                    <span className="block text-[10px] text-amber-700 mt-0.5">
+                      {evaluateBankAccountValidity(viewingEmployee, employees).detailReason}
+                    </span>
+                  </div>
+                )}
               </div>
 
               <div className="p-3.5 bg-emerald-50/60 rounded-xl space-y-2 border border-emerald-100">
@@ -1183,19 +1359,51 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                         Atur tanggal mulai/berakhir kontrak dan unggah dokumen kontrak kerja (langsung tampil di Portal Karyawan)
                       </p>
                     </div>
-                    <span
-                      className={`text-[10px] font-bold px-2.5 py-1 rounded-full shrink-0 ${
-                        contractInfo.isPermanent
-                          ? 'bg-indigo-100 text-indigo-800 border border-indigo-200'
-                          : contractInfo.isExpired
-                          ? 'bg-rose-100 text-rose-800 border border-rose-200'
-                          : contractInfo.isExpiringSoon
-                          ? 'bg-amber-100 text-amber-800 border border-amber-200'
-                          : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                      }`}
-                    >
-                      {contractInfo.badgeText}
-                    </span>
+                    <div className="flex items-center gap-2 flex-wrap shrink-0">
+                      <span
+                        className={`text-[10px] font-bold px-2.5 py-1 rounded-full shrink-0 ${
+                          contractInfo.isPermanent
+                            ? 'bg-indigo-100 text-indigo-800 border border-indigo-200'
+                            : contractInfo.isExpired
+                            ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                            : contractInfo.isExpiringSoon
+                            ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                            : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                        }`}
+                      >
+                        {contractInfo.badgeText}
+                      </span>
+                      {!contractInfo.isPermanent &&
+                        (contractInfo.isExpiringSoon ||
+                          contractInfo.isExpired ||
+                          (contractInfo.daysRemaining !== null &&
+                            contractInfo.daysRemaining <= 30)) && (
+                          <>
+                            <a
+                              href={getContractReminderWhatsAppUrl(
+                                viewingEmployee,
+                                contractInfo.daysRemaining
+                              )}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="px-3 py-1 rounded-xl bg-green-600 hover:bg-green-700 text-white font-bold text-[11px] inline-flex items-center gap-1 shadow-2xs transition-colors"
+                            >
+                              <MessageCircle className="w-3.5 h-3.5" />
+                              <span>Ingatkan Kontrak (WA)</span>
+                            </a>
+                            <a
+                              href={getContractReminderEmailUrl(
+                                viewingEmployee,
+                                contractInfo.daysRemaining
+                              )}
+                              className="px-2.5 py-1 rounded-xl bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold text-[11px] inline-flex items-center gap-1 transition-colors"
+                            >
+                              <Mail className="w-3.5 h-3.5" />
+                              <span>Email Kontrak</span>
+                            </a>
+                          </>
+                        )}
+                    </div>
                   </div>
 
                   {/* Quick Edit Masa Aktif Kontrak */}
@@ -1868,23 +2076,33 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                     />
                   </div>
                   <div>
-                    <label className="block text-slate-600 mb-1">Email Kantor</label>
+                    <label className="block text-slate-600 mb-1">
+                      Email Karyawan (Notifikasi Slip Gaji)
+                    </label>
                     <input
                       type="email"
                       required
                       value={formData.email}
                       onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                      placeholder="budi@tgi.co.id"
+                      placeholder="nama@tasgrosirimport.co.id"
                       className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-800"
                     />
                   </div>
                   <div>
-                    <label className="block text-slate-600 mb-1">Nomor WhatsApp / HP</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-slate-600">Nomor WhatsApp / HP</label>
+                      {formData.phone && (
+                        <span className="text-[10px] font-mono text-green-700 font-semibold">
+                          WA: {formatWhatsAppPhone(formData.phone)}
+                        </span>
+                      )}
+                    </div>
                     <input
                       type="text"
                       value={formData.phone}
                       onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                      className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-800"
+                      placeholder="0812-3456-7890 (Otomatis ke 628...)"
+                      className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 font-mono"
                     />
                   </div>
                   <div>
@@ -1898,22 +2116,94 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                       className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-800"
                     />
                   </div>
-                  <div>
-                    <label className="block text-slate-600 mb-1">Departemen</label>
-                    <select
-                      value={formData.department}
+                  <div className="sm:col-span-2">
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-slate-600 font-semibold">
+                        Departemen / Divisi <span className="text-rose-500">*</span>
+                      </label>
+                      <span className="text-[10px] text-emerald-700 font-semibold bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                        Ketik Bebas atau Klik Pilihan Cepat
+                      </span>
+                    </div>
+                    <input
+                      type="text"
+                      list="department-suggestions"
+                      required
+                      value={formData.department || ''}
                       onChange={(e) =>
                         setFormData({ ...formData, department: e.target.value as Department })
                       }
-                      className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-800"
-                    >
-                      <option value="Teknologi & IT">Teknologi & IT</option>
-                      <option value="Keuangan & Akuntansi">Keuangan & Akuntansi</option>
-                      <option value="Operasional">Operasional</option>
-                      <option value="Human Resources & GA">Human Resources & GA</option>
-                      <option value="Pemasaran & Bisnis">Pemasaran & Bisnis</option>
-                      <option value="Layanan Pelanggan">Layanan Pelanggan</option>
-                    </select>
+                      placeholder="Ketik nama departemen baru (contoh: Gudang, Packing, Ekspedisi, Admin Marketplace)..."
+                      className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 font-medium focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                    />
+                    <datalist id="department-suggestions">
+                      {departmentSuggestions.map((dept) => (
+                        <option key={dept} value={dept} />
+                      ))}
+                    </datalist>
+
+                    {/* Quick-Select Department Chips */}
+                    <div className="mt-2 space-y-1.5">
+                      {uniqueDepartments.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-[10px] font-semibold text-slate-400">
+                            Departemen Aktif Saat Ini:
+                          </span>
+                          {uniqueDepartments.map((dept) => {
+                            const isSelected = formData.department?.trim() === dept;
+                            return (
+                              <button
+                                key={`active-${dept}`}
+                                type="button"
+                                onClick={() => setFormData({ ...formData, department: dept })}
+                                className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-all cursor-pointer ${
+                                  isSelected
+                                    ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
+                                    : 'bg-emerald-50/70 hover:bg-emerald-100 text-emerald-800 border-emerald-200'
+                                }`}
+                              >
+                                {dept}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-[10px] font-semibold text-slate-400">
+                          Saran Cepat Divisi:
+                        </span>
+                        {[
+                          'Operasional',
+                          'Gudang',
+                          'Packing',
+                          'Ekspedisi',
+                          'Admin Marketplace',
+                          'Layanan Pelanggan',
+                          'Keuangan & Akuntansi',
+                          'Human Resources & GA',
+                          'Pemasaran & Bisnis',
+                          'Teknologi & IT',
+                        ]
+                          .filter((preset) => !uniqueDepartments.includes(preset))
+                          .map((preset) => {
+                            const isSelected = formData.department?.trim() === preset;
+                            return (
+                              <button
+                                key={`preset-${preset}`}
+                                type="button"
+                                onClick={() => setFormData({ ...formData, department: preset })}
+                                className={`px-2 py-0.5 rounded-lg text-[10px] font-medium border transition-all cursor-pointer ${
+                                  isSelected
+                                    ? 'bg-slate-800 text-white border-slate-800'
+                                    : 'bg-white hover:bg-slate-100 text-slate-600 border-slate-200'
+                                }`}
+                              >
+                                + {preset}
+                              </button>
+                            );
+                          })}
+                      </div>
+                    </div>
                   </div>
                   <div>
                     <label className="block text-slate-600 mb-1">Jenis Kelamin</label>
@@ -1953,8 +2243,17 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                     <label className="block text-slate-600 mb-1">Tanggal Bergabung</label>
                     <input
                       type="date"
-                      value={formData.joinDate}
+                      value={formData.joinDate || ''}
                       onChange={(e) => setFormData({ ...formData, joinDate: e.target.value })}
+                      className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-800"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-slate-600 mb-1">Tanggal Lahir</label>
+                    <input
+                      type="date"
+                      value={formData.birthDate || ''}
+                      onChange={(e) => setFormData({ ...formData, birthDate: e.target.value })}
                       className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-800"
                     />
                   </div>

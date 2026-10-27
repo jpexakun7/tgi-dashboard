@@ -1,9 +1,31 @@
-import { DepartmentKpiData } from '../types';
+import { DepartmentKpiData, KpiMetric } from '../types';
+
+export function calculateDeptOverallScore(metrics: KpiMetric[]): {
+  score: number;
+  grade: 'A+' | 'A' | 'B+' | 'B' | 'C';
+} {
+  if (!metrics || metrics.length === 0) {
+    return { score: 90, grade: 'A' };
+  }
+  const totalWeight = metrics.reduce((acc, m) => acc + (m.weight || 25), 0);
+  const weightedScore = metrics.reduce((acc, m) => {
+    const clampedAchieve = Math.min(Math.max(m.achievementRate, 50), 125);
+    return acc + clampedAchieve * ((m.weight || 25) / totalWeight);
+  }, 0);
+  const score = Math.min(Math.round(weightedScore * 10) / 10, 100);
+  let grade: 'A+' | 'A' | 'B+' | 'B' | 'C' = 'B';
+  if (score >= 97) grade = 'A+';
+  else if (score >= 90) grade = 'A';
+  else if (score >= 80) grade = 'B+';
+  else if (score >= 70) grade = 'B';
+  else grade = 'C';
+  return { score, grade };
+}
 
 export const initialDepartmentKpiData: DepartmentKpiData[] = [
   {
     department: 'Teknologi & IT',
-    leadName: 'Arya Wicaksono',
+    leadName: 'Koordinator Teknologi & IT',
     leadRole: 'Lead Software Engineer',
     leadAvatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=256&h=256&q=80',
     overallScore: 95.4,
@@ -77,7 +99,7 @@ export const initialDepartmentKpiData: DepartmentKpiData[] = [
   },
   {
     department: 'Keuangan & Akuntansi',
-    leadName: 'Dimas Prasetyo',
+    leadName: 'Koordinator Keuangan',
     leadRole: 'Senior Financial Analyst',
     leadAvatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=256&h=256&q=80',
     overallScore: 98.2,
@@ -151,9 +173,9 @@ export const initialDepartmentKpiData: DepartmentKpiData[] = [
   },
   {
     department: 'Operasional',
-    leadName: 'Rizky Kurniawan',
-    leadRole: 'Senior Operations Supervisor',
-    leadAvatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=256&h=256&q=80',
+    leadName: 'ani',
+    leadRole: 'Staff Operasional',
+    leadAvatar: 'https://images.unsplash.com/photo-1534528741923?auto=format&fit=crop&w=256&h=256&q=80',
     overallScore: 92.4,
     grade: 'A',
     status: 'on_track',
@@ -225,7 +247,7 @@ export const initialDepartmentKpiData: DepartmentKpiData[] = [
   },
   {
     department: 'Human Resources & GA',
-    leadName: 'Siti Rahmawati',
+    leadName: 'Koordinator HR & GA',
     leadRole: 'HR & Payroll Specialist',
     leadAvatar: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=256&h=256&q=80',
     overallScore: 94.2,
@@ -299,7 +321,7 @@ export const initialDepartmentKpiData: DepartmentKpiData[] = [
   },
   {
     department: 'Pemasaran & Bisnis',
-    leadName: 'Nadia Putri Kusuma',
+    leadName: 'Koordinator Pemasaran',
     leadRole: 'Digital Marketing Strategist',
     leadAvatar: 'https://images.unsplash.com/photo-1580489944761-15a19d654956?auto=format&fit=crop&w=256&h=256&q=80',
     overallScore: 96.0,
@@ -341,7 +363,7 @@ export const initialDepartmentKpiData: DepartmentKpiData[] = [
         unit: 'Jam',
         status: 'exceeded',
         weight: 20,
-        notes: 'Host Anisa Ramadhani konsisten mengadakan live promo tas import setiap hari.',
+        notes: 'Tim host konsisten mengadakan live promo tas import setiap hari.',
       },
       {
         id: 'kpi-mkt-4',
@@ -373,7 +395,7 @@ export const initialDepartmentKpiData: DepartmentKpiData[] = [
   },
   {
     department: 'Layanan Pelanggan',
-    leadName: 'Dewi Anggraini',
+    leadName: 'Koordinator Layanan Pelanggan',
     leadRole: 'Customer Success Specialist',
     leadAvatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=256&h=256&q=80',
     overallScore: 95.8,

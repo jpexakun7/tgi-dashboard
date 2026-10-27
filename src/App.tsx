@@ -39,12 +39,19 @@ import {
   CashAdvance,
   CashAdvanceInstallment,
   WorkShift,
+  AttendancePenaltyPolicy,
 } from './types';
 import {
   calculatePayroll,
   getOvertimeMinutes,
   getOvertimeRatePerMinute,
   DEFAULT_WORK_SHIFTS,
+  DEFAULT_ATTENDANCE_PENALTY_POLICY,
+  getAttendancePenaltyPolicy,
+  deduplicateDailyAttendances,
+  calculateEmployeeAttendancePenalty,
+  getEmployeeShift,
+  evaluateAttendanceAgainstShift,
 } from './utils/formatters';
 import { Sidebar, ActiveTab } from './components/Sidebar';
 import { Header } from './components/Header';
@@ -84,6 +91,7 @@ import {
   upsertPayrollToSupabase,
   fetchAttendancesFromSupabase,
   upsertAttendanceToSupabase,
+  deleteAttendanceFromSupabase,
   fetchLeaveRequestsFromSupabase,
   upsertLeaveRequestToSupabase,
   fetchOvertimeRequestsFromSupabase,
@@ -149,13 +157,76 @@ export default function App() {
     }
   };
 
+  // Helper to detect and purge any legacy dummy records from LocalStorage
+  const isLegacyDummyRecord = (item: any): boolean => {
+    if (!item || typeof item !== 'object') return true;
+    const dummyIds = new Set([
+      'emp-01', 'emp-02', 'emp-03', 'emp-04', 'emp-05',
+      'emp-06', 'emp-07', 'emp-08', 'emp-09', 'emp-10',
+      'att-001', 'att-002', 'att-003', 'att-004', 'att-005',
+      'att-006', 'att-007', 'att-008', 'att-009', 'att-010',
+      'lv-001', 'lv-002', 'lv-003', 'lv-004',
+      'ot-001', 'ot-002', 'ot-003', 'ot-004',
+      'rmb-001', 'rmb-002', 'rmb-003', 'rmb-004', 'rmb-005',
+      'ast-001', 'ast-002', 'ast-003', 'ast-004', 'ast-005',
+      'ast-006', 'ast-007', 'ast-008', 'ast-009', 'ast-010',
+      'ah-001', 'ah-002', 'ah-003', 'ah-004', 'ah-005',
+      'ah-006', 'ah-007', 'ah-008', 'ah-009', 'ah-010',
+      'pr-001', 'pr-002', 'pr-003', 'pr-004', 'pr-005',
+      'ca-001', 'ca-002', 'ca-003', 'ca-004',
+      'notif-001', 'notif-002', 'notif-003', 'notif-004', 'notif-005',
+      'log-001', 'log-002', 'log-003', 'log-004', 'log-005',
+      'log-006', 'log-007', 'log-008', 'log-009', 'log-010', 'log-011',
+      'log-ca-001', 'log-ca-002', 'log-ca-003',
+    ]);
+    if (item.id && dummyIds.has(String(item.id))) return true;
+    if (item.employeeId && dummyIds.has(String(item.employeeId))) return true;
+    if (item.assignedToEmployeeId && dummyIds.has(String(item.assignedToEmployeeId))) return true;
+    if (item.recipientEmployeeId && dummyIds.has(String(item.recipientEmployeeId))) return true;
+    if (item.targetId && dummyIds.has(String(item.targetId))) return true;
+    if (item.assetId && dummyIds.has(String(item.assetId))) return true;
+
+    const dummyNames = [
+      'Arya Wicaksono',
+      'Siti Rahmawati',
+      'Dimas Prasetyo',
+      'Nadia Putri',
+      'Rizky Kurniawan',
+      'Dewi Anggraini',
+      'Fajar Nugroho',
+      'Budi Santoso',
+      'Kevin Pratama',
+      'Anisa Ramadhani',
+      'Bambang Sudiro',
+      'Hendro Gunawan',
+      'Dewi Lestari',
+    ];
+    const combinedText = [
+      item.fullName,
+      item.name,
+      item.employeeName,
+      item.assignedToEmployeeName,
+      item.recipientName,
+      item.targetName,
+      item.reviewerName,
+      item.description,
+      item.message,
+    ]
+      .filter(Boolean)
+      .join(' ');
+    if (dummyNames.some((dn) => combinedText.includes(dn))) return true;
+    return false;
+  };
+
   // System Audit Logs State (History of critical admin actions: salary, employee deletion, role permissions)
   const [systemAuditLogs, setSystemAuditLogs] = useState<SystemAuditLog[]>(() => {
     try {
       const saved = localStorage.getItem('tgi_system_audit_logs');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed)) {
+          return parsed.filter((l) => !isLegacyDummyRecord(l));
+        }
       }
     } catch (e) {
       console.error('Failed to parse audit logs', e);
@@ -221,7 +292,9 @@ export default function App() {
       const saved = localStorage.getItem('tgi_notifications');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed)) {
+          return parsed.filter((n) => !isLegacyDummyRecord(n));
+        }
       }
     } catch (e) {
       console.error('Failed to parse notifications', e);
@@ -502,6 +575,12 @@ export default function App() {
         const parsed = JSON.parse(saved);
         if (!parsed.allowedGoogleAdmins || parsed.allowedGoogleAdmins.length === 0) {
           parsed.allowedGoogleAdmins = initialCompanyConfig.allowedGoogleAdmins;
+        } else {
+          const cleanedAdmins = parsed.allowedGoogleAdmins.filter(
+            (adm: any) => !isLegacyDummyRecord(adm)
+          );
+          parsed.allowedGoogleAdmins =
+            cleanedAdmins.length > 0 ? cleanedAdmins : initialCompanyConfig.allowedGoogleAdmins;
         }
         if (!parsed.rolePermissions) {
           parsed.rolePermissions = initialCompanyConfig.rolePermissions;
@@ -538,25 +617,15 @@ export default function App() {
         if (!parsed.workShifts || !Array.isArray(parsed.workShifts) || parsed.workShifts.length === 0) {
           parsed.workShifts = DEFAULT_WORK_SHIFTS;
         } else {
-          parsed.workShifts = parsed.workShifts.map((sh: WorkShift) => {
-            if (
-              !sh.location ||
-              sh.location.includes('Hayam Wuruk') ||
-              sh.location.includes('Gudang Kapuk') ||
-              sh.location.includes('Showroom Grosir') ||
-              sh.location.includes('Gudang Bongkar Muat')
-            ) {
-              return {
-                ...sh,
-                location: 'Jl. Sumber Mas I Blok C No. 191, Tangerang, Banten, ID',
-              };
-            }
-            return sh;
-          });
+          parsed.workShifts = parsed.workShifts.map((sh: WorkShift) => ({
+            ...sh,
+            location: sh.location || 'Jl. Sumber Mas I Blok C No. 191, Tangerang, Banten, ID',
+          }));
         }
         if (!parsed.address || parsed.address.includes('Hayam Wuruk')) {
           parsed.address = 'Jl. Sumber Mas I Blok C No. 191, Tangerang, Banten, ID';
         }
+        parsed.attendancePenaltyPolicy = getAttendancePenaltyPolicy(parsed.attendancePenaltyPolicy);
         return parsed;
       }
     } catch (e) {
@@ -604,7 +673,9 @@ export default function App() {
       if (saved !== null) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          const filtered = parsed.filter((e: Employee) => e && !deletedIds.has(e.id));
+          const filtered = parsed.filter(
+            (e: Employee) => e && !deletedIds.has(e.id) && !isLegacyDummyRecord(e)
+          );
           if (filtered.length !== parsed.length) {
             localStorage.setItem('tgi_employees_data', JSON.stringify(filtered));
           }
@@ -614,11 +685,11 @@ export default function App() {
           }
         }
       }
-      return initialEmployees.filter((e) => !deletedIds.has(e.id));
+      return initialEmployees.filter((e) => !deletedIds.has(e.id) && !isLegacyDummyRecord(e));
     } catch (e) {
       console.error('Failed to parse saved employees', e);
       const deletedIds = new Set(getDeletedEmployeeIds());
-      return initialEmployees.filter((e) => !deletedIds.has(e.id));
+      return initialEmployees.filter((e) => !deletedIds.has(e.id) && !isLegacyDummyRecord(e));
     }
   });
 
@@ -626,7 +697,7 @@ export default function App() {
   useEffect(() => {
     try {
       const deletedIds = new Set(getDeletedEmployeeIds());
-      const cleanList = employees.filter((e) => !deletedIds.has(e.id));
+      const cleanList = employees.filter((e) => !deletedIds.has(e.id) && !isLegacyDummyRecord(e));
       localStorage.setItem('tgi_employees_data', JSON.stringify(cleanList));
     } catch (e) {
       console.error('Failed to save employees to localStorage', e);
@@ -640,7 +711,9 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          return parsed.filter((p: PayrollRecord) => p && !deletedIds.has(p.employeeId));
+          return parsed.filter(
+            (p: PayrollRecord) => p && !deletedIds.has(p.employeeId) && !isLegacyDummyRecord(p)
+          );
         }
       }
     } catch (e) {
@@ -664,13 +737,26 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          return parsed.filter((a: AttendanceRecord) => a && !deletedIds.has(a.employeeId));
+          const valid = parsed.filter(
+            (a: AttendanceRecord) => a && !deletedIds.has(a.employeeId) && !isLegacyDummyRecord(a)
+          );
+          return deduplicateDailyAttendances(
+            valid,
+            initialEmployees,
+            DEFAULT_WORK_SHIFTS,
+            DEFAULT_ATTENDANCE_PENALTY_POLICY
+          );
         }
       }
     } catch (e) {
       console.error('Failed to parse saved attendances', e);
     }
-    return initialAttendanceRecords.filter((a) => !deletedIds.has(a.employeeId));
+    return deduplicateDailyAttendances(
+      initialAttendanceRecords.filter((a) => !deletedIds.has(a.employeeId)),
+      initialEmployees,
+      DEFAULT_WORK_SHIFTS,
+      DEFAULT_ATTENDANCE_PENALTY_POLICY
+    );
   });
 
   useEffect(() => {
@@ -688,7 +774,9 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          return parsed.filter((l: LeaveRequest) => l && !deletedIds.has(l.employeeId));
+          return parsed.filter(
+            (l: LeaveRequest) => l && !deletedIds.has(l.employeeId) && !isLegacyDummyRecord(l)
+          );
         }
       }
     } catch (e) {
@@ -712,7 +800,9 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          return parsed.filter((o: OvertimeRequest) => o && !deletedIds.has(o.employeeId));
+          return parsed.filter(
+            (o: OvertimeRequest) => o && !deletedIds.has(o.employeeId) && !isLegacyDummyRecord(o)
+          );
         }
       }
     } catch (e) {
@@ -736,7 +826,9 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          return parsed.filter((r: ReimbursementClaim) => r && !deletedIds.has(r.employeeId));
+          return parsed.filter(
+            (r: ReimbursementClaim) => r && !deletedIds.has(r.employeeId) && !isLegacyDummyRecord(r)
+          );
         }
       }
     } catch (e) {
@@ -759,7 +851,9 @@ export default function App() {
       const saved = localStorage.getItem('tgi_company_assets');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed)) {
+          return parsed.filter((a) => !isLegacyDummyRecord(a));
+        }
       }
     } catch (e) {
       console.error('Failed to parse assets', e);
@@ -780,7 +874,9 @@ export default function App() {
       const saved = localStorage.getItem('tgi_asset_history_logs');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed)) {
+          return parsed.filter((l) => !isLegacyDummyRecord(l));
+        }
       }
     } catch (e) {
       console.error('Failed to parse asset history logs', e);
@@ -802,7 +898,9 @@ export default function App() {
       const saved = localStorage.getItem('tgi_performance_reviews');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed)) {
+          return parsed.filter((r) => !isLegacyDummyRecord(r));
+        }
       }
     } catch (e) {
       console.error('Failed to parse performance reviews', e);
@@ -824,7 +922,9 @@ export default function App() {
       const saved = localStorage.getItem('tgi_cash_advances_data');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed)) {
+          return parsed.filter((c) => !isLegacyDummyRecord(c));
+        }
       }
     } catch (e) {
       console.error('Failed to parse cash advances', e);
@@ -855,6 +955,22 @@ export default function App() {
         try {
           const parsed = JSON.parse(e.newValue);
           if (Array.isArray(parsed)) setEmployees(parsed);
+        } catch (err) {
+          console.error(err);
+        }
+      }
+      if (e.key === 'tgi_company_config' && e.newValue) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          if (parsed && typeof parsed === 'object') setCompanyConfig(parsed);
+        } catch (err) {
+          console.error(err);
+        }
+      }
+      if (e.key === 'tgi_attendances_data' && e.newValue) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          if (Array.isArray(parsed)) setAttendances(parsed);
         } catch (err) {
           console.error(err);
         }
@@ -1080,39 +1196,101 @@ export default function App() {
     }
   }, [currentEmployee, activeEmployeeId]);
 
-  // Auto-sync Payrolls so every active employee always has a calculated PayrollRecord (THP, PPh 21 TER 2026 & BPJS)
+  // Auto-sync Payrolls so every active employee always has a calculated PayrollRecord (THP, PPh 21 TER 2026, BPJS, & Potongan Terlambat/Absen)
   const syncedPayrolls = useMemo(() => {
     const deletedIds = new Set(getDeletedEmployeeIds());
     const validEmployees = employees.filter((e) => !deletedIds.has(e.id));
     const activeEmps = validEmployees.filter((e) => e.isActive !== false);
+    const currentPeriod = companyConfig.currentPayrollPeriod;
+    const isPeriodLocked = Boolean(
+      (companyConfig.lockedPayrollPeriods || []).includes(currentPeriod)
+    );
+    const waivedIdsForPeriod = companyConfig.waivedLateEmployeeIds?.[currentPeriod] || [];
 
     return activeEmps.map((emp) => {
-      const existing = payrolls.find((p) => p.employeeId === emp.id);
-      if (existing && existing.totalGrossSalary > 0 && existing.takeHomePay > 0) {
-        return existing;
+      const existing =
+        payrolls.find((p) => p.employeeId === emp.id && p.period === currentPeriod) ||
+        payrolls.find((p) => p.employeeId === emp.id);
+
+      // If the period is locked and we have an existing frozen payroll record, return it frozen so THP never changes
+      if (isPeriodLocked && existing && existing.takeHomePay > 0) {
+        return {
+          ...existing,
+          period: currentPeriod,
+          isLocked: true,
+        };
       }
 
       const employeeOts = overtimeRequests.filter(
         (o) => o.employeeId === emp.id && o.status === 'Disetujui'
       );
-      const totalOtMinutes = employeeOts.reduce(
+      const approvedOtMinutes = employeeOts.reduce(
         (acc, curr) => acc + getOvertimeMinutes(curr),
         0
       );
-      const empAtts = attendances.filter((a) => a.employeeId === emp.id);
-      const totalLateMinutes = empAtts.reduce((acc, curr) => acc + (curr.lateMinutes || 0), 0);
+      const effectiveOtMinutes =
+        existing?.overtimeMinutes !== undefined ? existing.overtimeMinutes : approvedOtMinutes;
 
-      return calculatePayroll(
+      const penaltySummary = calculateEmployeeAttendancePenalty(
         emp,
-        companyConfig.currentPayrollPeriod,
-        totalOtMinutes,
-        existing?.bonus || 0,
-        totalLateMinutes,
-        existing?.cashAdvanceDeduction || 0,
-        existing?.cashAdvanceNotes
+        attendances,
+        companyConfig.workShifts,
+        companyConfig.attendancePenaltyPolicy
       );
+
+      const isLateFeeWaived = Boolean(
+        existing?.isLateFeeWaived !== undefined
+          ? existing.isLateFeeWaived
+          : waivedIdsForPeriod.includes(emp.id)
+      );
+
+      const computed = calculatePayroll(
+        emp,
+        currentPeriod,
+        effectiveOtMinutes,
+        existing?.bonus || 0,
+        penaltySummary.totalLateMinutes,
+        existing?.cashAdvanceDeduction || 0,
+        existing?.cashAdvanceNotes,
+        {
+          lateFrequency: penaltySummary.lateFrequency,
+          totalLateMinutes: penaltySummary.totalLateMinutes,
+          latePenaltyAmount: penaltySummary.latePenaltyAmount,
+          alphaDaysCount: penaltySummary.alphaDaysCount,
+          alphaPenaltyAmount: penaltySummary.alphaPenaltyAmount,
+          attendanceDeductionNotes: penaltySummary.deductionNotes,
+          isLateFeeWaived,
+          originalLateDeduction: penaltySummary.totalDeductionAmount,
+          waiverReason: existing?.waiverReason || 'Dispensasi Tugas Luar / HR',
+          isLocked: isPeriodLocked,
+          lockedAt: existing?.lockedAt,
+          penaltyPolicy: companyConfig.attendancePenaltyPolicy,
+        }
+      );
+
+      if (existing) {
+        return {
+          ...computed,
+          id: existing.id,
+          referenceNumber: existing.referenceNumber || computed.referenceNumber,
+          paymentStatus: existing.paymentStatus || computed.paymentStatus,
+          paymentDate: existing.paymentDate || computed.paymentDate,
+        };
+      }
+
+      return computed;
     });
-  }, [employees, payrolls, overtimeRequests, attendances, companyConfig.currentPayrollPeriod]);
+  }, [
+    employees,
+    payrolls,
+    overtimeRequests,
+    attendances,
+    companyConfig.currentPayrollPeriod,
+    companyConfig.lockedPayrollPeriods,
+    companyConfig.waivedLateEmployeeIds,
+    companyConfig.workShifts,
+    companyConfig.attendancePenaltyPolicy,
+  ]);
 
   // -------------------------------------------------------------
   // Supabase Connection, Real-time Sync for 7 Tables
@@ -1221,6 +1399,29 @@ export default function App() {
             )
           );
         }
+
+        // 8. Clean up local states (reviews, cashAdvances, assetLogs, notifications) so they only reference valid real employees
+        setReviews((prev) =>
+          prev.filter((r) => !isLegacyDummyRecord(r) && validEmpIds.has(r.employeeId))
+        );
+        setCashAdvances((prev) =>
+          prev.filter((c) => !isLegacyDummyRecord(c) && validEmpIds.has(c.employeeId))
+        );
+        setAssetLogs((prev) =>
+          prev.filter(
+            (l) =>
+              !isLegacyDummyRecord(l) &&
+              (!l.employeeId || validEmpIds.has(l.employeeId))
+          )
+        );
+        setNotifications((prev) =>
+          prev.filter(
+            (n) =>
+              !isLegacyDummyRecord(n) &&
+              (!n.recipientEmployeeId || validEmpIds.has(n.recipientEmployeeId))
+          )
+        );
+        setSystemAuditLogs((prev) => prev.filter((l) => !isLegacyDummyRecord(l)));
       }
     } catch (err) {
       console.warn('Supabase status check failed:', err);
@@ -1706,6 +1907,16 @@ export default function App() {
 
   // Handlers for Payroll
   const handleRecalculatePayroll = () => {
+    const currentPeriod = companyConfig.currentPayrollPeriod;
+    const isPeriodLocked = Boolean(
+      (companyConfig.lockedPayrollPeriods || []).includes(currentPeriod)
+    );
+    if (isPeriodLocked) {
+      return;
+    }
+
+    const waivedIdsForPeriod = companyConfig.waivedLateEmployeeIds?.[currentPeriod] || [];
+
     const updated = employees.map((emp) => {
       // Find approved overtimes for this employee (in minutes)
       const employeeOts = overtimeRequests.filter(
@@ -1716,25 +1927,57 @@ export default function App() {
         0
       );
 
-      // Find attendances
-      const empAtts = attendances.filter((a) => a.employeeId === emp.id);
-      const totalLateMinutes = empAtts.reduce((acc, curr) => acc + curr.lateMinutes, 0);
+      // Deduplicated & Shift-evaluated Attendance Penalty Summary
+      const penaltySummary = calculateEmployeeAttendancePenalty(
+        emp,
+        attendances,
+        companyConfig.workShifts,
+        companyConfig.attendancePenaltyPolicy
+      );
 
       // Find existing bonus & cash advance deduction if any
       const existingRecord = payrolls.find((p) => p.employeeId === emp.id);
       const bonus = existingRecord ? existingRecord.bonus : 0;
       const caDeduct = existingRecord ? existingRecord.cashAdvanceDeduction : 0;
       const caNotes = existingRecord ? existingRecord.cashAdvanceNotes : undefined;
+      const isLateFeeWaived = Boolean(
+        existingRecord?.isLateFeeWaived !== undefined
+          ? existingRecord.isLateFeeWaived
+          : waivedIdsForPeriod.includes(emp.id)
+      );
 
-      return calculatePayroll(
+      const computed = calculatePayroll(
         emp,
-        companyConfig.currentPayrollPeriod,
+        currentPeriod,
         totalOtMinutes,
         bonus,
-        totalLateMinutes,
+        penaltySummary.totalLateMinutes,
         caDeduct,
-        caNotes
+        caNotes,
+        {
+          lateFrequency: penaltySummary.lateFrequency,
+          totalLateMinutes: penaltySummary.totalLateMinutes,
+          latePenaltyAmount: penaltySummary.latePenaltyAmount,
+          alphaDaysCount: penaltySummary.alphaDaysCount,
+          alphaPenaltyAmount: penaltySummary.alphaPenaltyAmount,
+          attendanceDeductionNotes: penaltySummary.deductionNotes,
+          isLateFeeWaived,
+          originalLateDeduction: penaltySummary.totalDeductionAmount,
+          waiverReason: existingRecord?.waiverReason || 'Dispensasi Tugas Luar / HR',
+          penaltyPolicy: companyConfig.attendancePenaltyPolicy,
+        }
       );
+
+      const finalRecord = existingRecord
+        ? {
+            ...computed,
+            id: existingRecord.id,
+            referenceNumber: existingRecord.referenceNumber || computed.referenceNumber,
+          }
+        : computed;
+
+      upsertPayrollToSupabase(finalRecord);
+      return finalRecord;
     });
 
     setPayrolls(updated);
@@ -1742,18 +1985,223 @@ export default function App() {
     logActivity(
       'PAYROLL_RUN',
       'Gaji & Payroll',
-      `Menjalankan batch kalkulasi payroll periode "${companyConfig.currentPayrollPeriod}" (lembur dihitung per menit) untuk seluruh ${employees.length} karyawan aktif.`,
+      `Menjalankan batch kalkulasi payroll periode "${currentPeriod}" (lembur per menit + potongan otomatis terlambat/absen) untuk seluruh ${employees.length} karyawan aktif.`,
       {
-        targetId: `payroll-${companyConfig.currentPayrollPeriod}`,
-        targetName: `Batch Payroll ${companyConfig.currentPayrollPeriod}`,
+        targetId: `payroll-${currentPeriod}`,
+        targetName: `Batch Payroll ${currentPeriod}`,
         severity: 'warning',
-        notes: 'Sinkronisasi durasi menit lembur terverifikasi dan potongan keterlambatan.',
+        notes: 'Sinkronisasi durasi menit lembur terverifikasi dan potongan denda keterlambatan/alpha.',
+      }
+    );
+  };
+
+  const handleChangePayrollPeriod = (newPeriod: string) => {
+    if (!newPeriod || newPeriod === companyConfig.currentPayrollPeriod) return;
+    const prevPeriod = companyConfig.currentPayrollPeriod;
+    setCompanyConfig((prev) => ({
+      ...prev,
+      currentPayrollPeriod: newPeriod,
+    }));
+
+    setPayrolls((prev) =>
+      prev.map((p) => {
+        const cleanPeriod = newPeriod.replace(/\s+/g, '').toUpperCase();
+        const emp = employees.find((e) => e.id === p.employeeId);
+        return {
+          ...p,
+          period: newPeriod,
+          referenceNumber: emp ? `TGI-PAY-${cleanPeriod}-${emp.nik}` : p.referenceNumber,
+        };
+      })
+    );
+
+    logActivity(
+      'COMPANY_SETTINGS_UPDATE',
+      'Gaji & Payroll',
+      `Mengganti periode aktif penggajian (Payroll) dari "${prevPeriod}" menjadi "${newPeriod}".`,
+      {
+        targetId: `period-${newPeriod}`,
+        targetName: `Periode Payroll: ${newPeriod}`,
+        oldValue: prevPeriod,
+        newValue: newPeriod,
+        severity: 'info',
+      }
+    );
+  };
+
+  const handleToggleLockPayrollPeriod = (periodToToggle?: string) => {
+    const targetPeriod = periodToToggle || companyConfig.currentPayrollPeriod;
+    const currentLocked = companyConfig.lockedPayrollPeriods || [];
+    const isCurrentlyLocked = currentLocked.includes(targetPeriod);
+    const nextLocked = isCurrentlyLocked
+      ? currentLocked.filter((p) => p !== targetPeriod)
+      : [...currentLocked, targetPeriod];
+    const nowIso = new Date().toISOString();
+
+    setCompanyConfig((prev) => ({
+      ...prev,
+      lockedPayrollPeriods: nextLocked,
+    }));
+
+    // Snapshot & freeze current syncedPayrolls into payrolls state & Supabase so THP will not change when locked
+    const frozenRecords = syncedPayrolls.map((rec) => {
+      const updatedRec: PayrollRecord = {
+        ...rec,
+        period: targetPeriod,
+        isLocked: !isCurrentlyLocked,
+        lockedAt: !isCurrentlyLocked ? nowIso : undefined,
+        paymentStatus: !isCurrentlyLocked ? 'Lunas' : rec.paymentStatus,
+      };
+      upsertPayrollToSupabase(updatedRec);
+      return updatedRec;
+    });
+
+    setPayrolls(frozenRecords);
+
+    logActivity(
+      'PAYROLL_RUN',
+      'Gaji & Payroll',
+      !isCurrentlyLocked
+        ? `Mengunci / memfinalisasi perhitungan Payroll periode "${targetPeriod}". Nilai Take Home Pay (THP) seluruh karyawan telah dibekukan.`
+        : `Membuka kembali kunci (Unlock) periode Payroll "${targetPeriod}" untuk penyesuaian data.`,
+      {
+        targetId: `lock-payroll-${targetPeriod}`,
+        targetName: `Finalisasi Payroll ${targetPeriod}`,
+        oldValue: isCurrentlyLocked ? 'Terkunci (Locked)' : 'Terbuka (Draft/Active)',
+        newValue: !isCurrentlyLocked ? 'Terkunci (Finalized THP)' : 'Terbuka (Unlocked)',
+        severity: !isCurrentlyLocked ? 'success' : 'warning',
+      }
+    );
+  };
+
+  const handleToggleWaiveLatePenalty = (employeeId: string, reason?: string) => {
+    const currentPeriod = companyConfig.currentPayrollPeriod;
+    const isPeriodLocked = Boolean(
+      (companyConfig.lockedPayrollPeriods || []).includes(currentPeriod)
+    );
+    if (isPeriodLocked) return;
+
+    const currentWaivedMap = companyConfig.waivedLateEmployeeIds || {};
+    const currentList = currentWaivedMap[currentPeriod] || [];
+    const emp = employees.find((e) => e.id === employeeId);
+    const existingRec = syncedPayrolls.find((p) => p.employeeId === employeeId);
+    const currentlyWaived = Boolean(
+      existingRec?.isLateFeeWaived !== undefined
+        ? existingRec.isLateFeeWaived
+        : currentList.includes(employeeId)
+    );
+    const nextWaivedState = !currentlyWaived;
+
+    const nextList = nextWaivedState
+      ? Array.from(new Set([...currentList, employeeId]))
+      : currentList.filter((id) => id !== employeeId);
+
+    setCompanyConfig((prev) => ({
+      ...prev,
+      waivedLateEmployeeIds: {
+        ...(prev.waivedLateEmployeeIds || {}),
+        [currentPeriod]: nextList,
+      },
+    }));
+
+    if (emp) {
+      const penaltySummary = calculateEmployeeAttendancePenalty(
+        emp,
+        attendances,
+        companyConfig.workShifts,
+        companyConfig.attendancePenaltyPolicy
+      );
+      const effectiveOtMins = existingRec?.overtimeMinutes || 0;
+      const updatedRecord = calculatePayroll(
+        emp,
+        currentPeriod,
+        effectiveOtMins,
+        existingRec?.bonus || 0,
+        penaltySummary.totalLateMinutes,
+        existingRec?.cashAdvanceDeduction || 0,
+        existingRec?.cashAdvanceNotes,
+        {
+          lateFrequency: penaltySummary.lateFrequency,
+          totalLateMinutes: penaltySummary.totalLateMinutes,
+          latePenaltyAmount: penaltySummary.latePenaltyAmount,
+          alphaDaysCount: penaltySummary.alphaDaysCount,
+          alphaPenaltyAmount: penaltySummary.alphaPenaltyAmount,
+          attendanceDeductionNotes: penaltySummary.deductionNotes,
+          isLateFeeWaived: nextWaivedState,
+          originalLateDeduction: penaltySummary.totalDeductionAmount,
+          waiverReason: reason || 'Dispensasi Tugas Luar / Kebijakan HR',
+          penaltyPolicy: companyConfig.attendancePenaltyPolicy,
+        }
+      );
+
+      const finalRec: PayrollRecord = existingRec
+        ? {
+            ...updatedRecord,
+            id: existingRec.id,
+            referenceNumber: existingRec.referenceNumber || updatedRecord.referenceNumber,
+          }
+        : updatedRecord;
+
+      setPayrolls((prev) => {
+        const exists = prev.some((p) => p.employeeId === employeeId);
+        if (exists) {
+          return prev.map((p) => (p.employeeId === employeeId ? finalRec : p));
+        }
+        return [...prev, finalRec];
+      });
+      upsertPayrollToSupabase(finalRec);
+
+      logActivity(
+        'SALARY_UPDATE',
+        'Gaji & Payroll',
+        nextWaivedState
+          ? `Memberikan Dispensasi / Bebas Denda Keterlambatan untuk ${emp.fullName} (Periode ${currentPeriod}). Potongan denda Rp ${penaltySummary.totalDeductionAmount.toLocaleString('id-ID')} di-nol-kan tanpa menghapus log presensi.`
+          : `Membatalkan Dispensasi Denda Keterlambatan untuk ${emp.fullName} (Periode ${currentPeriod}). Potongan denda kembali ke Rp ${penaltySummary.totalDeductionAmount.toLocaleString('id-ID')}.`,
+        {
+          targetId: emp.id,
+          targetName: emp.fullName,
+          oldValue: nextWaivedState
+            ? `Denda: Rp ${penaltySummary.totalDeductionAmount.toLocaleString('id-ID')}`
+            : 'Dispensasi Denda: Rp 0',
+          newValue: nextWaivedState
+            ? `Dispensasi Denda: Rp 0 (THP: Rp ${finalRec.takeHomePay.toLocaleString('id-ID')})`
+            : `Denda Aktif: Rp ${penaltySummary.totalDeductionAmount.toLocaleString('id-ID')} (THP: Rp ${finalRec.takeHomePay.toLocaleString('id-ID')})`,
+          severity: nextWaivedState ? 'info' : 'warning',
+        }
+      );
+    }
+  };
+
+  const handleUpdatePenaltyPolicy = (newPolicy: AttendancePenaltyPolicy) => {
+    setCompanyConfig((prev) => ({
+      ...prev,
+      attendancePenaltyPolicy: newPolicy,
+    }));
+
+    logActivity(
+      'COMPANY_SETTINGS_UPDATE',
+      'Pengaturan Sistem',
+      `Memperbarui aturan denda keterlambatan & potongan absen: Toleransi ${newPolicy.gracePeriodMinutes} mnt, Skema Terlambat "${newPolicy.latePenaltyScheme}", Skema Alpha "${newPolicy.alphaPenaltyScheme}".`,
+      {
+        targetId: 'attendance-penalty-policy',
+        targetName: 'Aturan Denda Keterlambatan & Absen',
+        newValue: `Aktif: ${newPolicy.enabled ? 'Ya' : 'Tidak'}, Toleransi: ${newPolicy.gracePeriodMinutes} mnt, Flat: Rp ${newPolicy.flatLatePenaltyAmount.toLocaleString('id-ID')}, Per Menit: Rp ${newPolicy.perMinutePenaltyAmount.toLocaleString('id-ID')}`,
+        severity: 'warning',
       }
     );
   };
 
   const handleUpdatePayrollRecord = (record: PayrollRecord) => {
-    setPayrolls((prev) => prev.map((p) => (p.id === record.id ? record : p)));
+    setPayrolls((prev) => {
+      const exists = prev.some((p) => p.id === record.id || p.employeeId === record.employeeId);
+      if (exists) {
+        return prev.map((p) =>
+          p.id === record.id || p.employeeId === record.employeeId ? record : p
+        );
+      }
+      return [...prev, record];
+    });
+    upsertPayrollToSupabase(record);
     const emp = employees.find((e) => e.id === record.employeeId);
     const empName = emp?.fullName || record.employeeId;
 
@@ -1771,22 +2219,63 @@ export default function App() {
     );
   };
 
-  // Handlers for Attendance & Work Shifts (Enforcing Anti-Duplicate 1x Check-In & 1x Check-Out per Shift/Day)
+  // Handlers for Attendance & Work Shifts (Enforcing Anti-Duplicate 1x Check-In & 1x Check-Out per Shift/Day + Automatic Late Minutes Calculation)
   const handleAddAttendance = (att: AttendanceRecord) => {
-    let recordToPersist: AttendanceRecord = att;
+    const emp = employees.find((e) => e.id === att.employeeId);
+    const empShift = getEmployeeShift(emp, companyConfig.workShifts);
+    const policy = getAttendancePenaltyPolicy(companyConfig.attendancePenaltyPolicy);
+    const effectiveGrace = policy.useShiftGracePeriod
+      ? empShift.gracePeriodMinutes
+      : policy.gracePeriodMinutes;
+
+    const isNonPresent =
+      att.status === 'Sakit' ||
+      att.status === 'Izin' ||
+      att.status === 'Cuti' ||
+      att.status === 'Alpa';
+
+    const evaluatedInput =
+      !isNonPresent && att.checkIn && att.checkIn !== '-' && att.checkIn.includes(':')
+        ? evaluateAttendanceAgainstShift(att.checkIn, att.checkOut, empShift, effectiveGrace)
+        : null;
+
+    const normalizedAtt: AttendanceRecord = evaluatedInput
+      ? {
+          ...att,
+          status: evaluatedInput.status,
+          lateMinutes: evaluatedInput.lateMinutes,
+          earlyLeaveMinutes: evaluatedInput.earlyLeaveMinutes,
+          workHours: evaluatedInput.workHours,
+          shiftId: att.shiftId || empShift.id,
+          shiftName: att.shiftName || empShift.name,
+          scheduledCheckIn: att.scheduledCheckIn || empShift.checkInTime,
+          scheduledCheckOut: att.scheduledCheckOut || empShift.checkOutTime,
+        }
+      : {
+          ...att,
+          lateMinutes: 0,
+        };
+
+    let recordToPersist: AttendanceRecord = normalizedAtt;
 
     setAttendances((prev) => {
       // Find any existing record for the same employee and date
       const existingSameDay = prev.find(
-        (a) => a.id === att.id || (a.employeeId === att.employeeId && a.date === att.date)
+        (a) =>
+          a.id === normalizedAtt.id ||
+          (a.employeeId === normalizedAtt.employeeId && a.date === normalizedAtt.date)
       );
 
       if (existingSameDay) {
         const alreadyHasCheckIn = Boolean(
-          existingSameDay.checkIn && existingSameDay.checkIn.trim() !== '' && existingSameDay.checkIn !== '-'
+          existingSameDay.checkIn &&
+            existingSameDay.checkIn.trim() !== '' &&
+            existingSameDay.checkIn !== '-'
         );
         const alreadyHasCheckOut = Boolean(
-          existingSameDay.checkOut && existingSameDay.checkOut.trim() !== '' && existingSameDay.checkOut !== '-'
+          existingSameDay.checkOut &&
+            existingSameDay.checkOut.trim() !== '' &&
+            existingSameDay.checkOut !== '-'
         );
 
         // If both Check-In and Check-Out are already recorded for today, prevent duplicate overwrite
@@ -1795,49 +2284,269 @@ export default function App() {
           return prev;
         }
 
-        // Merge: preserve original Check-In data while allowing 1x Check-Out
+        const finalCheckIn = alreadyHasCheckIn ? existingSameDay.checkIn : normalizedAtt.checkIn;
+        const finalCheckOut = alreadyHasCheckOut
+          ? existingSameDay.checkOut
+          : normalizedAtt.checkOut;
+
+        const mergedEval =
+          !isNonPresent && finalCheckIn && finalCheckIn !== '-' && finalCheckIn.includes(':')
+            ? evaluateAttendanceAgainstShift(
+                finalCheckIn,
+                finalCheckOut,
+                empShift,
+                effectiveGrace
+              )
+            : null;
+
+        // Merge: preserve original 1st Check-In data while allowing 1x Check-Out
         const merged: AttendanceRecord = {
           ...existingSameDay,
-          ...att,
+          ...normalizedAtt,
           id: existingSameDay.id,
-          checkIn: alreadyHasCheckIn ? existingSameDay.checkIn : att.checkIn,
+          checkIn: finalCheckIn,
           checkInFullTimestamp:
-            existingSameDay.checkInFullTimestamp || att.checkInFullTimestamp,
-          facePhotoSnapshot: existingSameDay.facePhotoSnapshot || att.facePhotoSnapshot,
-          locationCoords: existingSameDay.locationCoords || att.locationCoords,
-          locationAddress: existingSameDay.locationAddress || att.locationAddress,
-          checkOut: alreadyHasCheckOut ? existingSameDay.checkOut : att.checkOut,
+            existingSameDay.checkInFullTimestamp || normalizedAtt.checkInFullTimestamp,
+          facePhotoSnapshot: existingSameDay.facePhotoSnapshot || normalizedAtt.facePhotoSnapshot,
+          locationCoords: existingSameDay.locationCoords || normalizedAtt.locationCoords,
+          locationAddress: existingSameDay.locationAddress || normalizedAtt.locationAddress,
+          checkOut: finalCheckOut,
           checkOutFullTimestamp: alreadyHasCheckOut
             ? existingSameDay.checkOutFullTimestamp
-            : att.checkOutFullTimestamp,
+            : normalizedAtt.checkOutFullTimestamp,
           checkOutPhotoSnapshot: alreadyHasCheckOut
             ? existingSameDay.checkOutPhotoSnapshot
-            : att.checkOutPhotoSnapshot,
+            : normalizedAtt.checkOutPhotoSnapshot,
+          status: mergedEval ? mergedEval.status : normalizedAtt.status,
+          lateMinutes: mergedEval ? mergedEval.lateMinutes : 0,
+          earlyLeaveMinutes: mergedEval
+            ? mergedEval.earlyLeaveMinutes
+            : normalizedAtt.earlyLeaveMinutes,
+          workHours: mergedEval ? mergedEval.workHours : normalizedAtt.workHours,
         };
         recordToPersist = merged;
         return prev.map((a) => (a.id === existingSameDay.id ? merged : a));
       }
 
-      return [att, ...prev];
+      return [normalizedAtt, ...prev];
     });
 
     upsertAttendanceToSupabase(recordToPersist);
   };
 
+  const handleUpdateAttendance = (updatedAtt: AttendanceRecord) => {
+    const emp = employees.find((e) => e.id === updatedAtt.employeeId);
+    const empShift = getEmployeeShift(emp, companyConfig.workShifts);
+    const policy = getAttendancePenaltyPolicy(companyConfig.attendancePenaltyPolicy);
+    const effectiveGrace = policy.useShiftGracePeriod
+      ? empShift.gracePeriodMinutes
+      : policy.gracePeriodMinutes;
+
+    const isNonPresent =
+      updatedAtt.status === 'Sakit' ||
+      updatedAtt.status === 'Izin' ||
+      updatedAtt.status === 'Cuti' ||
+      updatedAtt.status === 'Alpa';
+
+    const hasValidCheckIn =
+      !isNonPresent &&
+      Boolean(updatedAtt.checkIn && updatedAtt.checkIn !== '-' && updatedAtt.checkIn.includes(':'));
+
+    const evalRes = hasValidCheckIn
+      ? evaluateAttendanceAgainstShift(
+          updatedAtt.checkIn,
+          updatedAtt.checkOut,
+          empShift,
+          effectiveGrace
+        )
+      : null;
+
+    const finalStatus = isNonPresent
+      ? updatedAtt.status
+      : updatedAtt.isManualStatus
+      ? updatedAtt.status
+      : evalRes
+      ? evalRes.status
+      : updatedAtt.status;
+
+    const finalLateMinutes = isNonPresent
+      ? 0
+      : updatedAtt.isManualStatus
+      ? updatedAtt.status === 'Hadir Tepat Waktu'
+        ? 0
+        : updatedAtt.lateMinutes > 0
+        ? updatedAtt.lateMinutes
+        : Math.max(1, evalRes?.rawLateMinutes || evalRes?.lateMinutes || 0)
+      : evalRes
+      ? evalRes.lateMinutes
+      : 0;
+
+    const normalizedAtt: AttendanceRecord = {
+      ...updatedAtt,
+      checkIn: isNonPresent ? '-' : updatedAtt.checkIn || '-',
+      checkOut: isNonPresent ? '-' : updatedAtt.checkOut || '-',
+      status: finalStatus,
+      lateMinutes: finalLateMinutes,
+      earlyLeaveMinutes: isNonPresent ? 0 : evalRes ? evalRes.earlyLeaveMinutes : 0,
+      workHours: isNonPresent ? 0 : evalRes ? evalRes.workHours : updatedAtt.workHours || 0,
+      shiftId: updatedAtt.shiftId || empShift.id,
+      shiftName: updatedAtt.shiftName || empShift.name,
+      scheduledCheckIn: empShift.checkInTime || updatedAtt.scheduledCheckIn || '09:00',
+      scheduledCheckOut: empShift.checkOutTime || updatedAtt.scheduledCheckOut || '17:30',
+    };
+
+    const duplicateIdsToDelete: string[] = [];
+
+    setAttendances((prev) => {
+      const next: AttendanceRecord[] = [];
+      let replaced = false;
+
+      for (const a of prev) {
+        const isSameRecord = a.id === normalizedAtt.id;
+        const isSameDayAndEmployee =
+          a.employeeId === normalizedAtt.employeeId && a.date === normalizedAtt.date;
+
+        if (isSameRecord || isSameDayAndEmployee) {
+          if (!replaced) {
+            next.push(normalizedAtt);
+            replaced = true;
+          } else if (a.id !== normalizedAtt.id) {
+            duplicateIdsToDelete.push(a.id);
+          }
+        } else {
+          next.push(a);
+        }
+      }
+
+      if (!replaced) {
+        next.unshift(normalizedAtt);
+      }
+
+      try {
+        localStorage.setItem('tgi_attendances_data', JSON.stringify(next));
+      } catch (err) {
+        console.error('Failed to save updated attendances', err);
+      }
+      return next;
+    });
+
+    upsertAttendanceToSupabase(normalizedAtt);
+    duplicateIdsToDelete.forEach((dupId) => deleteAttendanceFromSupabase(dupId));
+
+    logActivity(
+      'COMPANY_SETTINGS_UPDATE',
+      'Data Karyawan',
+      `Admin memperbarui log presensi harian ${emp?.fullName || updatedAtt.employeeId} (${updatedAtt.date}): Jam Masuk ${normalizedAtt.checkIn}, Jam Pulang ${normalizedAtt.checkOut}, Status "${normalizedAtt.status}".`,
+      {
+        targetId: normalizedAtt.id,
+        targetName: `${emp?.fullName || updatedAtt.employeeId} (${updatedAtt.date})`,
+        newValue: `Masuk: ${normalizedAtt.checkIn}, Pulang: ${normalizedAtt.checkOut}, Status: ${normalizedAtt.status}${normalizedAtt.lateMinutes > 0 ? ` (Terlambat ${normalizedAtt.lateMinutes} mnt)` : ''}`,
+        severity: 'info',
+      }
+    );
+  };
+
+  const handleDeleteAttendance = (attId: string, employeeId?: string, date?: string) => {
+    const targetAtt = attendances.find((a) => a.id === attId);
+    const targetEmpId = employeeId || targetAtt?.employeeId;
+    const targetDate = date || targetAtt?.date;
+    const emp = employees.find((e) => e.id === targetEmpId);
+
+    const idsToDelete = new Set<string>([attId]);
+    attendances.forEach((a) => {
+      if (
+        a.id === attId ||
+        (targetEmpId && targetDate && a.employeeId === targetEmpId && a.date === targetDate)
+      ) {
+        idsToDelete.add(a.id);
+      }
+    });
+
+    setAttendances((prev) => {
+      const next = prev.filter((a) => !idsToDelete.has(a.id));
+      try {
+        localStorage.setItem('tgi_attendances_data', JSON.stringify(next));
+      } catch (err) {
+        console.error('Failed to save attendances after deletion', err);
+      }
+      return next;
+    });
+
+    idsToDelete.forEach((delId) => deleteAttendanceFromSupabase(delId));
+
+    logActivity(
+      'COMPANY_SETTINGS_UPDATE',
+      'Data Karyawan',
+      `Admin menghapus log presensi harian ${emp?.fullName || targetEmpId || attId} pada tanggal ${targetDate || '-'}.`,
+      {
+        targetId: attId,
+        targetName: `${emp?.fullName || targetEmpId || 'Karyawan'} (${targetDate || '-'})`,
+        oldValue: targetAtt
+          ? `Masuk: ${targetAtt.checkIn}, Pulang: ${targetAtt.checkOut}, Status: ${targetAtt.status}`
+          : undefined,
+        newValue: 'Log presensi dihapus permanen',
+        severity: 'warning',
+      }
+    );
+  };
+
   const handleUpdateShifts = (newShifts: WorkShift[]) => {
-    setCompanyConfig((prev) => ({
-      ...prev,
-      workShifts: newShifts,
-    }));
+    const validShifts = newShifts.length > 0 ? newShifts : DEFAULT_WORK_SHIFTS;
+    const defaultShift = validShifts.find((s) => s.isDefault) || validShifts[0];
+    const validShiftIdsAndCodes = new Set<string>();
+    validShifts.forEach((s) => {
+      validShiftIdsAndCodes.add(s.id);
+      if (s.code) validShiftIdsAndCodes.add(s.code);
+    });
+
+    setCompanyConfig((prev) => {
+      const updatedConfig = {
+        ...prev,
+        workShifts: validShifts,
+      };
+      try {
+        localStorage.setItem('tgi_company_config', JSON.stringify(updatedConfig));
+      } catch (err) {
+        console.error('Failed to persist company config', err);
+      }
+      return updatedConfig;
+    });
+
+    // Ensure employees whose previous shift was deleted are automatically reassigned to the default shift & synced to Supabase
+    setEmployees((prev) => {
+      let hasReassigned = false;
+      const next = prev.map((e) => {
+        if (e.shiftId && !validShiftIdsAndCodes.has(e.shiftId)) {
+          hasReassigned = true;
+          const updatedEmp = { ...e, shiftId: defaultShift.id };
+          updateEmployeeInSupabase(updatedEmp);
+          return updatedEmp;
+        }
+        return e;
+      });
+      if (hasReassigned) {
+        try {
+          localStorage.setItem('tgi_employees_data', JSON.stringify(next));
+        } catch {
+          // ignore
+        }
+      }
+      return hasReassigned ? next : prev;
+    });
 
     logActivity(
       'SHIFT_SCHEDULE_UPDATE',
       'Pengaturan Sistem',
-      `Memperbarui konfigurasi jadwal shift jam masuk & pulang kerja (${newShifts.length} shift aktif).`,
+      `Memperbarui konfigurasi jadwal shift jam masuk, jam pulang, lokasi, & hari kerja (${validShifts.length} shift aktif).`,
       {
         targetId: 'work-shifts',
         targetName: 'Jadwal Shift Jam Kerja',
-        newValue: newShifts.map((s) => `${s.code}: ${s.checkInTime}-${s.checkOutTime}`).join(', '),
+        newValue: validShifts
+          .map(
+            (s) =>
+              `${s.code} (${s.name}): ${s.checkInTime}-${s.checkOutTime}, ${s.workDays?.length || 5} Hari/Mgg`
+          )
+          .join(' | '),
         severity: 'info',
       }
     );
@@ -3238,6 +3947,8 @@ export default function App() {
                 onRejectLeave={handleRejectLeave}
                 onApproveOvertime={handleApproveOvertime}
                 onRejectOvertime={handleRejectOvertime}
+                onUpdateAttendance={handleUpdateAttendance}
+                onDeleteAttendance={handleDeleteAttendance}
               />
             )}
 
@@ -3258,11 +3969,16 @@ export default function App() {
               <PayrollManagement
                 employees={employees}
                 payrolls={syncedPayrolls}
+                attendances={attendances}
                 reviews={reviews}
                 companyConfig={companyConfig}
                 onOpenPayslip={handleOpenPayslip}
                 onRecalculatePayroll={handleRecalculatePayroll}
                 onUpdatePayrollRecord={handleUpdatePayrollRecord}
+                onUpdatePenaltyPolicy={handleUpdatePenaltyPolicy}
+                onChangePayrollPeriod={handleChangePayrollPeriod}
+                onToggleLockPayrollPeriod={handleToggleLockPayrollPeriod}
+                onToggleWaiveLatePenalty={handleToggleWaiveLatePenalty}
                 onApplyImportedPayroll={(importedPayrolls) => {
                   setPayrolls(importedPayrolls);
                 }}
@@ -3279,11 +3995,21 @@ export default function App() {
                 companyConfig={companyConfig}
                 initialSubTab={activeTab === 'work_shifts' ? 'shifts' : 'attendance'}
                 onAddAttendance={handleAddAttendance}
+                onUpdateAttendance={handleUpdateAttendance}
+                onDeleteAttendance={handleDeleteAttendance}
                 onUpdateShifts={handleUpdateShifts}
+                onUpdatePenaltyPolicy={handleUpdatePenaltyPolicy}
                 onAssignEmployeeShift={handleAssignEmployeeShift}
                 onBulkAssignDepartmentShift={handleBulkAssignDepartmentShift}
                 onApplyImportedAttendance={(importedAttendances) => {
-                  setAttendances((prev) => [...importedAttendances, ...prev]);
+                  setAttendances((prev) =>
+                    deduplicateDailyAttendances(
+                      [...importedAttendances, ...prev],
+                      employees,
+                      companyConfig.workShifts,
+                      companyConfig.attendancePenaltyPolicy
+                    )
+                  );
                   importedAttendances.forEach((att) => upsertAttendanceToSupabase(att));
                 }}
               />

@@ -1,10 +1,4 @@
-export type Department = 
-  | 'Teknologi & IT'
-  | 'Keuangan & Akuntansi'
-  | 'Operasional'
-  | 'Human Resources & GA'
-  | 'Pemasaran & Bisnis'
-  | 'Layanan Pelanggan';
+export type Department = string;
 
 export type EmploymentStatus = 'PKWTT (Tetap)' | 'PKWT (Kontrak)' | 'Probation' | 'Internship';
 
@@ -99,7 +93,16 @@ export interface PayrollRecord {
   totalGrossSalary: number;
   
   // Deductions (Potongan)
-  lateDeduction: number;
+  lateDeduction: number; // Total gabungan denda keterlambatan + potongan alpha/absen
+  originalLateDeduction?: number; // Nominal denda asli sebelum diberi dispensasi
+  isLateFeeWaived?: boolean; // Status dispensasi / pembebasan denda keterlambatan per karyawan
+  waiverReason?: string; // Catatan alasan dispensasi (misal: Tugas Luar / Dispensasi HR)
+  lateFrequency?: number; // Jumlah hari/kejadian terlambat (contoh: 4x)
+  totalLateMinutes?: number; // Total akumulasi menit terlambat (contoh: 210 mnt)
+  latePenaltyAmount?: number; // Nominal denda keterlambatan saja
+  alphaDaysCount?: number; // Jumlah hari Alpha / Mangkir tanpa keterangan
+  alphaPenaltyAmount?: number; // Nominal potongan Alpha / Mangkir saja
+  attendanceDeductionNotes?: string; // Contoh: "Potongan Terlambat 4x / 210 mnt: -Rp 100.000"
   bpjsKesehatanEmployee: number; // 1%
   bpjsKesehatanEmployer: number; // 4%
   bpjsJhtEmployee: number; // 2%
@@ -118,6 +121,8 @@ export interface PayrollRecord {
   paymentStatus: 'Lunas' | 'Menunggu Transfer' | 'Draft';
   paymentDate?: string;
   referenceNumber: string;
+  isLocked?: boolean; // Apakah perhitungan THP periode ini sudah dikunci / difinalisasi
+  lockedAt?: string; // Waktu finalisasi kunci payroll
 }
 
 export interface AttendanceRecord {
@@ -155,6 +160,7 @@ export interface AttendanceRecord {
   scheduledCheckIn?: string; // Jam masuk sesuai jadwal shift (contoh: '09:00')
   scheduledCheckOut?: string; // Jam pulang sesuai jadwal shift (contoh: '17:30')
   earlyLeaveMinutes?: number; // Pulang lebih cepat dalam menit
+  isManualStatus?: boolean; // Status diatur manual oleh Admin HR
 }
 
 export interface GoogleUserAccount {
@@ -396,6 +402,22 @@ export interface GoogleAuthSettings {
   autoWhitelistNewUsers: boolean;
 }
 
+export type LatePenaltyScheme = 'flat_per_incident' | 'per_minute' | 'daily_allowance_cut';
+export type AlphaPenaltyScheme = 'proportional_25' | 'fixed_amount';
+
+export interface AttendancePenaltyPolicy {
+  enabled: boolean;
+  gracePeriodMinutes: number; // Default: 15 menit
+  useShiftGracePeriod: boolean; // Jika false, gunakan gracePeriodMinutes global (default 15 mnt)
+  latePenaltyScheme: LatePenaltyScheme; // 'flat_per_incident' | 'per_minute' | 'daily_allowance_cut'
+  flatLatePenaltyAmount: number; // Default: Rp 25.000 / kejadian terlambat
+  perMinutePenaltyAmount: number; // Default: Rp 1.000 / menit terlambat
+  dailyAllowanceCutPercentage: number; // Default: 100% dari Tunjangan Makan & Transport harian
+  alphaPenaltyScheme: AlphaPenaltyScheme; // 'proportional_25' (1/25 x Gaji Pokok) | 'fixed_amount'
+  alphaWorkingDaysDivisor: number; // Default: 25 hari kerja
+  fixedAlphaPenaltyAmount: number; // Default: Rp 150.000 / hari Alpha
+}
+
 export interface CompanyConfig {
   companyName: string;
   brandName: string;
@@ -421,6 +443,9 @@ export interface CompanyConfig {
   defaultOvertimeRatePerHour?: number;
   defaultOvertimeRatePerMinute?: number;
   workShifts?: WorkShift[];
+  attendancePenaltyPolicy?: AttendancePenaltyPolicy;
+  lockedPayrollPeriods?: string[]; // Daftar periode bulan payroll yang sudah dikunci / difinalisasi
+  waivedLateEmployeeIds?: Record<string, string[]>; // Map periode -> array employeeId yang diberi dispensasi denda
   securitySettings?: {
     adminPin?: string;
     requirePinForAdminMode?: boolean;
@@ -667,6 +692,7 @@ export interface CashAdvance {
   rejectedAt?: string;
   rejectedBy?: string;
   rejectionReason?: string;
+  notes?: string;
   installments: CashAdvanceInstallment[];
 }
 

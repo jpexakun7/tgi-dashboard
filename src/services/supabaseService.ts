@@ -75,8 +75,27 @@ export function employeeToDb(emp: Employee) {
       _contractDocumentUrl: emp.contractDocumentUrl || undefined,
       _contractDocumentName: emp.contractDocumentName || undefined,
       _contractUpdatedAt: emp.contractUpdatedAt || undefined,
+      _birthDate: emp.birthDate || undefined,
+      _birthPlace: emp.birthPlace || undefined,
+      _shiftId: emp.shiftId || undefined,
       _address: emp.address || undefined,
+      _phone: emp.phone || undefined,
+      _email: emp.email || undefined,
       _emergencyContact: emp.emergencyContact || undefined,
+      _workShifts: (() => {
+        try {
+          const rawCfg = localStorage.getItem('tgi_company_config');
+          if (rawCfg) {
+            const parsed = JSON.parse(rawCfg);
+            if (Array.isArray(parsed?.workShifts) && parsed.workShifts.length > 0) {
+              return parsed.workShifts;
+            }
+          }
+        } catch {
+          // ignore
+        }
+        return undefined;
+      })(),
     },
     bank_name: emp.bankName || 'BCA',
     bank_account_number: emp.bankAccountNumber || '',
@@ -94,6 +113,16 @@ export function employeeToDb(emp: Employee) {
 
 export function dbToEmployee(row: any): Employee {
   const rawAllowances = row.allowances || {};
+  if (Array.isArray(rawAllowances._workShifts) && rawAllowances._workShifts.length > 0) {
+    try {
+      const rawCfg = localStorage.getItem('tgi_company_config');
+      if (!rawCfg) {
+        localStorage.setItem('tgi_synced_work_shifts', JSON.stringify(rawAllowances._workShifts));
+      }
+    } catch {
+      // ignore
+    }
+  }
   const storedPin =
     row.access_pin ||
     rawAllowances._accessPin ||
@@ -103,9 +132,9 @@ export function dbToEmployee(row: any): Employee {
     id: row.id,
     nik: row.nik,
     fullName: row.full_name || '',
-    email: row.email || '',
+    email: row.email || rawAllowances._email || '',
     googleEmail: row.google_email || undefined,
-    phone: row.phone || '',
+    phone: row.phone || rawAllowances._phone || '',
     avatarUrl: row.avatar_url || '',
     facePhotoUrl: row.face_photo_url || row.avatar_url || undefined,
     ktpPhotoUrl: row.ktp_photo_url || rawAllowances._ktpPhotoUrl || undefined,
@@ -121,6 +150,9 @@ export function dbToEmployee(row: any): Employee {
     contractDocumentName:
       row.contract_document_name || rawAllowances._contractDocumentName || undefined,
     contractUpdatedAt: row.contract_updated_at || rawAllowances._contractUpdatedAt || undefined,
+    birthDate: row.birth_date || rawAllowances._birthDate || undefined,
+    birthPlace: row.birth_place || rawAllowances._birthPlace || undefined,
+    shiftId: row.shift_id || rawAllowances._shiftId || 'SHF-01',
     address: row.address || rawAllowances._address || undefined,
     emergencyContact: rawAllowances._emergencyContact || undefined,
     role: row.role || 'Staff',
@@ -326,17 +358,30 @@ export async function checkSupabaseStatus(): Promise<SupabaseSyncStatus> {
 
 export const DELETED_EMPLOYEE_IDS_KEY = 'deleted_employee_ids';
 export const EMPLOYEES_MODIFIED_KEY = 'tgi_employees_modified';
+export const LEGACY_DUMMY_EMPLOYEE_IDS = [
+  'emp-01',
+  'emp-02',
+  'emp-03',
+  'emp-04',
+  'emp-05',
+  'emp-06',
+  'emp-07',
+  'emp-08',
+  'emp-09',
+  'emp-10',
+];
 
 export function getDeletedEmployeeIds(): string[] {
   try {
     const raw = localStorage.getItem(DELETED_EMPLOYEE_IDS_KEY);
-    if (!raw) return [];
+    if (!raw) return [...LEGACY_DUMMY_EMPLOYEE_IDS];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed)
+    const stored = Array.isArray(parsed)
       ? parsed.filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
       : [];
+    return Array.from(new Set([...LEGACY_DUMMY_EMPLOYEE_IDS, ...stored]));
   } catch {
-    return [];
+    return [...LEGACY_DUMMY_EMPLOYEE_IDS];
   }
 }
 
@@ -680,6 +725,41 @@ export function dbToAttendance(row: any): AttendanceRecord {
   };
 }
 
+const DELETED_ATTENDANCE_KEYS_STORAGE = 'tgi_deleted_attendance_keys';
+
+export function getDeletedAttendanceKeys(): string[] {
+  try {
+    const raw = localStorage.getItem(DELETED_ATTENDANCE_KEYS_STORAGE);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((k): k is string => typeof k === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+export function addDeletedAttendanceKey(id: string, employeeId?: string, date?: string): void {
+  try {
+    const current = new Set(getDeletedAttendanceKeys());
+    if (id) current.add(id);
+    if (employeeId && date) current.add(`${employeeId}__${date}`);
+    localStorage.setItem(DELETED_ATTENDANCE_KEYS_STORAGE, JSON.stringify(Array.from(current)));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+export function removeDeletedAttendanceKey(id: string, employeeId?: string, date?: string): void {
+  try {
+    const current = new Set(getDeletedAttendanceKeys());
+    if (id) current.delete(id);
+    if (employeeId && date) current.delete(`${employeeId}__${date}`);
+    localStorage.setItem(DELETED_ATTENDANCE_KEYS_STORAGE, JSON.stringify(Array.from(current)));
+  } catch {
+    // ignore storage errors
+  }
+}
+
 export async function fetchAttendancesFromSupabase(): Promise<AttendanceRecord[] | null> {
   try {
     const { data, error } = await supabase
@@ -689,7 +769,15 @@ export async function fetchAttendancesFromSupabase(): Promise<AttendanceRecord[]
 
     if (error || !data) return null;
     const deletedIds = new Set(getDeletedEmployeeIds());
-    return data.map(dbToAttendance).filter((a) => !deletedIds.has(a.employeeId));
+    const deletedAttKeys = new Set(getDeletedAttendanceKeys());
+    return data
+      .map(dbToAttendance)
+      .filter(
+        (a) =>
+          !deletedIds.has(a.employeeId) &&
+          !deletedAttKeys.has(a.id) &&
+          !deletedAttKeys.has(`${a.employeeId}__${a.date}`)
+      );
   } catch {
     return null;
   }
@@ -697,6 +785,7 @@ export async function fetchAttendancesFromSupabase(): Promise<AttendanceRecord[]
 
 export async function upsertAttendanceToSupabase(att: AttendanceRecord): Promise<boolean> {
   try {
+    removeDeletedAttendanceKey(att.id, att.employeeId, att.date);
     const row = attendanceToDb(att);
     const { error } = await supabase.from('attendances').upsert(row, { onConflict: 'id' });
     if (error) {
@@ -1019,9 +1108,21 @@ export async function deleteReimbursementFromSupabase(id: string): Promise<boole
   }
 }
 
-export async function deleteAttendanceFromSupabase(id: string): Promise<boolean> {
+export async function deleteAttendanceFromSupabase(
+  id: string,
+  employeeId?: string,
+  date?: string
+): Promise<boolean> {
+  addDeletedAttendanceKey(id, employeeId, date);
   try {
     const { error } = await supabase.from('attendances').delete().eq('id', id);
+    if (employeeId && date) {
+      await supabase
+        .from('attendances')
+        .delete()
+        .eq('employee_id', employeeId)
+        .eq('date', date);
+    }
     if (error) {
       console.warn('Supabase delete attendance error:', error.message);
       return false;
