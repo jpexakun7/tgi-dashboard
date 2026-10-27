@@ -1117,7 +1117,26 @@ export function getContractValidityInfo(employee?: Partial<Employee> | null): {
     };
   }
 
-  if (remainingDays <= 45) {
+  if (remainingDays <= 7) {
+    return {
+      isPermanent: false,
+      isExpired: false,
+      isExpiringSoon: true,
+      startDate,
+      endDate,
+      remainingDays,
+      daysRemaining: remainingDays,
+      totalDurationDays,
+      progressPercent,
+      status: 'expiring_soon',
+      badgeText: `Kritis: Sisa ${remainingDays} Hari`,
+      shortBadgeText: `🚨 Sisa ${remainingDays} Hari`,
+      badgeClass: 'bg-rose-100 text-rose-800 border-rose-300',
+      warningMessage: `PERINGATAN KRITIS KONTRAK (≤ 7 Hari): Kontrak kerja PKWT akan berakhir dalam ${remainingDays} hari pada ${formatIndoDate(endDate)}. Segera hubungi Admin HRD untuk proses perpanjangan kontrak kerja.`,
+    };
+  }
+
+  if (remainingDays <= 30) {
     return {
       isPermanent: false,
       isExpired: false,
@@ -1132,7 +1151,7 @@ export function getContractValidityInfo(employee?: Partial<Employee> | null): {
       badgeText: `Segera Berakhir (Sisa ${remainingDays} Hari)`,
       shortBadgeText: `⚠️ Sisa ${remainingDays} Hari`,
       badgeClass: 'bg-amber-100 text-amber-900 border-amber-300',
-      warningMessage: `Peringatan Masa Kontrak: Kontrak kerja akan berakhir dalam ${remainingDays} hari pada ${formatIndoDate(endDate)}. Segera koordinasikan evaluasi atau perpanjangan kontrak kerja.`,
+      warningMessage: `Peringatan Masa Kontrak (≤ 30 Hari): Kontrak kerja akan berakhir dalam ${remainingDays} hari pada ${formatIndoDate(endDate)}. Segera koordinasikan evaluasi atau perpanjangan kontrak kerja.`,
     };
   }
 
@@ -1148,8 +1167,8 @@ export function getContractValidityInfo(employee?: Partial<Employee> | null): {
     progressPercent,
     status: 'active',
     badgeText: `Kontrak Aktif (Sisa ${remainingDays} Hari)`,
-    shortBadgeText: `Sisa ${remainingDays} Hari`,
-    badgeClass: 'bg-blue-100 text-blue-800 border-blue-200',
+    shortBadgeText: `✓ Sisa ${remainingDays} Hari`,
+    badgeClass: 'bg-emerald-100 text-emerald-800 border-emerald-300',
     warningMessage: null,
   };
 }

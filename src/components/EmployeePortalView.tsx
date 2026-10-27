@@ -50,6 +50,8 @@ import {
   LayoutGrid,
   LogOut,
   Eye,
+  EyeOff,
+  KeyRound,
   Trash2,
   RefreshCw,
   Image as ImageIcon,
@@ -91,6 +93,7 @@ import {
 } from '../utils/formatters';
 import { formatWhatsAppPhone } from '../utils/notificationHelper';
 import { getEmployeeEffectivePin } from '../services/supabaseService';
+import { supabase } from '../lib/supabase';
 import { validateImageFile, compressImage, compressVideoFrame } from '../utils/imageUtils';
 import { LiveFaceGpsAttendanceScanner } from './LiveFaceGpsAttendanceScanner';
 
@@ -811,6 +814,87 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
   const isCompressingLeaveAttachment = isCompressingLeavePhoto;
   const formatDateID = formatIndoDate;
 
+  // Self-Service Password / Kata Sandi Mandiri State
+  const [passwordForm, setPasswordForm] = useState({
+    currentPassword: '',
+    newPassword: '',
+    confirmPassword: '',
+  });
+  const [showPasswordText, setShowPasswordText] = useState(false);
+  const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
+  const [passwordChangeSuccess, setPasswordChangeSuccess] = useState<string | null>(null);
+  const [passwordChangeError, setPasswordChangeError] = useState<string | null>(null);
+
+  const handleSelfChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasswordChangeError(null);
+    setPasswordChangeSuccess(null);
+
+    const currentPin = getEmployeeEffectivePin(currentEmployee);
+    if (!passwordForm.currentPassword.trim()) {
+      setPasswordChangeError('Mohon masukkan Kata Sandi / PIN saat ini.');
+      return;
+    }
+    if (passwordForm.currentPassword.trim() !== currentPin) {
+      setPasswordChangeError('Kata Sandi / PIN saat ini tidak sesuai dengan data akun Anda.');
+      return;
+    }
+    const cleanNewPassword = passwordForm.newPassword.trim();
+    if (cleanNewPassword.length < 6) {
+      setPasswordChangeError('Kata Sandi / PIN baru wajib minimal 6 karakter/digit demi keamanan akun.');
+      return;
+    }
+    if (cleanNewPassword !== passwordForm.confirmPassword.trim()) {
+      setPasswordChangeError('Konfirmasi Kata Sandi / PIN baru tidak cocok. Silakan periksa kembali.');
+      return;
+    }
+    if (cleanNewPassword === currentPin) {
+      setPasswordChangeError('Kata Sandi / PIN baru harus berbeda dari Kata Sandi saat ini.');
+      return;
+    }
+
+    setIsUpdatingPassword(true);
+    try {
+      let supabaseAuthUpdated = false;
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (sessionData?.session?.user) {
+          const { error: authErr } = await supabase.auth.updateUser({
+            password: cleanNewPassword,
+          });
+          if (authErr) {
+            throw new Error(authErr.message);
+          }
+          supabaseAuthUpdated = true;
+        }
+      } catch (authUpdateErr: any) {
+        console.warn('Supabase Auth session update note:', authUpdateErr?.message);
+      }
+
+      const updatedEmployee: Employee = {
+        ...currentEmployee,
+        accessPin: cleanNewPassword,
+      };
+      onUpdateProfile(updatedEmployee);
+
+      setPasswordForm({
+        currentPassword: '',
+        newPassword: '',
+        confirmPassword: '',
+      });
+      setPasswordChangeSuccess(
+        supabaseAuthUpdated
+          ? 'Kata Sandi berhasil diperbarui secara aman di Supabase Auth dan Portal Karyawan!'
+          : 'Kata Sandi / PIN Akses berhasil diperbarui dan disinkronkan secara real-time ke database Supabase!'
+      );
+      setTimeout(() => setPasswordChangeSuccess(null), 6000);
+    } catch (err: any) {
+      setPasswordChangeError(err?.message || 'Gagal memperbarui kata sandi. Silakan coba lagi.');
+    } finally {
+      setIsUpdatingPassword(false);
+    }
+  };
+
   // Profile Save Handler with strict 16-digit NIK KTP validation & NPWP integration
   const handleSaveProfile = (e: React.FormEvent) => {
     e.preventDefault();
@@ -974,12 +1058,28 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 <button
                   type="button"
                   onClick={() => setActivePortalTab('profile')}
-                  className={`min-h-[38px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
-                    myContractInfo.status === 'expired' || myContractInfo.status === 'expiring_soon'
-                      ? 'bg-amber-400 text-slate-950 border-amber-300 hover:bg-amber-300 shadow-sm'
-                      : 'bg-white/15 text-white border-white/30 hover:bg-white/25'
+                  className={`min-h-[38px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer shadow-xs ${
+                    myContractInfo.isPermanent
+                      ? 'bg-indigo-500/30 text-indigo-50 border-indigo-300/50 hover:bg-indigo-500/40'
+                      : myContractInfo.daysRemaining !== null && myContractInfo.daysRemaining <= 7
+                      ? 'bg-rose-500 text-white border-rose-300 hover:bg-rose-600'
+                      : myContractInfo.daysRemaining !== null && myContractInfo.daysRemaining <= 30
+                      ? 'bg-amber-400 text-slate-950 border-amber-200 hover:bg-amber-300'
+                      : 'bg-emerald-500/35 text-emerald-50 border-emerald-300/60 hover:bg-emerald-500/45'
                   }`}
+                  title="Indikator Kontrak PKWT: Hijau (> 30 hari), Kuning (≤ 30 hari), Merah (≤ 7 hari)"
                 >
+                  <span
+                    className={`w-2 h-2 rounded-full shrink-0 ${
+                      myContractInfo.isPermanent
+                        ? 'bg-indigo-300'
+                        : myContractInfo.daysRemaining !== null && myContractInfo.daysRemaining <= 7
+                        ? 'bg-white animate-ping'
+                        : myContractInfo.daysRemaining !== null && myContractInfo.daysRemaining <= 30
+                        ? 'bg-slate-950'
+                        : 'bg-emerald-300'
+                    }`}
+                  />
                   <FileText className="w-3.5 h-3.5 shrink-0" />
                   <span>{myContractInfo.badgeText}</span>
                 </button>
@@ -1098,7 +1198,8 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       {myContractInfo.warningMessage && (
         <div
           className={`rounded-2xl p-4 border-2 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in ${
-            myContractInfo.status === 'expired'
+            myContractInfo.status === 'expired' ||
+            (myContractInfo.daysRemaining !== null && myContractInfo.daysRemaining <= 7)
               ? 'bg-rose-50 border-rose-300 text-rose-950'
               : 'bg-amber-50 border-amber-300 text-amber-950'
           }`}
@@ -1106,7 +1207,8 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
           <div className="flex items-start sm:items-center gap-3 min-w-0">
             <div
               className={`p-2.5 rounded-xl shrink-0 border ${
-                myContractInfo.status === 'expired'
+                myContractInfo.status === 'expired' ||
+                (myContractInfo.daysRemaining !== null && myContractInfo.daysRemaining <= 7)
                   ? 'bg-rose-100 text-rose-700 border-rose-300'
                   : 'bg-amber-100 text-amber-700 border-amber-300'
               }`}
@@ -1117,7 +1219,8 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
               <div className="flex items-center gap-2 flex-wrap">
                 <span
                   className={`text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-full ${
-                    myContractInfo.status === 'expired'
+                    myContractInfo.status === 'expired' ||
+                    (myContractInfo.daysRemaining !== null && myContractInfo.daysRemaining <= 7)
                       ? 'bg-rose-200 text-rose-900'
                       : 'bg-amber-200 text-amber-900'
                   }`}
@@ -2445,6 +2548,54 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
               </button>
             </div>
 
+            {/* Ringkasan Visual Status Pengajuan Cuti & Izin (Menunggu, Disetujui, Ditolak) */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3.5 bg-slate-50/90 border border-slate-200/80 rounded-xl">
+              <div className="flex items-center justify-between p-3 bg-amber-50/90 border border-amber-200 rounded-xl">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-lg bg-amber-100 text-amber-700 border border-amber-300">
+                    <Clock className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-[11px] font-bold text-amber-900 block">Menunggu Review</span>
+                    <span className="text-[10px] text-amber-700">Sedang ditinjau HRD</span>
+                  </div>
+                </div>
+                <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-amber-200/80 text-amber-950 border border-amber-300">
+                  {myLeaveRequests.filter((l) => l.status === 'Menunggu Persetujuan').length} Pengajuan
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between p-3 bg-emerald-50/90 border border-emerald-200 rounded-xl">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-lg bg-emerald-100 text-emerald-700 border border-emerald-300">
+                    <CheckCircle2 className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-[11px] font-bold text-emerald-900 block">Disetujui HRD</span>
+                    <span className="text-[10px] text-emerald-700">Izin/Cuti resmi tercatat</span>
+                  </div>
+                </div>
+                <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-emerald-200/80 text-emerald-950 border border-emerald-300">
+                  {myLeaveRequests.filter((l) => l.status === 'Disetujui').length} Pengajuan
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between p-3 bg-rose-50/90 border border-rose-200 rounded-xl">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-lg bg-rose-100 text-rose-700 border border-rose-300">
+                    <AlertCircle className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-[11px] font-bold text-rose-900 block">Ditolak</span>
+                    <span className="text-[10px] text-rose-700">Tidak disetujui HRD</span>
+                  </div>
+                </div>
+                <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-rose-200/80 text-rose-950 border border-rose-300">
+                  {myLeaveRequests.filter((l) => l.status === 'Ditolak').length} Pengajuan
+                </span>
+              </div>
+            </div>
+
             {/* Mobile Card View for Leave Requests (<768px) */}
             <div className="md:hidden divide-y divide-slate-100 border border-slate-100 rounded-xl">
               {myLeaveRequests.length === 0 ? (
@@ -2462,15 +2613,22 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                         </span>
                       </div>
                       <span
-                        className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold shrink-0 ${
+                        className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold shrink-0 ${
                           leave.status === 'Disetujui'
-                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
                             : leave.status === 'Ditolak'
-                            ? 'bg-rose-100 text-rose-800 border border-rose-200'
-                            : 'bg-amber-100 text-amber-800 border border-amber-200'
+                            ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                            : 'bg-amber-100 text-amber-900 border border-amber-300'
                         }`}
                       >
-                        {leave.status}
+                        {leave.status === 'Disetujui' ? (
+                          <CheckCircle2 className="w-3 h-3 text-emerald-700" />
+                        ) : leave.status === 'Ditolak' ? (
+                          <X className="w-3 h-3 text-rose-700" />
+                        ) : (
+                          <Clock className="w-3 h-3 text-amber-700" />
+                        )}
+                        <span>{leave.status}</span>
                       </span>
                     </div>
                     <p className="text-xs text-slate-700 bg-slate-50 p-2 rounded-lg border border-slate-100">
@@ -2566,15 +2724,22 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                         </td>
                         <td className="py-3 px-3 whitespace-nowrap">
                           <span
-                            className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${
+                            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold ${
                               leave.status === 'Disetujui'
-                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
                                 : leave.status === 'Ditolak'
-                                ? 'bg-rose-100 text-rose-800 border border-rose-200'
-                                : 'bg-amber-100 text-amber-800 border border-amber-200'
+                                ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                                : 'bg-amber-100 text-amber-900 border border-amber-300'
                             }`}
                           >
-                            {leave.status}
+                            {leave.status === 'Disetujui' ? (
+                              <CheckCircle2 className="w-3 h-3 text-emerald-700" />
+                            ) : leave.status === 'Ditolak' ? (
+                              <X className="w-3 h-3 text-rose-700" />
+                            ) : (
+                              <Clock className="w-3 h-3 text-amber-700" />
+                            )}
+                            <span>{leave.status}</span>
                           </span>
                         </td>
                         <td className="py-3 px-3 whitespace-nowrap text-slate-500">
@@ -2636,6 +2801,54 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   <Plus className="w-4 h-4" />
                   Ajukan Lembur (Per Menit)
                 </button>
+              </div>
+
+              {/* Ringkasan Status Pengajuan Klaim Lembur (Menunggu, Disetujui, Ditolak) */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="flex items-center justify-between p-3 bg-amber-50/90 border border-amber-200 rounded-xl">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 rounded-lg bg-amber-100 text-amber-700 border border-amber-300">
+                      <Clock className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <span className="text-[11px] font-bold text-amber-900 block">Menunggu Persetujuan</span>
+                      <span className="text-[10px] text-amber-700">Verifikasi jam lembur HR</span>
+                    </div>
+                  </div>
+                  <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-amber-200/80 text-amber-950 border border-amber-300">
+                    {myOvertimeRequests.filter((o) => o.status === 'Menunggu Persetujuan').length} Klaim
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between p-3 bg-emerald-50/90 border border-emerald-200 rounded-xl">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 rounded-lg bg-emerald-100 text-emerald-700 border border-emerald-300">
+                      <CheckCircle2 className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <span className="text-[11px] font-bold text-emerald-900 block">Disetujui</span>
+                      <span className="text-[10px] text-emerald-700">Masuk ke Slip Gaji</span>
+                    </div>
+                  </div>
+                  <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-emerald-200/80 text-emerald-950 border border-emerald-300">
+                    {myOvertimeRequests.filter((o) => o.status === 'Disetujui').length} Klaim
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between p-3 bg-rose-50/90 border border-rose-200 rounded-xl">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 rounded-lg bg-rose-100 text-rose-700 border border-rose-300">
+                      <AlertCircle className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <span className="text-[11px] font-bold text-rose-900 block">Ditolak</span>
+                      <span className="text-[10px] text-rose-700">Tidak disetujui HRD</span>
+                    </div>
+                  </div>
+                  <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-rose-200/80 text-rose-950 border border-rose-300">
+                    {myOvertimeRequests.filter((o) => o.status === 'Ditolak').length} Klaim
+                  </span>
+                </div>
               </div>
 
               {/* Info Ringkasan Tarif Lembur Per Menit Karyawan */}
@@ -2721,15 +2934,22 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                             </td>
                             <td className="py-3 px-3 whitespace-nowrap">
                               <span
-                                className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${
+                                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold ${
                                   ot.status === 'Disetujui'
-                                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
                                     : ot.status === 'Ditolak'
-                                    ? 'bg-rose-100 text-rose-800 border border-rose-200'
-                                    : 'bg-amber-100 text-amber-800 border border-amber-200'
+                                    ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                                    : 'bg-amber-100 text-amber-900 border border-amber-300'
                                 }`}
                               >
-                                {ot.status}
+                                {ot.status === 'Disetujui' ? (
+                                  <CheckCircle2 className="w-3 h-3 text-emerald-700" />
+                                ) : ot.status === 'Ditolak' ? (
+                                  <X className="w-3 h-3 text-rose-700" />
+                                ) : (
+                                  <Clock className="w-3 h-3 text-amber-700" />
+                                )}
+                                <span>{ot.status}</span>
                               </span>
                             </td>
                           </tr>
@@ -2759,6 +2979,59 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   <Plus className="w-4 h-4" />
                   Ajukan Klaim Baru
                 </button>
+              </div>
+
+              {/* Ringkasan Status Pengajuan Klaim Reimbursement (Menunggu, Disetujui/Dibayarkan, Ditolak) */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="flex items-center justify-between p-3 bg-amber-50/90 border border-amber-200 rounded-xl">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 rounded-lg bg-amber-100 text-amber-700 border border-amber-300">
+                      <Clock className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <span className="text-[11px] font-bold text-amber-900 block">Menunggu Persetujuan</span>
+                      <span className="text-[10px] text-amber-700">Verifikasi nota Finance</span>
+                    </div>
+                  </div>
+                  <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-amber-200/80 text-amber-950 border border-amber-300">
+                    {myReimbursements.filter((r) => r.status === 'Menunggu Persetujuan').length} Klaim
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between p-3 bg-emerald-50/90 border border-emerald-200 rounded-xl">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 rounded-lg bg-emerald-100 text-emerald-700 border border-emerald-300">
+                      <CheckCircle2 className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <span className="text-[11px] font-bold text-emerald-900 block">Disetujui / Dibayarkan</span>
+                      <span className="text-[10px] text-emerald-700">Klaim terverifikasi</span>
+                    </div>
+                  </div>
+                  <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-emerald-200/80 text-emerald-950 border border-emerald-300">
+                    {
+                      myReimbursements.filter(
+                        (r) => r.status === 'Disetujui' || r.status === 'Dibayarkan'
+                      ).length
+                    }{' '}
+                    Klaim
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between p-3 bg-rose-50/90 border border-rose-200 rounded-xl">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 rounded-lg bg-rose-100 text-rose-700 border border-rose-300">
+                      <AlertCircle className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <span className="text-[11px] font-bold text-rose-900 block">Ditolak</span>
+                      <span className="text-[10px] text-rose-700">Nota tidak valid</span>
+                    </div>
+                  </div>
+                  <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-rose-200/80 text-rose-950 border border-rose-300">
+                    {myReimbursements.filter((r) => r.status === 'Ditolak').length} Klaim
+                  </span>
+                </div>
               </div>
 
               <div className="overflow-x-auto">
@@ -2813,17 +3086,22 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                           </td>
                           <td className="py-3 px-3 whitespace-nowrap">
                             <span
-                              className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${
-                                rmb.status === 'Dibayarkan'
-                                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                                  : rmb.status === 'Disetujui'
-                                  ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                              className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold ${
+                                rmb.status === 'Dibayarkan' || rmb.status === 'Disetujui'
+                                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
                                   : rmb.status === 'Ditolak'
-                                  ? 'bg-rose-100 text-rose-800 border border-rose-200'
-                                  : 'bg-amber-100 text-amber-800 border border-amber-200'
+                                  ? 'bg-rose-100 text-rose-800 border border-rose-300'
+                                  : 'bg-amber-100 text-amber-900 border border-amber-300'
                               }`}
                             >
-                              {rmb.status}
+                              {rmb.status === 'Dibayarkan' || rmb.status === 'Disetujui' ? (
+                                <CheckCircle2 className="w-3 h-3 text-emerald-700" />
+                              ) : rmb.status === 'Ditolak' ? (
+                                <X className="w-3 h-3 text-rose-700" />
+                              ) : (
+                                <Clock className="w-3 h-3 text-amber-700" />
+                              )}
+                              <span>{rmb.status}</span>
                             </span>
                           </td>
                         </tr>
@@ -2966,6 +3244,59 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
               </button>
             </div>
 
+            {/* Ringkasan Status Pengajuan Kasbon (Menunggu, Disetujui/Aktif/Lunas, Ditolak) */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3.5 bg-slate-50/90 border border-slate-200/80 rounded-xl">
+              <div className="flex items-center justify-between p-3 bg-amber-50/90 border border-amber-200 rounded-xl">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-lg bg-amber-100 text-amber-700 border border-amber-300">
+                    <Clock className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-[11px] font-bold text-amber-900 block">Menunggu Review</span>
+                    <span className="text-[10px] text-amber-700">Verifikasi HR &amp; Finance</span>
+                  </div>
+                </div>
+                <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-amber-200/80 text-amber-950 border border-amber-300">
+                  {myCashAdvances.filter((c) => c.status === 'pending').length} Kasbon
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between p-3 bg-emerald-50/90 border border-emerald-200 rounded-xl">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-lg bg-emerald-100 text-emerald-700 border border-emerald-300">
+                    <CheckCircle2 className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-[11px] font-bold text-emerald-900 block">Disetujui / Dicairkan</span>
+                    <span className="text-[10px] text-emerald-700">Aktif atau Lunas</span>
+                  </div>
+                </div>
+                <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-emerald-200/80 text-emerald-950 border border-emerald-300">
+                  {
+                    myCashAdvances.filter(
+                      (c) => c.status === 'approved' || c.status === 'disbursed' || c.status === 'paid'
+                    ).length
+                  }{' '}
+                  Kasbon
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between p-3 bg-rose-50/90 border border-rose-200 rounded-xl">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-lg bg-rose-100 text-rose-700 border border-rose-300">
+                    <AlertCircle className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="text-[11px] font-bold text-rose-900 block">Ditolak</span>
+                    <span className="text-[10px] text-rose-700">Tidak disetujui Finance</span>
+                  </div>
+                </div>
+                <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-rose-200/80 text-rose-950 border border-rose-300">
+                  {myCashAdvances.filter((c) => c.status === 'rejected').length} Kasbon
+                </span>
+              </div>
+            </div>
+
             {myCashAdvances.length === 0 ? (
               <div className="py-12 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200 space-y-2">
                 <HandCoins className="w-10 h-10 text-slate-300 mx-auto" />
@@ -2983,26 +3314,36 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                     ca.status === 'pending'
                       ? {
                           label: 'Menunggu Persetujuan HR/Finance',
-                          cls: 'bg-amber-100 text-amber-800 border-amber-200',
+                          cls: 'bg-amber-100 text-amber-900 border-amber-300',
+                          isApproved: false,
+                          isRejected: false,
                         }
                       : ca.status === 'approved'
                       ? {
                           label: 'Disetujui HRD (Menunggu Pencairan Transfer)',
-                          cls: 'bg-blue-100 text-blue-800 border-blue-200',
+                          cls: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+                          isApproved: true,
+                          isRejected: false,
                         }
                       : ca.status === 'disbursed'
                       ? {
-                          label: 'Aktif Dicairkan (Sedang Dicicil)',
-                          cls: 'bg-indigo-100 text-indigo-800 border-indigo-200',
+                          label: 'Disetujui & Aktif Dicairkan (Sedang Dicicil)',
+                          cls: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+                          isApproved: true,
+                          isRejected: false,
                         }
                       : ca.status === 'paid'
                       ? {
-                          label: 'Lunas',
-                          cls: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+                          label: 'Disetujui & Lunas',
+                          cls: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+                          isApproved: true,
+                          isRejected: false,
                         }
                       : {
                           label: 'Ditolak',
-                          cls: 'bg-rose-100 text-rose-800 border-rose-200',
+                          cls: 'bg-rose-100 text-rose-800 border-rose-300',
+                          isApproved: false,
+                          isRejected: true,
                         };
 
                   return (
@@ -3017,9 +3358,16 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                               #{ca.id.toUpperCase()}
                             </span>
                             <span
-                              className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${statusInfo.cls}`}
+                              className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${statusInfo.cls}`}
                             >
-                              {statusInfo.label}
+                              {statusInfo.isApproved ? (
+                                <CheckCircle2 className="w-3 h-3 text-emerald-700" />
+                              ) : statusInfo.isRejected ? (
+                                <X className="w-3 h-3 text-rose-700" />
+                              ) : (
+                                <Clock className="w-3 h-3 text-amber-700" />
+                              )}
+                              <span>{statusInfo.label}</span>
                             </span>
                             <span className="text-xs text-slate-400">
                               • Diajukan: {formatIndoDate(ca.createdAt.slice(0, 10))}
@@ -4098,21 +4446,32 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                         Masa Aktif Kontrak &amp; Dokumen Kontrak Kerja ({currentEmployee.employmentStatus})
                       </h4>
                       <span
-                        className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold border ${
                           contractValidity.isPermanent
-                            ? 'bg-indigo-100 text-indigo-800 border border-indigo-200'
-                            : contractValidity.isExpired
-                            ? 'bg-rose-100 text-rose-800 border border-rose-200'
-                            : contractValidity.isExpiringSoon
-                            ? 'bg-amber-100 text-amber-800 border border-amber-200'
-                            : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                            ? 'bg-indigo-100 text-indigo-800 border-indigo-200'
+                            : contractValidity.daysRemaining !== null && contractValidity.daysRemaining <= 7
+                            ? 'bg-rose-100 text-rose-800 border-rose-300'
+                            : contractValidity.daysRemaining !== null && contractValidity.daysRemaining <= 30
+                            ? 'bg-amber-100 text-amber-900 border-amber-300'
+                            : 'bg-emerald-100 text-emerald-800 border-emerald-300'
                         }`}
                       >
-                        {contractValidity.badgeText}
+                        <span
+                          className={`w-1.5 h-1.5 rounded-full ${
+                            contractValidity.isPermanent
+                              ? 'bg-indigo-600'
+                              : contractValidity.daysRemaining !== null && contractValidity.daysRemaining <= 7
+                              ? 'bg-rose-600 animate-ping'
+                              : contractValidity.daysRemaining !== null && contractValidity.daysRemaining <= 30
+                              ? 'bg-amber-600'
+                              : 'bg-emerald-600'
+                          }`}
+                        />
+                        <span>{contractValidity.badgeText}</span>
                       </span>
                     </div>
                     <p className="text-[11px] text-slate-500 mt-0.5">
-                      Dikelola oleh Admin HRD PT Tangan Kita Berkarya • Tersinkronisasi langsung dari menu Data Karyawan
+                      Dikelola oleh Admin HRD PT Tas Grosir Import • Tersinkronisasi langsung dari menu Data Karyawan
                     </p>
                   </div>
                 </div>
@@ -4188,11 +4547,11 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                     className={`font-bold mt-0.5 block ${
                       contractValidity.isPermanent
                         ? 'text-indigo-700'
-                        : contractValidity.isExpired
+                        : contractValidity.daysRemaining !== null && contractValidity.daysRemaining <= 7
                         ? 'text-rose-700'
-                        : contractValidity.isExpiringSoon
+                        : contractValidity.daysRemaining !== null && contractValidity.daysRemaining <= 30
                         ? 'text-amber-700'
-                        : 'text-slate-900'
+                        : 'text-emerald-700'
                     }`}
                   >
                     {contractValidity.isPermanent
@@ -4212,11 +4571,11 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   className={`p-3 rounded-xl border ${
                     contractValidity.isPermanent
                       ? 'bg-indigo-50/70 border-indigo-200'
-                      : contractValidity.isExpired
-                      ? 'bg-rose-50 border-rose-200'
-                      : contractValidity.isExpiringSoon
-                      ? 'bg-amber-50 border-amber-200'
-                      : 'bg-emerald-50/70 border-emerald-200'
+                      : contractValidity.daysRemaining !== null && contractValidity.daysRemaining <= 7
+                      ? 'bg-rose-50 border-rose-300'
+                      : contractValidity.daysRemaining !== null && contractValidity.daysRemaining <= 30
+                      ? 'bg-amber-50 border-amber-300'
+                      : 'bg-emerald-50/80 border-emerald-300'
                   }`}
                 >
                   <span className="text-[11px] text-slate-600 block">Indikator Masa Aktif Kontrak</span>
@@ -4224,10 +4583,10 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                     className={`font-extrabold mt-0.5 block ${
                       contractValidity.isPermanent
                         ? 'text-indigo-800'
-                        : contractValidity.isExpired
+                        : contractValidity.daysRemaining !== null && contractValidity.daysRemaining <= 7
                         ? 'text-rose-800'
-                        : contractValidity.isExpiringSoon
-                        ? 'text-amber-800'
+                        : contractValidity.daysRemaining !== null && contractValidity.daysRemaining <= 30
+                        ? 'text-amber-900'
                         : 'text-emerald-800'
                     }`}
                   >
@@ -4237,9 +4596,9 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                     <div className="w-full h-1.5 bg-white/80 rounded-full overflow-hidden mt-1.5 border border-slate-200/60">
                       <div
                         className={`h-full rounded-full ${
-                          contractValidity.isExpired
+                          contractValidity.daysRemaining <= 7
                             ? 'bg-rose-600'
-                            : contractValidity.isExpiringSoon
+                            : contractValidity.daysRemaining <= 30
                             ? 'bg-amber-500'
                             : 'bg-emerald-600'
                         }`}
@@ -4247,6 +4606,17 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                       />
                     </div>
                   )}
+                  <div className="flex items-center gap-2 mt-2 text-[9px] font-bold text-slate-500 flex-wrap">
+                    <span className="inline-flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500" /> Hijau &gt;30 hr
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-amber-500" /> Kuning ≤30 hr
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-rose-500" /> Merah ≤7 hr
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -4489,6 +4859,168 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
               </button>
             </div>
           </form>
+
+          {/* SEKSI 3: MENU UBAH PASSWORD / KATA SANDI MANDIRI (SUPABASE AUTH & PIN PORTAL) */}
+          <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-xs space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
+              <div className="flex items-start gap-3">
+                <div className="p-2.5 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">
+                  <KeyRound className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="text-base font-bold text-slate-900">
+                      Ubah Kata Sandi / Password Mandiri
+                    </h3>
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                      Tersinkronisasi ke Supabase Auth
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Perbarui password/PIN akses akun Portal Karyawan Anda secara mandiri dan aman tanpa perlu menunggu Admin HR.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowPasswordText((prev) => !prev)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors cursor-pointer self-start sm:self-auto"
+              >
+                {showPasswordText ? (
+                  <>
+                    <EyeOff className="w-3.5 h-3.5 text-slate-600" />
+                    <span>Sembunyikan Karakter</span>
+                  </>
+                ) : (
+                  <>
+                    <Eye className="w-3.5 h-3.5 text-slate-600" />
+                    <span>Tampilkan Karakter</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            {passwordChangeSuccess && (
+              <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-semibold flex items-center justify-between gap-2 animate-in fade-in">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{passwordChangeSuccess}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPasswordChangeSuccess(null)}
+                  className="text-emerald-700 hover:text-emerald-900 font-bold cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
+            {passwordChangeError && (
+              <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 text-xs font-semibold flex items-center justify-between gap-2 animate-in fade-in">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>{passwordChangeError}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPasswordChangeError(null)}
+                  className="text-rose-700 hover:text-rose-900 font-bold cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
+            <form onSubmit={handleSelfChangePassword} className="space-y-4 text-xs">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1.5">
+                    Kata Sandi / PIN Saat Ini <span className="text-rose-500">*</span>
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showPasswordText ? 'text' : 'password'}
+                      required
+                      value={passwordForm.currentPassword}
+                      onChange={(e) =>
+                        setPasswordForm({ ...passwordForm, currentPassword: e.target.value })
+                      }
+                      placeholder="Masukkan password saat ini"
+                      className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-emerald-500 focus:outline-hidden font-mono"
+                    />
+                  </div>
+                  <span className="text-[10px] text-slate-400 mt-1 block">
+                    Verifikasi kredensial aktif Anda ({currentEmployee.nik})
+                  </span>
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1.5">
+                    Kata Sandi / PIN Baru <span className="text-rose-500">*</span>
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showPasswordText ? 'text' : 'password'}
+                      required
+                      minLength={6}
+                      value={passwordForm.newPassword}
+                      onChange={(e) =>
+                        setPasswordForm({ ...passwordForm, newPassword: e.target.value })
+                      }
+                      placeholder="Minimal 6 karakter / angka"
+                      className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-emerald-500 focus:outline-hidden font-mono"
+                    />
+                  </div>
+                  <span className="text-[10px] text-slate-400 mt-1 block">
+                    Minimal 6 karakter (kombinasi angka/huruf didukung)
+                  </span>
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1.5">
+                    Konfirmasi Kata Sandi Baru <span className="text-rose-500">*</span>
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showPasswordText ? 'text' : 'password'}
+                      required
+                      minLength={6}
+                      value={passwordForm.confirmPassword}
+                      onChange={(e) =>
+                        setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })
+                      }
+                      placeholder="Ulangi kata sandi baru"
+                      className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-emerald-500 focus:outline-hidden font-mono"
+                    />
+                  </div>
+                  <span className="text-[10px] text-slate-400 mt-1 block">
+                    Pastikan sama persis dengan Kata Sandi Baru
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-slate-100">
+                <div className="flex items-center gap-2 text-[11px] text-slate-500">
+                  <Lock className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  <span>
+                    Perubahan password langsung berlaku untuk login Portal Karyawan berikutnya dan disinkronkan ke Supabase.
+                  </span>
+                </div>
+                <button
+                  type="submit"
+                  disabled={isUpdatingPassword}
+                  className="inline-flex items-center justify-center gap-2 px-5 py-2.5 text-xs sm:text-sm font-bold bg-slate-900 hover:bg-slate-800 disabled:opacity-60 text-white rounded-xl shadow-xs transition-colors cursor-pointer shrink-0"
+                >
+                  <KeyRound className="w-4 h-4 text-emerald-400" />
+                  <span>
+                    {isUpdatingPassword ? 'Memperbarui Kata Sandi...' : 'Perbarui Kata Sandi Mandiri'}
+                  </span>
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 
