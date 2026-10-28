@@ -1120,21 +1120,28 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
               })}
               {filtered.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="py-12 text-center text-slate-500">
-                      <div className="flex flex-col items-center justify-center gap-2 max-w-sm mx-auto">
-                        <Users className="w-8 h-8 text-slate-300" />
-                        <p className="font-semibold text-slate-700 text-sm">Tidak ada data karyawan ditemukan</p>
-                        <p className="text-xs text-slate-400">
+                    <td colSpan={7} className="py-14 text-center text-slate-500">
+                      <div className="flex flex-col items-center justify-center gap-2.5 max-w-md mx-auto">
+                        <div className="w-12 h-12 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-600">
+                          <Users className="w-6 h-6" />
+                        </div>
+                        <p className="font-bold text-slate-900 text-sm">
+                          {employees.length === 0
+                            ? 'Belum ada data karyawan'
+                            : 'Tidak ada data karyawan ditemukan'}
+                        </p>
+                        <p className="text-xs text-slate-500">
                           {search || selectedDept !== 'ALL' || selectedStatus !== 'ALL'
                             ? 'Coba sesuaikan kata kunci pencarian atau filter yang dipilih.'
-                            : 'Belum ada karyawan terdaftar di database.'}
+                            : 'Database Supabase saat ini belum memiliki data karyawan. Klik tombol di bawah untuk menambahkan karyawan pertama.'}
                         </p>
                         <button
                           type="button"
                           onClick={openAddModal}
-                          className="mt-2 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold cursor-pointer"
+                          className="mt-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/20 cursor-pointer inline-flex items-center gap-1.5"
                         >
-                          + Tambah Karyawan Baru
+                          <Plus className="w-4 h-4" />
+                          <span>Tambah Karyawan Baru</span>
                         </button>
                       </div>
                     </td>

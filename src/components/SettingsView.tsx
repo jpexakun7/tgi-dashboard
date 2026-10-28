@@ -83,106 +83,8 @@ const DEFAULT_USER_ACCOUNTS: UserAccountItem[] = [
     assignedRoles: ['Super Admin'],
     status: 'active',
     avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=256&h=256&q=80',
-    lastLogin: 'Hari ini, 09:15 WIB',
-    passwordLastChanged: '2026-09-10',
-  },
-  {
-    id: 'usr-02',
-    nik: 'TGI-HR-002',
-    name: 'Siti Nurhaliza',
-    email: 'hr.tasgrosirimport@gmail.com',
-    phone: '0813-2233-4455',
-    department: 'Human Resources & GA',
-    role: 'HR Manager',
-    assignedRoles: ['HR Manager'],
-    status: 'active',
-    avatarUrl: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=256&h=256&q=80',
-    lastLogin: 'Kemarin, 16:40 WIB',
-    passwordLastChanged: '2026-08-15',
-  },
-  {
-    id: 'usr-03',
-    nik: 'TGI-FIN-003',
-    name: 'Budi Santoso',
-    email: 'finance.tasgrosirimport@gmail.com',
-    phone: '0812-7788-9900',
-    department: 'Keuangan & Akuntansi',
-    role: 'Finance / Payroll Admin',
-    assignedRoles: ['Finance / Payroll Admin'],
-    status: 'active',
-    avatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=256&h=256&q=80',
-    lastLogin: '12 Okt 2026, 14:20 WIB',
-    passwordLastChanged: '2026-07-22',
-  },
-  {
-    id: 'usr-04',
-    nik: 'TGI-OPS-004',
-    name: 'Dewi Lestari',
-    email: 'operasional.tasgrosirimport@gmail.com',
-    phone: '0818-5566-7788',
-    department: 'Operasional & Gudang',
-    role: 'Division Lead / Supervisor',
-    assignedRoles: ['Division Lead / Supervisor'],
-    status: 'active',
-    avatarUrl: 'https://images.unsplash.com/photo-1580489944761-15a19d654956?auto=format&fit=crop&w=256&h=256&q=80',
-    lastLogin: '10 Okt 2026, 11:05 WIB',
-    passwordLastChanged: '2026-09-01',
-  },
-  {
-    id: 'usr-05',
-    nik: 'TGI-2021-001',
-    name: 'Arya Wicaksono',
-    email: 'arya.wicaksono@tasgrosirimport.co.id',
-    phone: '0812-9988-7711',
-    department: 'Teknologi & IT',
-    role: 'Division Lead / Supervisor',
-    assignedRoles: ['Division Lead / Supervisor'],
-    status: 'active',
-    avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=256&h=256&q=80',
-    lastLogin: 'Hari ini, 08:30 WIB',
-    passwordLastChanged: '2026-08-30',
-  },
-  {
-    id: 'usr-06',
-    nik: 'TGI-2022-014',
-    name: 'Rian Pratama',
-    email: 'rian.pratama@tasgrosirimport.co.id',
-    phone: '0813-8899-0011',
-    department: 'Gudang & Logistik',
-    role: 'Employee (Staf Biasa)',
-    assignedRoles: ['Employee (Staf Biasa)'],
-    status: 'active',
-    avatarUrl: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=256&h=256&q=80',
-    lastLogin: '09 Okt 2026, 17:10 WIB',
-    passwordLastChanged: '2026-06-18',
-  },
-  {
-    id: 'usr-07',
-    nik: 'TGI-2023-089',
-    name: 'Nadia Putri',
-    email: 'nadia.putri@tasgrosirimport.co.id',
-    phone: '0812-1122-3344',
-    department: 'Pemasaran & Penjualan',
-    role: 'Employee (Staf Biasa)',
-    assignedRoles: ['Employee (Staf Biasa)'],
-    status: 'active',
-    avatarUrl: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=256&h=256&q=80',
-    lastLogin: '08 Okt 2026, 15:45 WIB',
-    passwordLastChanged: '2026-05-12',
-  },
-  {
-    id: 'usr-08',
-    nik: 'TGI-2024-112',
-    name: 'Bambang Irawan',
-    email: 'bambang.irawan@tasgrosirimport.co.id',
-    phone: '0817-4455-6677',
-    department: 'Operasional & Toko',
-    role: 'Employee (Staf Biasa)',
-    assignedRoles: ['Employee (Staf Biasa)'],
-    status: 'suspended',
-    avatarUrl: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&w=256&h=256&q=80',
-    lastLogin: '01 Sep 2026, 09:00 WIB',
-    passwordLastChanged: '2026-04-10',
+    lastLogin: 'Aktif',
+    passwordLastChanged: '2026-10-01',
   },
 ];
 
@@ -280,10 +182,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     newStatus: 'active' | 'suspended';
   } | null>(null);
 
-  // User Accounts State for Tab 2
+  // User Accounts State for Tab 2 (synced from real Supabase employees + Super Admin)
   const [userAccounts, setUserAccounts] = useState<UserAccountItem[]>(() => {
     try {
-      const saved = localStorage.getItem('tgi_user_accounts_list_v1');
+      const saved = localStorage.getItem('tgi_user_accounts_list_v2');
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) return parsed;
@@ -293,6 +195,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     }
     return DEFAULT_USER_ACCOUNTS;
   });
+
+  useEffect(() => {
+    const empAccounts: UserAccountItem[] = employees.map((emp) => ({
+      id: emp.id,
+      nik: emp.nik,
+      name: emp.fullName,
+      email: emp.email,
+      phone: emp.phone,
+      department: emp.department,
+      role: 'Employee (Staf Biasa)',
+      assignedRoles: ['Employee (Staf Biasa)'],
+      status: emp.isActive === false ? 'suspended' : 'active',
+      avatarUrl: emp.avatarUrl,
+      lastLogin: 'Sinkron Supabase',
+      passwordLastChanged: emp.joinDate,
+    }));
+    setUserAccounts([...DEFAULT_USER_ACCOUNTS, ...empAccounts]);
+  }, [employees]);
 
   // Search & Filter State for Tab 2
   const [searchAccountQuery, setSearchAccountQuery] = useState('');
@@ -335,7 +255,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const saveUserAccounts = (newList: UserAccountItem[]) => {
     setUserAccounts(newList);
     try {
-      localStorage.setItem('tgi_user_accounts_list_v1', JSON.stringify(newList));
+      localStorage.setItem('tgi_user_accounts_list_v2', JSON.stringify(newList));
     } catch (e) {
       console.error('Failed to save user accounts', e);
     }
@@ -1850,7 +1770,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <input
                   type="text"
                   required
-                  placeholder="e.g. Hendra Gunawan"
+                  placeholder="Ketik Nama Lengkap Pengguna..."
                   value={newUserForm.name}
                   onChange={(e) => setNewUserForm({ ...newUserForm, name: e.target.value })}
                   className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-slate-800 focus:border-indigo-500"

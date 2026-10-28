@@ -1,35 +1,100 @@
-import React from 'react';
-import { Employee, PayrollRecord, CompanyConfig } from '../types';
-import { formatRupiah, terbilangRupiah, formatIndoDate, getOvertimeRatePerMinute } from '../utils/formatters';
+import React, { useState, useEffect } from 'react';
+import {
+  Employee,
+  PayrollRecord,
+  CompanyConfig,
+  PayrollSignatoriesConfig,
+} from '../types';
+import {
+  formatRupiah,
+  terbilangRupiah,
+  formatIndoDate,
+  getOvertimeRatePerMinute,
+  getPayrollSignatoriesConfig,
+  savePayrollSignatoriesConfig,
+} from '../utils/formatters';
 import { getPayslipWhatsAppUrl, getPayslipEmailUrl } from '../utils/notificationHelper';
-import { X, Printer, Download, CheckCircle, ShieldCheck, Building2, MessageCircle, Mail } from 'lucide-react';
+import {
+  X,
+  Printer,
+  Download,
+  CheckCircle,
+  ShieldCheck,
+  MessageCircle,
+  Mail,
+  PenTool,
+  Check,
+} from 'lucide-react';
+import { SignatoryConfigModal } from './SignatoryConfigModal';
 
 interface PayslipModalProps {
   payroll: PayrollRecord | null;
   employee: Employee | null;
   companyConfig: CompanyConfig;
+  employees?: Employee[];
   onClose: () => void;
+  onUpdateSignatories?: (config: PayrollSignatoriesConfig) => void;
 }
 
 export const PayslipModal: React.FC<PayslipModalProps> = ({
   payroll,
   employee,
   companyConfig,
+  employees = [],
   onClose,
+  onUpdateSignatories,
 }) => {
+  const [signatories, setSignatories] = useState<PayrollSignatoriesConfig>(() =>
+    getPayrollSignatoriesConfig(companyConfig)
+  );
+  const [isSignatoryModalOpen, setIsSignatoryModalOpen] = useState(false);
+  const [savedToast, setSavedToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    setSignatories(getPayrollSignatoriesConfig(companyConfig));
+  }, [companyConfig, payroll]);
+
+  useEffect(() => {
+    const handleSync = () => {
+      setSignatories(getPayrollSignatoriesConfig(companyConfig));
+    };
+    window.addEventListener('tgi_signatories_updated', handleSync);
+    return () => window.removeEventListener('tgi_signatories_updated', handleSync);
+  }, [companyConfig]);
+
   if (!payroll || !employee) return null;
 
   const handlePrint = () => {
     window.print();
   };
 
-  const totalAllowances =
-    payroll.allowancePosition +
-    payroll.allowanceTransport +
-    payroll.allowanceMeal +
-    payroll.allowanceCommunication;
+  const handleSaveSignatories = (newConfig: PayrollSignatoriesConfig) => {
+    setSignatories(newConfig);
+    savePayrollSignatoriesConfig(newConfig);
+    onUpdateSignatories?.(newConfig);
+    setSavedToast('Pengaturan penandatangan & tanda tangan slip gaji berhasil diperbarui!');
+    setTimeout(() => setSavedToast(null), 3500);
+  };
 
   const totalEarnings = payroll.totalGrossSalary;
+
+  const effectiveSignDate =
+    signatories.customDateText && signatories.customDateText.trim()
+      ? signatories.customDateText.trim()
+      : payroll.paymentDate
+      ? formatIndoDate(payroll.paymentDate)
+      : new Date().toLocaleDateString('id-ID', {
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric',
+        });
+
+  const preparedStamp =
+    signatories.preparedBy.stampDataUrl || signatories.companyStampDataUrl;
+  const verifiedStamp =
+    signatories.verifiedBy.stampDataUrl || signatories.companyStampDataUrl;
+  const approvedStamp =
+    signatories.approvedBy.stampDataUrl || signatories.companyStampDataUrl;
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 print:p-0 print:bg-white print:fixed">
@@ -46,6 +111,15 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setIsSignatoryModalOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100 transition-colors shadow-2xs cursor-pointer"
+              title="Ubah nama penandatangan, jabatan, tanda tangan digital & stempel perusahaan"
+            >
+              <PenTool className="w-3.5 h-3.5 text-indigo-600" />
+              <span>Atur Penandatangan &amp; TTD</span>
+            </button>
             <a
               href={getPayslipWhatsAppUrl(employee, payroll, companyConfig)}
               target="_blank"
@@ -65,21 +139,24 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
               <span>Kirim Email</span>
             </a>
             <button
+              type="button"
               onClick={handlePrint}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 transition-colors shadow-2xs cursor-pointer"
               title="Unduh dan simpan slip gaji format PDF"
             >
               <Download className="w-3.5 h-3.5 text-emerald-600" />
-              Unduh PDF
+              <span>Unduh PDF</span>
             </button>
             <button
+              type="button"
               onClick={handlePrint}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-100 hover:text-slate-900 transition-colors shadow-2xs cursor-pointer"
             >
               <Printer className="w-3.5 h-3.5 text-slate-600" />
-              Cetak Fisik
+              <span>Cetak Fisik</span>
             </button>
             <button
+              type="button"
               onClick={onClose}
               className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
             >
@@ -87,6 +164,22 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
             </button>
           </div>
         </div>
+
+        {savedToast && (
+          <div className="px-6 py-2 bg-emerald-600 text-white text-xs font-bold flex items-center justify-between print:hidden">
+            <div className="flex items-center gap-2">
+              <Check className="w-4 h-4" />
+              <span>{savedToast}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSavedToast(null)}
+              className="text-emerald-100 hover:text-white cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
+        )}
 
         {/* Printable Payslip Body */}
         <div className="p-6 sm:p-10 overflow-y-auto print:overflow-visible print:p-6 text-slate-800 bg-white print:text-black">
@@ -97,9 +190,13 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
                 TGI
               </div>
               <div>
-                <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900">{companyConfig.companyName}</h1>
+                <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900">
+                  {companyConfig.companyName}
+                </h1>
                 <p className="text-xs text-slate-500 mt-0.5">{companyConfig.address}</p>
-                <p className="text-xs text-slate-500">Telp: {companyConfig.phone} | NPWP: {companyConfig.npwpCompany}</p>
+                <p className="text-xs text-slate-500">
+                  Telp: {companyConfig.phone} | NPWP: {companyConfig.npwpCompany}
+                </p>
               </div>
             </div>
             <div className="text-left sm:text-right bg-emerald-50 sm:bg-transparent p-3 sm:p-0 rounded-lg w-full sm:w-auto">
@@ -119,7 +216,7 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
               <span className="text-slate-500 block mt-1">NIK: {employee.nik}</span>
             </div>
             <div>
-              <span className="text-slate-500 block">Jabatan & Dept</span>
+              <span className="text-slate-500 block">Jabatan &amp; Dept</span>
               <span className="font-semibold text-slate-900">{employee.role}</span>
               <span className="text-slate-500 block mt-1">{employee.department}</span>
             </div>
@@ -130,7 +227,9 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
             </div>
             <div>
               <span className="text-slate-500 block">Pembayaran Bank</span>
-              <span className="font-semibold text-slate-900">{employee.bankName} - {employee.bankAccountNumber}</span>
+              <span className="font-semibold text-slate-900">
+                {employee.bankName} - {employee.bankAccountNumber}
+              </span>
               <span className="text-slate-500 block mt-1">a/n {employee.bankAccountHolder}</span>
             </div>
           </div>
@@ -185,7 +284,7 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
                 </div>
                 {payroll.bonus > 0 && (
                   <div className="flex justify-between py-2 px-4 bg-emerald-50/50">
-                    <span className="text-slate-700 font-medium">Bonus & Insentif Kinerja</span>
+                    <span className="text-slate-700 font-medium">Bonus &amp; Insentif Kinerja</span>
                     <span className="font-semibold text-emerald-800">{formatRupiah(payroll.bonus)}</span>
                   </div>
                 )}
@@ -289,11 +388,11 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
             </div>
           </div>
 
-          {/* BENEFIT PERUSAHAAN (Informasi Transparansi Iuran yang ditanggung PT Tas Grosir Import) */}
+          {/* BENEFIT PERUSAHAAN */}
           <div className="mt-4 p-3.5 bg-sky-50/60 rounded-xl border border-sky-200/70 text-xs">
             <div className="flex items-center gap-1.5 font-semibold text-sky-900 mb-2">
               <ShieldCheck className="w-4 h-4 text-sky-600" />
-              <span>C. Iuran Jaminan Sosial Ditanggung Perusahaan (PT Tas Grosir Import)</span>
+              <span>C. Iuran Jaminan Sosial Ditanggung Perusahaan ({companyConfig.companyName})</span>
               <span className="text-[10px] text-sky-600 font-normal ml-auto">(Tidak memotong gaji karyawan)</span>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-[11px] text-sky-800">
@@ -323,10 +422,14 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
           {/* TAKE HOME PAY HIGHLIGHT */}
           <div className="mt-6 p-5 bg-gradient-to-r from-emerald-600 to-teal-700 rounded-xl text-white shadow-md flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
             <div>
-              <span className="text-xs font-medium tracking-wide uppercase text-emerald-100">PENGHASILAN BERSIH DITERIMA (TAKE HOME PAY)</span>
-              <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight mt-0.5">{formatRupiah(payroll.takeHomePay)}</h2>
+              <span className="text-xs font-medium tracking-wide uppercase text-emerald-100">
+                PENGHASILAN BERSIH DITERIMA (TAKE HOME PAY)
+              </span>
+              <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight mt-0.5">
+                {formatRupiah(payroll.takeHomePay)}
+              </h2>
               <p className="text-xs italic text-emerald-100 mt-1 font-serif">
-                "{terbilangRupiah(payroll.takeHomePay)}"
+                &ldquo;{terbilangRupiah(payroll.takeHomePay)}&rdquo;
               </p>
             </div>
             <div className="sm:text-right text-xs bg-emerald-800/60 sm:bg-transparent p-2.5 sm:p-0 rounded-lg w-full sm:w-auto">
@@ -335,51 +438,241 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
                 Status: {payroll.paymentStatus}
               </span>
               <p className="text-emerald-100 mt-0.5">Metode: Transfer Payroll {employee.bankName}</p>
-              <p className="text-emerald-200/80 text-[11px]">Tanggal: {payroll.paymentDate ? formatIndoDate(payroll.paymentDate) : '28 Oktober 2026'}</p>
+              <p className="text-emerald-200/80 text-[11px]">
+                Tanggal: {signatories.city || 'Jakarta'}, {effectiveSignDate}
+              </p>
             </div>
           </div>
 
-          {/* Signatures & Verification QR */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mt-8 pt-4 border-t border-slate-200 text-xs">
-            <div className="text-center">
-              <span className="text-slate-500 block mb-12">Disiapkan Oleh HRD:</span>
-              <div className="w-28 mx-auto border-b border-slate-400"></div>
-              <p className="font-semibold text-slate-800 mt-1.5">Siti Rahmawati</p>
-              <p className="text-slate-500 text-[11px]">HR & Payroll Specialist</p>
+          {/* Signatures & Verification Section (Dinamis dari Konfigurasi Penandatangan) */}
+          <div className="mt-8 pt-4 border-t border-slate-200 space-y-3 break-inside-avoid">
+            <div className="flex items-center justify-between text-[11px] text-slate-500 print:hidden">
+              <span>
+                Pengesahan Slip Gaji ({signatories.city || 'Jakarta'}, {effectiveSignDate})
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsSignatoryModalOpen(true)}
+                className="text-indigo-600 hover:text-indigo-800 font-bold inline-flex items-center gap-1 cursor-pointer"
+              >
+                <PenTool className="w-3 h-3" />
+                <span>Ubah Penandatangan / TTD / Stempel</span>
+              </button>
             </div>
 
-            <div className="flex flex-col items-center justify-center p-2 bg-slate-50 rounded-xl border border-slate-200 text-center">
-              {/* SVG QR Code Simulation */}
-              <div className="w-20 h-20 bg-white p-1 rounded-lg border border-slate-300 flex items-center justify-center">
-                <svg viewBox="0 0 100 100" className="w-full h-full text-slate-900 fill-current">
-                  <path d="M10,10 h30 v30 h-30 z M15,15 v20 h20 v-20 z M22,22 h6 v6 h-6 z" />
-                  <path d="M60,10 h30 v30 h-30 z M65,15 v20 h20 v-20 z M72,22 h6 v6 h-6 z" />
-                  <path d="M10,60 h30 v30 h-30 z M15,65 v20 h20 v-20 z M22,72 h6 v6 h-6 z" />
-                  <rect x="50" y="20" width="5" height="15" />
-                  <rect x="50" y="45" width="20" height="6" />
-                  <rect x="75" y="55" width="15" height="6" />
-                  <rect x="60" y="70" width="10" height="20" />
-                  <rect x="80" y="80" width="10" height="10" />
-                  <rect x="45" y="75" width="8" height="8" />
-                </svg>
+            {signatories.showAllThreeOnPayslip ? (
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs text-center pt-1">
+                {/* 1. Disiapkan Oleh */}
+                <div
+                  onClick={() => setIsSignatoryModalOpen(true)}
+                  className="p-2 rounded-xl hover:bg-slate-50 transition-colors cursor-pointer flex flex-col justify-between"
+                  title="Klik untuk mengubah penandatangan"
+                >
+                  <div>
+                    <span className="text-slate-500 block">{signatories.preparedBy.headerLabel}</span>
+                    <span className="font-semibold text-slate-700 text-[10px] block">
+                      {signatories.preparedBy.topSubtitle}
+                    </span>
+                  </div>
+                  <div className="relative h-20 flex items-end justify-center my-1">
+                    {signatories.preparedBy.showStamp && preparedStamp && (
+                      <img
+                        src={preparedStamp}
+                        alt="Stempel"
+                        className="absolute left-1/2 -translate-x-10 bottom-0 w-16 h-16 object-contain opacity-80 pointer-events-none z-10"
+                      />
+                    )}
+                    {signatories.preparedBy.signatureDataUrl && (
+                      <img
+                        src={signatories.preparedBy.signatureDataUrl}
+                        alt={signatories.preparedBy.name}
+                        className="max-h-16 max-w-[130px] object-contain relative z-20"
+                      />
+                    )}
+                  </div>
+                  <div className="w-36 mx-auto border-t border-slate-400 pt-1.5 relative z-20">
+                    <p className="font-bold text-slate-900 text-[11px] leading-tight">
+                      {signatories.preparedBy.name || '( ........................ )'}
+                    </p>
+                    <p className="text-slate-500 text-[10px]">{signatories.preparedBy.jobTitle}</p>
+                  </div>
+                </div>
+
+                {/* 2. Diperiksa & Diverifikasi */}
+                <div
+                  onClick={() => setIsSignatoryModalOpen(true)}
+                  className="p-2 rounded-xl hover:bg-slate-50 transition-colors cursor-pointer flex flex-col justify-between"
+                  title="Klik untuk mengubah penandatangan"
+                >
+                  <div>
+                    <span className="text-slate-500 block">{signatories.verifiedBy.headerLabel}</span>
+                    <span className="font-semibold text-slate-700 text-[10px] block">
+                      {signatories.verifiedBy.topSubtitle}
+                    </span>
+                  </div>
+                  <div className="relative h-20 flex items-end justify-center my-1">
+                    {signatories.verifiedBy.showStamp && verifiedStamp && (
+                      <img
+                        src={verifiedStamp}
+                        alt="Stempel"
+                        className="absolute left-1/2 -translate-x-10 bottom-0 w-16 h-16 object-contain opacity-80 pointer-events-none z-10"
+                      />
+                    )}
+                    {signatories.verifiedBy.signatureDataUrl && (
+                      <img
+                        src={signatories.verifiedBy.signatureDataUrl}
+                        alt={signatories.verifiedBy.name}
+                        className="max-h-16 max-w-[130px] object-contain relative z-20"
+                      />
+                    )}
+                  </div>
+                  <div className="w-36 mx-auto border-t border-slate-400 pt-1.5 relative z-20">
+                    <p className="font-bold text-slate-900 text-[11px] leading-tight">
+                      {signatories.verifiedBy.name || '( ........................ )'}
+                    </p>
+                    <p className="text-slate-500 text-[10px]">{signatories.verifiedBy.jobTitle}</p>
+                  </div>
+                </div>
+
+                {/* 3. Disetujui Oleh */}
+                <div
+                  onClick={() => setIsSignatoryModalOpen(true)}
+                  className="p-2 rounded-xl hover:bg-slate-50 transition-colors cursor-pointer flex flex-col justify-between"
+                  title="Klik untuk mengubah penandatangan"
+                >
+                  <div>
+                    <span className="text-slate-500 block">{signatories.approvedBy.headerLabel}</span>
+                    <span className="font-semibold text-slate-700 text-[10px] block">
+                      {signatories.approvedBy.topSubtitle}
+                    </span>
+                  </div>
+                  <div className="relative h-20 flex items-end justify-center my-1">
+                    {signatories.approvedBy.showStamp && approvedStamp && (
+                      <img
+                        src={approvedStamp}
+                        alt="Stempel"
+                        className="absolute left-1/2 -translate-x-10 bottom-0 w-16 h-16 object-contain opacity-80 pointer-events-none z-10"
+                      />
+                    )}
+                    {signatories.approvedBy.signatureDataUrl && (
+                      <img
+                        src={signatories.approvedBy.signatureDataUrl}
+                        alt={signatories.approvedBy.name}
+                        className="max-h-16 max-w-[130px] object-contain relative z-20"
+                      />
+                    )}
+                  </div>
+                  <div className="w-36 mx-auto border-t border-slate-400 pt-1.5 relative z-20">
+                    <p className="font-bold text-slate-900 text-[11px] leading-tight">
+                      {signatories.approvedBy.name || '( ........................ )'}
+                    </p>
+                    <p className="text-slate-500 text-[10px]">{signatories.approvedBy.jobTitle}</p>
+                  </div>
+                </div>
+
+                {/* 4. Diterima Oleh Karyawan */}
+                <div className="p-2 flex flex-col justify-between">
+                  <div>
+                    <span className="text-slate-500 block">Diterima Oleh,</span>
+                    <span className="font-semibold text-slate-700 text-[10px] block">
+                      Karyawan Penerima
+                    </span>
+                  </div>
+                  <div className="h-20 flex items-center justify-center my-1">
+                    <div className="w-14 h-14 bg-slate-50 p-1 rounded-lg border border-slate-200 flex items-center justify-center">
+                      <svg viewBox="0 0 100 100" className="w-full h-full text-slate-800 fill-current">
+                        <path d="M10,10 h30 v30 h-30 z M15,15 v20 h20 v-20 z M22,22 h6 v6 h-6 z" />
+                        <path d="M60,10 h30 v30 h-30 z M65,15 v20 h20 v-20 z M72,22 h6 v6 h-6 z" />
+                        <path d="M10,60 h30 v30 h-30 z M15,65 v20 h20 v-20 z M22,72 h6 v6 h-6 z" />
+                        <rect x="50" y="20" width="5" height="15" />
+                        <rect x="50" y="45" width="20" height="6" />
+                        <rect x="75" y="55" width="15" height="6" />
+                        <rect x="60" y="70" width="10" height="20" />
+                      </svg>
+                    </div>
+                  </div>
+                  <div className="w-36 mx-auto border-t border-slate-400 pt-1.5">
+                    <p className="font-bold text-slate-900 text-[11px] leading-tight">
+                      {employee.fullName}
+                    </p>
+                    <p className="text-slate-500 text-[10px]">NIK: {employee.nik}</p>
+                  </div>
+                </div>
               </div>
-              <span className="text-[10px] text-slate-500 mt-1.5">TGI E-Slip Verified Digital</span>
-              <span className="text-[9px] text-slate-400 font-mono">{payroll.id.slice(0, 16)}</span>
-            </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 text-xs pt-1">
+                <div
+                  onClick={() => setIsSignatoryModalOpen(true)}
+                  className="text-center cursor-pointer hover:bg-slate-50 p-2 rounded-xl transition-colors"
+                >
+                  <span className="text-slate-500 block">{signatories.preparedBy.headerLabel}</span>
+                  <div className="relative h-20 flex items-end justify-center my-1">
+                    {signatories.preparedBy.showStamp && preparedStamp && (
+                      <img
+                        src={preparedStamp}
+                        alt="Stempel"
+                        className="absolute left-1/2 -translate-x-10 bottom-0 w-16 h-16 object-contain opacity-80 pointer-events-none z-10"
+                      />
+                    )}
+                    {signatories.preparedBy.signatureDataUrl && (
+                      <img
+                        src={signatories.preparedBy.signatureDataUrl}
+                        alt={signatories.preparedBy.name}
+                        className="max-h-16 max-w-[140px] object-contain relative z-20"
+                      />
+                    )}
+                  </div>
+                  <div className="w-36 mx-auto border-b border-slate-400"></div>
+                  <p className="font-semibold text-slate-800 mt-1.5">
+                    {signatories.preparedBy.name || '( ........................ )'}
+                  </p>
+                  <p className="text-slate-500 text-[11px]">{signatories.preparedBy.jobTitle}</p>
+                </div>
 
-            <div className="text-center">
-              <span className="text-slate-500 block mb-12">Diterima Oleh Karyawan:</span>
-              <div className="w-28 mx-auto border-b border-slate-400"></div>
-              <p className="font-semibold text-slate-800 mt-1.5">{employee.fullName}</p>
-              <p className="text-slate-500 text-[11px]">{employee.nik}</p>
-            </div>
+                <div className="flex flex-col items-center justify-center p-2 bg-slate-50 rounded-xl border border-slate-200 text-center">
+                  <div className="w-20 h-20 bg-white p-1 rounded-lg border border-slate-300 flex items-center justify-center">
+                    <svg viewBox="0 0 100 100" className="w-full h-full text-slate-900 fill-current">
+                      <path d="M10,10 h30 v30 h-30 z M15,15 v20 h20 v-20 z M22,22 h6 v6 h-6 z" />
+                      <path d="M60,10 h30 v30 h-30 z M65,15 v20 h20 v-20 z M72,22 h6 v6 h-6 z" />
+                      <path d="M10,60 h30 v30 h-30 z M15,65 v20 h20 v-20 z M22,72 h6 v6 h-6 z" />
+                      <rect x="50" y="20" width="5" height="15" />
+                      <rect x="50" y="45" width="20" height="6" />
+                      <rect x="75" y="55" width="15" height="6" />
+                      <rect x="60" y="70" width="10" height="20" />
+                      <rect x="80" y="80" width="10" height="10" />
+                      <rect x="45" y="75" width="8" height="8" />
+                    </svg>
+                  </div>
+                  <span className="text-[10px] text-slate-500 mt-1.5">TGI E-Slip Verified Digital</span>
+                  <span className="text-[9px] text-slate-400 font-mono">{payroll.id.slice(0, 16)}</span>
+                </div>
+
+                <div className="text-center p-2">
+                  <span className="text-slate-500 block">Diterima Oleh Karyawan:</span>
+                  <div className="h-20" />
+                  <div className="w-36 mx-auto border-b border-slate-400"></div>
+                  <p className="font-semibold text-slate-800 mt-1.5">{employee.fullName}</p>
+                  <p className="text-slate-500 text-[11px]">{employee.nik}</p>
+                </div>
+              </div>
+            )}
           </div>
 
           <p className="text-[10px] text-slate-400 text-center mt-6">
-            Dokumen ini dicetak secara sah dan otomatis oleh TGI Dashboard (Platform Penggajian & HRIS). Tidak memerlukan cap basah.
+            Dokumen ini dicetak secara sah dan otomatis oleh TGI Dashboard (Platform Penggajian &amp; HRIS).
           </p>
         </div>
       </div>
+
+      {/* Modal Pengaturan Penandatangan & TTD */}
+      <SignatoryConfigModal
+        isOpen={isSignatoryModalOpen}
+        onClose={() => setIsSignatoryModalOpen(false)}
+        companyConfig={companyConfig}
+        employees={employees}
+        initialConfig={signatories}
+        onSaveConfig={handleSaveSignatories}
+      />
     </div>
   );
 };

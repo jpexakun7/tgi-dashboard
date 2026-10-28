@@ -5,6 +5,9 @@ import {
   WorkShift,
   AttendanceRecord,
   AttendancePenaltyPolicy,
+  SignatoryItemConfig,
+  PayrollSignatoriesConfig,
+  CompanyConfig,
 } from '../types';
 
 export function formatRupiah(amount: number): string {
@@ -1267,5 +1270,212 @@ export const AVAILABLE_PAYROLL_PERIODS: string[] = [
   'Januari 2027',
 ];
 
+export const PAYROLL_SIGNATORIES_STORAGE_KEY = 'tgi_payroll_signatories_config_v2';
 
+export const DEFAULT_PAYROLL_SIGNATORIES: PayrollSignatoriesConfig = {
+  city: 'Jakarta',
+  customDateText: '',
+  companyStampDataUrl: '',
+  showAllThreeOnPayslip: true,
+  preparedBy: {
+    headerLabel: 'Disiapkan Oleh,',
+    topSubtitle: 'Staff HR & Payroll Admin',
+    name: '',
+    jobTitle: 'HR Department',
+    signatureDataUrl: '',
+    stampDataUrl: '',
+    showStamp: false,
+  },
+  verifiedBy: {
+    headerLabel: 'Diperiksa & Diverifikasi,',
+    topSubtitle: 'Finance & Accounting Lead',
+    name: '',
+    jobTitle: 'Finance Department',
+    signatureDataUrl: '',
+    stampDataUrl: '',
+    showStamp: false,
+  },
+  approvedBy: {
+    headerLabel: 'Disetujui Oleh,',
+    topSubtitle: 'Direktur Utama',
+    name: '',
+    jobTitle: 'Direktur Utama',
+    signatureDataUrl: '',
+    stampDataUrl: '',
+    showStamp: true,
+  },
+};
 
+const LEGACY_DUMMY_SIGNATORY_NAMES = new Set([
+  'Siti Rahmawati, S.E.',
+  'Siti Rahmawati',
+  'Budi Santoso, M.Ak.',
+  'Budi Santoso',
+  'H. Hendra Wijaya',
+  'Hendra Wijaya',
+]);
+
+export function getPayrollSignatoriesConfig(
+  companyConfig?: Partial<CompanyConfig> | null
+): PayrollSignatoriesConfig {
+  let savedLocal: Partial<PayrollSignatoriesConfig> | null = null;
+  try {
+    const raw = localStorage.getItem(PAYROLL_SIGNATORIES_STORAGE_KEY);
+    if (raw) {
+      savedLocal = JSON.parse(raw);
+    }
+  } catch {
+    // ignore storage errors
+  }
+
+  const base = savedLocal || companyConfig?.payrollSignatories || DEFAULT_PAYROLL_SIGNATORIES;
+
+  const sanitizeName = (val?: string) => {
+    if (!val) return '';
+    const trimmed = val.trim();
+    return LEGACY_DUMMY_SIGNATORY_NAMES.has(trimmed) ? '' : val;
+  };
+
+  const mergeItem = (
+    item: Partial<SignatoryItemConfig> | undefined,
+    fallback: SignatoryItemConfig
+  ): SignatoryItemConfig => ({
+    headerLabel: item?.headerLabel ?? fallback.headerLabel,
+    topSubtitle: item?.topSubtitle ?? fallback.topSubtitle,
+    name: sanitizeName(item?.name ?? fallback.name),
+    jobTitle: item?.jobTitle ?? fallback.jobTitle,
+    signatureDataUrl: item?.signatureDataUrl ?? fallback.signatureDataUrl ?? '',
+    stampDataUrl: item?.stampDataUrl ?? fallback.stampDataUrl ?? '',
+    showStamp: item?.showStamp ?? fallback.showStamp ?? false,
+  });
+
+  return {
+    city: base.city ?? DEFAULT_PAYROLL_SIGNATORIES.city,
+    customDateText: base.customDateText ?? DEFAULT_PAYROLL_SIGNATORIES.customDateText ?? '',
+    companyStampDataUrl:
+      base.companyStampDataUrl ?? DEFAULT_PAYROLL_SIGNATORIES.companyStampDataUrl ?? '',
+    showAllThreeOnPayslip:
+      base.showAllThreeOnPayslip ?? DEFAULT_PAYROLL_SIGNATORIES.showAllThreeOnPayslip ?? true,
+    preparedBy: mergeItem(base.preparedBy, DEFAULT_PAYROLL_SIGNATORIES.preparedBy),
+    verifiedBy: mergeItem(base.verifiedBy, DEFAULT_PAYROLL_SIGNATORIES.verifiedBy),
+    approvedBy: mergeItem(base.approvedBy, DEFAULT_PAYROLL_SIGNATORIES.approvedBy),
+  };
+}
+
+export function savePayrollSignatoriesConfig(config: PayrollSignatoriesConfig): void {
+  try {
+    localStorage.setItem(PAYROLL_SIGNATORIES_STORAGE_KEY, JSON.stringify(config));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('tgi_signatories_updated', { detail: config }));
+    }
+  } catch (e) {
+    console.error('Gagal menyimpan konfigurasi penandatangan ke localStorage:', e);
+  }
+}
+
+/**
+ * Generator Tanda Tangan Digital Otomatis (PNG Transparan) dari Nama Penandatangan
+ */
+export function generateStylizedSignatureDataUrl(
+  fullName: string,
+  inkColor: string = '#0f172a'
+): string {
+  if (typeof document === 'undefined') return '';
+  const canvas = document.createElement('canvas');
+  canvas.width = 420;
+  canvas.height = 160;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return '';
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Ambil nama depan & tengah tanpa gelar untuk goresan tanda tangan yang natural
+  const cleanName = (fullName || 'Tanda Tangan')
+    .replace(/[,].*$/, '')
+    .replace(/^(H\.|Hj\.|Ir\.|Dr\.|Drs\.)\s*/i, '')
+    .trim();
+  const words = cleanName.split(/\s+/);
+  const displaySig =
+    words.length >= 2
+      ? `${words[0]} ${words[1]}`
+      : words[0] || 'Signature';
+
+  ctx.save();
+  ctx.translate(45, 98);
+  ctx.rotate(-0.08);
+  ctx.font = 'italic bold 40px "Georgia", "Times New Roman", serif';
+  ctx.fillStyle = inkColor;
+  ctx.fillText(displaySig, 0, 0);
+
+  // Tambahkan garis lengkung dekoratif khas tanda tangan eksekutif
+  ctx.beginPath();
+  ctx.strokeStyle = inkColor;
+  ctx.lineWidth = 2.6;
+  ctx.lineCap = 'round';
+  ctx.moveTo(-10, 14);
+  ctx.quadraticCurveTo(110, -8, 250, 10);
+  ctx.quadraticCurveTo(160, 26, 45, 22);
+  ctx.stroke();
+  ctx.restore();
+
+  return canvas.toDataURL('image/png');
+}
+
+/**
+ * Generator Stempel Resmi Perusahaan (PNG Transparan) untuk PT Tas Grosir Import
+ */
+export function generateOfficialCompanyStampDataUrl(
+  companyName: string = 'PT TAS GROSIR IMPORT'
+): string {
+  if (typeof document === 'undefined') return '';
+  const canvas = document.createElement('canvas');
+  canvas.width = 260;
+  canvas.height = 260;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return '';
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const cx = 130;
+  const cy = 130;
+  const stampColor = 'rgba(16, 185, 129, 0.85)'; // Emerald resmi
+
+  // Lingkaran luar ganda
+  ctx.strokeStyle = stampColor;
+  ctx.lineWidth = 4.5;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 108, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 98, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Lingkaran dalam
+  ctx.beginPath();
+  ctx.arc(cx, cy, 66, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // Pita tengah
+  ctx.fillStyle = 'rgba(236, 253, 245, 0.92)';
+  ctx.fillRect(cx - 104, cy - 18, 208, 36);
+  ctx.strokeRect(cx - 104, cy - 18, 208, 36);
+
+  // Teks Tengah
+  ctx.fillStyle = 'rgba(6, 95, 70, 0.95)';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = 'bold 17px Arial, sans-serif';
+  ctx.fillText('TGI OFFICIAL', cx, cy - 3);
+  ctx.font = 'bold 9px Arial, sans-serif';
+  ctx.fillText('VERIFIED PAYROLL & HRD', cx, cy + 10);
+
+  // Teks Atas & Bawah
+  ctx.font = 'bold 11px Arial, sans-serif';
+  const shortComp = companyName.toUpperCase().slice(0, 24);
+  ctx.fillText(shortComp, cx, cy - 78);
+  ctx.font = 'bold 10px Arial, sans-serif';
+  ctx.fillText('★ JAKARTA - INDONESIA ★', cx, cy + 80);
+
+  return canvas.toDataURL('image/png');
+}

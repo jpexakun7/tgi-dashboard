@@ -418,6 +418,26 @@ export interface AttendancePenaltyPolicy {
   fixedAlphaPenaltyAmount: number; // Default: Rp 150.000 / hari Alpha
 }
 
+export interface SignatoryItemConfig {
+  headerLabel: string; // e.g. "Disiapkan Oleh," / "Diperiksa & Diverifikasi," / "Disetujui Oleh,"
+  topSubtitle: string; // e.g. "Staff HR & Payroll Admin" / "Finance & Accounting Lead" / "Direktur Utama"
+  name: string; // Nama lengkap & gelar penandatangan (diisi manual oleh Admin)
+  jobTitle: string; // e.g. "HR Department" / "Finance Department" / "Direktur Utama"
+  signatureDataUrl?: string; // Base64 PNG/JPEG tanda tangan digital
+  stampDataUrl?: string; // Base64 PNG/JPEG stempel pada kolom penandatangan ini
+  showStamp?: boolean; // Tampilkan stempel pada kolom penandatangan ini
+}
+
+export interface PayrollSignatoriesConfig {
+  city: string; // Default: "Jakarta"
+  customDateText?: string; // Jika kosong, otomatis tanggal hari ini
+  companyStampDataUrl?: string; // Gambar stempel perusahaan utama (Base64 PNG/JPEG)
+  showAllThreeOnPayslip?: boolean; // Tampilkan ketiga penandatangan pada Slip Gaji
+  preparedBy: SignatoryItemConfig;
+  verifiedBy: SignatoryItemConfig;
+  approvedBy: SignatoryItemConfig;
+}
+
 export interface CompanyConfig {
   companyName: string;
   brandName: string;
@@ -446,6 +466,7 @@ export interface CompanyConfig {
   attendancePenaltyPolicy?: AttendancePenaltyPolicy;
   lockedPayrollPeriods?: string[]; // Daftar periode bulan payroll yang sudah dikunci / difinalisasi
   waivedLateEmployeeIds?: Record<string, string[]>; // Map periode -> array employeeId yang diberi dispensasi denda
+  payrollSignatories?: PayrollSignatoriesConfig;
   securitySettings?: {
     adminPin?: string;
     requirePinForAdminMode?: boolean;

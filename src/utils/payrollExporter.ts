@@ -1,12 +1,13 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { Employee, PayrollRecord, CompanyConfig } from '../types';
-import { formatRupiah, formatIndoDate } from './formatters';
+import { Employee, PayrollRecord, CompanyConfig, PayrollSignatoriesConfig } from '../types';
+import { formatRupiah, formatIndoDate, getPayrollSignatoriesConfig } from './formatters';
 
 export interface ExportPayrollOptions {
   period?: string;
   departmentFilter?: string;
   searchFilter?: string;
+  signatories?: PayrollSignatoriesConfig;
 }
 
 /**
@@ -424,13 +425,24 @@ export function exportPayrollToPDF(
     },
   });
 
-  // 4. Kolom Pengesahan Tanda Tangan Resmi
+  // 4. Kolom Pengesahan Tanda Tangan Resmi (Dinamis dari Konfigurasi Penandatangan)
+  const sigConfig = options?.signatories || getPayrollSignatoriesConfig(companyConfig);
+  const dateText =
+    sigConfig.customDateText && sigConfig.customDateText.trim()
+      ? sigConfig.customDateText.trim()
+      : new Date().toLocaleDateString('id-ID', {
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric',
+        });
+  const cityAndDate = `${sigConfig.city || 'Jakarta'}, ${dateText}`;
+
   // Ambil posisi Y terakhir dari tabel
   const finalY = (doc as any).lastAutoTable?.finalY || 140;
-  
+
   // Jika posisi terlalu dekat dengan batas bawah, buat halaman baru
   let signY = finalY + 8;
-  if (signY + 36 > pageHeight) {
+  if (signY + 42 > pageHeight) {
     doc.addPage();
     signY = 20;
   }
@@ -438,46 +450,90 @@ export function exportPayrollToPDF(
   const signColWidth = (pageWidth - 28) / 3;
   const signatures = [
     {
-      title: 'Disiapkan Oleh,',
-      role: 'Staff HR & Payroll Admin',
-      name: 'Siti Rahmawati, S.E.',
-      date: `Jakarta, ${new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}`,
+      title: sigConfig.preparedBy.headerLabel || 'Disiapkan Oleh,',
+      topSubtitle: sigConfig.preparedBy.topSubtitle || 'Staff HR & Payroll Admin',
+      name: sigConfig.preparedBy.name || '( .................................... )',
+      role: sigConfig.preparedBy.jobTitle || 'HR Department',
+      signatureDataUrl: sigConfig.preparedBy.signatureDataUrl,
+      stampDataUrl:
+        sigConfig.preparedBy.stampDataUrl || sigConfig.companyStampDataUrl,
+      showStamp: Boolean(sigConfig.preparedBy.showStamp),
+      date: cityAndDate,
     },
     {
-      title: 'Diperiksa & Diverifikasi,',
-      role: 'Finance & Accounting Manager',
-      name: 'Budi Santoso, M.Ak.',
-      date: `Jakarta, ${new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}`,
+      title: sigConfig.verifiedBy.headerLabel || 'Diperiksa & Diverifikasi,',
+      topSubtitle: sigConfig.verifiedBy.topSubtitle || 'Finance & Accounting Lead',
+      name: sigConfig.verifiedBy.name || '( .................................... )',
+      role: sigConfig.verifiedBy.jobTitle || 'Finance Department',
+      signatureDataUrl: sigConfig.verifiedBy.signatureDataUrl,
+      stampDataUrl:
+        sigConfig.verifiedBy.stampDataUrl || sigConfig.companyStampDataUrl,
+      showStamp: Boolean(sigConfig.verifiedBy.showStamp),
+      date: cityAndDate,
     },
     {
-      title: 'Disetujui Oleh,',
-      role: 'Direktur Utama PT Tas Grosir Import',
-      name: 'H. Hendra Wijaya',
-      date: `Jakarta, ${new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}`,
+      title: sigConfig.approvedBy.headerLabel || 'Disetujui Oleh,',
+      topSubtitle: sigConfig.approvedBy.topSubtitle || 'Direktur Utama',
+      name: sigConfig.approvedBy.name || '( .................................... )',
+      role: sigConfig.approvedBy.jobTitle || 'Direktur Utama',
+      signatureDataUrl: sigConfig.approvedBy.signatureDataUrl,
+      stampDataUrl:
+        sigConfig.approvedBy.stampDataUrl || sigConfig.companyStampDataUrl,
+      showStamp: Boolean(sigConfig.approvedBy.showStamp),
+      date: cityAndDate,
     },
   ];
 
   signatures.forEach((sig, idx) => {
     const x = 14 + idx * signColWidth;
+    const centerX = x + signColWidth / 2;
+
     doc.setFontSize(7.5);
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(71, 85, 105);
-    doc.text(sig.date, x + signColWidth / 2, signY, { align: 'center' });
-    doc.text(sig.title, x + signColWidth / 2, signY + 4, { align: 'center' });
+    doc.text(sig.date, centerX, signY, { align: 'center' });
+    doc.text(sig.title, centerX, signY + 4, { align: 'center' });
+
+    if (sig.topSubtitle) {
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7);
+      doc.setTextColor(51, 65, 85);
+      doc.text(sig.topSubtitle, centerX, signY + 7.5, { align: 'center' });
+    }
+
+    // Gambar Stempel Perusahaan (jika diaktifkan pada kolom ini)
+    if (sig.showStamp && sig.stampDataUrl) {
+      try {
+        const format = sig.stampDataUrl.startsWith('data:image/jpeg') ? 'JPEG' : 'PNG';
+        doc.addImage(sig.stampDataUrl, format, centerX - 22, signY + 7, 20, 20);
+      } catch (err) {
+        console.warn('Gagal menyematkan gambar stempel ke PDF:', err);
+      }
+    }
+
+    // Gambar Tanda Tangan Digital (jika diunggah/dibuat)
+    if (sig.signatureDataUrl) {
+      try {
+        const format = sig.signatureDataUrl.startsWith('data:image/jpeg') ? 'JPEG' : 'PNG';
+        doc.addImage(sig.signatureDataUrl, format, centerX - 18, signY + 8.5, 36, 15);
+      } catch (err) {
+        console.warn('Gagal menyematkan gambar tanda tangan ke PDF:', err);
+      }
+    }
 
     // Garis tanda tangan
-    doc.setDrawColor(203, 213, 225);
-    doc.line(x + 15, signY + 22, x + signColWidth - 15, signY + 22);
+    doc.setDrawColor(148, 163, 184);
+    doc.line(x + 15, signY + 25, x + signColWidth - 15, signY + 25);
 
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(8);
     doc.setTextColor(15, 23, 42);
-    doc.text(sig.name, x + signColWidth / 2, signY + 26, { align: 'center' });
+    doc.text(sig.name, centerX, signY + 29, { align: 'center' });
 
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(7);
     doc.setTextColor(100, 116, 139);
-    doc.text(sig.role, x + signColWidth / 2, signY + 30, { align: 'center' });
+    doc.text(sig.role, centerX, signY + 33, { align: 'center' });
   });
 
   // 5. Footer Nomor Halaman

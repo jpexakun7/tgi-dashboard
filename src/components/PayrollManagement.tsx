@@ -29,6 +29,7 @@ import {
   Unlock,
   Calendar,
   ShieldCheck,
+  PenTool,
 } from 'lucide-react';
 import {
   Employee,
@@ -58,6 +59,7 @@ import {
 } from '../utils/notificationHelper';
 import { UploadPayrollModal } from './UploadPayrollModal';
 import { PayrollReportModal } from './PayrollReportModal';
+import { SignatoryConfigModal } from './SignatoryConfigModal';
 import { exportPayrollToCSV, exportPayrollToPDF } from '../utils/payrollExporter';
 
 interface PayrollManagementProps {
@@ -135,6 +137,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  const [isSignatoryConfigModalOpen, setIsSignatoryConfigModalOpen] = useState(false);
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
   const [isBroadcastModalOpen, setIsBroadcastModalOpen] = useState(false);
 
@@ -705,9 +708,36 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                     <span className="text-[10px] text-slate-400">Tinjau di layar sebelum dicetak</span>
                   </div>
                 </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsExportMenuOpen(false);
+                    setIsSignatoryConfigModalOpen(true);
+                  }}
+                  className="w-full px-3 py-2 text-left text-xs font-medium text-indigo-800 hover:bg-indigo-50 flex items-center gap-2 cursor-pointer border-t border-slate-100 mt-1"
+                >
+                  <PenTool className="w-4 h-4 text-indigo-600 shrink-0" />
+                  <div>
+                    <span className="block font-bold">Pengaturan Penandatangan &amp; TTD</span>
+                    <span className="text-[10px] text-slate-500">
+                      Ubah nama HR, Finance, Direktur, TTD &amp; Stempel
+                    </span>
+                  </div>
+                </button>
               </div>
             )}
           </div>
+
+          {/* Tombol Cepat Pengaturan Penandatangan Laporan & Slip Gaji */}
+          <button
+            type="button"
+            onClick={() => setIsSignatoryConfigModalOpen(true)}
+            className="px-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+            title="Atur Nama Penandatangan (Disiapkan, Diperiksa, Disetujui), Unggah Tanda Tangan & Stempel Perusahaan"
+          >
+            <PenTool className="w-4 h-4 text-indigo-600" />
+            <span>Atur Penandatangan &amp; TTD</span>
+          </button>
 
           {/* Hitung Ulang Payroll */}
           <button
@@ -1647,6 +1677,19 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
         employees={employees}
         companyConfig={companyConfig}
         selectedDepartment={selectedDept}
+      />
+
+      {/* Modal Pengaturan Penandatangan, Tanda Tangan & Stempel */}
+      <SignatoryConfigModal
+        isOpen={isSignatoryConfigModalOpen}
+        onClose={() => setIsSignatoryConfigModalOpen(false)}
+        companyConfig={companyConfig}
+        employees={employees}
+        onSaveConfig={() => {
+          showToast(
+            'Konfigurasi Penandatangan, Tanda Tangan & Stempel berhasil disimpan untuk Laporan & Slip Gaji!'
+          );
+        }}
       />
 
       {/* Modal Broadcast WA Slip Gaji Terbit & Kirim Cepat per Karyawan */}

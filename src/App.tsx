@@ -641,131 +641,10 @@ export default function App() {
       console.error('Failed to save company config', e);
     }
   }, [companyConfig]);
-  const [employees, setEmployees] = useState<Employee[]>(() => {
-    try {
-      // Reconcile any previously deleted employee IDs from system audit logs (excluding initial mock log-003)
-      const savedAuditRaw = localStorage.getItem('tgi_system_audit_logs');
-      if (savedAuditRaw) {
-        const parsedLogs = JSON.parse(savedAuditRaw);
-        if (Array.isArray(parsedLogs)) {
-          const createdIds = new Set(
-            parsedLogs
-              .filter((l: any) => l && l.actionType === 'EMPLOYEE_CREATE' && l.targetId)
-              .map((l: any) => l.targetId)
-          );
-          parsedLogs.forEach((l: any) => {
-            if (
-              l &&
-              l.actionType === 'EMPLOYEE_DELETE' &&
-              l.id !== 'log-003' &&
-              typeof l.targetId === 'string' &&
-              l.targetId.trim().length > 0 &&
-              !createdIds.has(l.targetId)
-            ) {
-              addDeletedEmployeeId(l.targetId);
-            }
-          });
-        }
-      }
-
-      const deletedIds = new Set(getDeletedEmployeeIds());
-      const saved = localStorage.getItem('tgi_employees_data');
-      if (saved !== null) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          const filtered = parsed.filter(
-            (e: Employee) => e && !deletedIds.has(e.id) && !isLegacyDummyRecord(e)
-          );
-          if (filtered.length !== parsed.length) {
-            localStorage.setItem('tgi_employees_data', JSON.stringify(filtered));
-          }
-          // Do not re-seed initialEmployees if user has already saved or modified employee data
-          if (filtered.length > 0 || isEmployeesModified()) {
-            return filtered;
-          }
-        }
-      }
-      return initialEmployees.filter((e) => !deletedIds.has(e.id) && !isLegacyDummyRecord(e));
-    } catch (e) {
-      console.error('Failed to parse saved employees', e);
-      const deletedIds = new Set(getDeletedEmployeeIds());
-      return initialEmployees.filter((e) => !deletedIds.has(e.id) && !isLegacyDummyRecord(e));
-    }
-  });
-
-  // Keep employees in localStorage
-  useEffect(() => {
-    try {
-      const deletedIds = new Set(getDeletedEmployeeIds());
-      const cleanList = employees.filter((e) => !deletedIds.has(e.id) && !isLegacyDummyRecord(e));
-      localStorage.setItem('tgi_employees_data', JSON.stringify(cleanList));
-    } catch (e) {
-      console.error('Failed to save employees to localStorage', e);
-    }
-  }, [employees]);
-
-  const [payrolls, setPayrolls] = useState<PayrollRecord[]>(() => {
-    const deletedIds = new Set(getDeletedEmployeeIds());
-    try {
-      const saved = localStorage.getItem('tgi_payrolls_data');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          return parsed.filter(
-            (p: PayrollRecord) => p && !deletedIds.has(p.employeeId) && !isLegacyDummyRecord(p)
-          );
-        }
-      }
-    } catch (e) {
-      console.error('Failed to parse payrolls', e);
-    }
-    return initialPayrollRecords.filter((p) => !deletedIds.has(p.employeeId));
-  });
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('tgi_payrolls_data', JSON.stringify(payrolls));
-    } catch (e) {
-      console.error('Failed to save payrolls to localStorage', e);
-    }
-  }, [payrolls]);
-
-  const [attendances, setAttendances] = useState<AttendanceRecord[]>(() => {
-    const deletedIds = new Set(getDeletedEmployeeIds());
-    try {
-      const saved = localStorage.getItem('tgi_attendances_data');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          const valid = parsed.filter(
-            (a: AttendanceRecord) => a && !deletedIds.has(a.employeeId) && !isLegacyDummyRecord(a)
-          );
-          return deduplicateDailyAttendances(
-            valid,
-            initialEmployees,
-            DEFAULT_WORK_SHIFTS,
-            DEFAULT_ATTENDANCE_PENALTY_POLICY
-          );
-        }
-      }
-    } catch (e) {
-      console.error('Failed to parse saved attendances', e);
-    }
-    return deduplicateDailyAttendances(
-      initialAttendanceRecords.filter((a) => !deletedIds.has(a.employeeId)),
-      initialEmployees,
-      DEFAULT_WORK_SHIFTS,
-      DEFAULT_ATTENDANCE_PENALTY_POLICY
-    );
-  });
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('tgi_attendances_data', JSON.stringify(attendances));
-    } catch (e) {
-      console.error('Failed to save attendances to localStorage', e);
-    }
-  }, [attendances]);
+  // 100% Real-Time Supabase Data State (tanpa fallback ke array data dummy)
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [payrolls, setPayrolls] = useState<PayrollRecord[]>([]);
+  const [attendances, setAttendances] = useState<AttendanceRecord[]>([]);
 
   const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>(() => {
     const deletedIds = new Set(getDeletedEmployeeIds());
@@ -1308,20 +1187,13 @@ export default function App() {
         }
         const deletedIds = new Set(getDeletedEmployeeIds());
 
-        // 1. Fetch employees (already filtered against deleted_employee_ids in fetchEmployeesFromSupabase)
+        // 1. Fetch employees 100% real-time from Supabase without fallback to dummy arrays
         const cloudEmps = await fetchEmployeesFromSupabase();
         let authoritativeEmployees = employees.filter((e) => !deletedIds.has(e.id));
         if (cloudEmps !== null) {
           const cleanCloudEmps = cloudEmps.filter((e) => !deletedIds.has(e.id));
-          if (cleanCloudEmps.length > 0 || isEmployeesModified()) {
-            authoritativeEmployees = cleanCloudEmps;
-            setEmployees(cleanCloudEmps);
-            try {
-              localStorage.setItem('tgi_employees_data', JSON.stringify(cleanCloudEmps));
-            } catch {
-              // ignore
-            }
-          }
+          authoritativeEmployees = cleanCloudEmps;
+          setEmployees(cleanCloudEmps);
         }
         const validEmpIds = new Set(authoritativeEmployees.map((e) => e.id));
 
@@ -2633,7 +2505,7 @@ export default function App() {
           const updated: LeaveRequest = {
             ...l,
             status: 'Disetujui',
-            approvedBy: adminUser?.name || 'Siti Rahmawati (HR)',
+            approvedBy: adminUser?.name || 'HRD Admin',
           };
           upsertLeaveRequestToSupabase(updated);
           return updated;
@@ -2666,7 +2538,7 @@ export default function App() {
           const updated: LeaveRequest = {
             ...l,
             status: 'Ditolak',
-            approvedBy: adminUser?.name || 'Siti Rahmawati (HR)',
+            approvedBy: adminUser?.name || 'HRD Admin',
           };
           upsertLeaveRequestToSupabase(updated);
           return updated;
@@ -3781,56 +3653,80 @@ export default function App() {
         />
 
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">
-          <EmployeePortalView
-            currentEmployee={currentEmployee}
-            allEmployees={employees}
-            payrollRecord={safePayrolls.find((p) => p.employeeId === currentEmployee?.id) || null}
-            allPayrolls={safePayrolls}
-            attendances={attendances}
-            onAddAttendance={handleAddAttendance}
-            leaveRequests={leaveRequests}
-            overtimeRequests={overtimeRequests}
-            reimbursements={reimbursements}
-            assets={assets}
-            reviews={reviews}
-            companyConfig={companyConfig}
-            notifications={notifications}
-            activePortalTabOverride={portalTabOverride}
-            onApplyLeave={handleAddLeave}
-            onApplyOvertime={handleAddOvertime}
-            onApplyReimbursement={handleAddReimbursement}
-            cashAdvances={cashAdvances}
-            onApplyCashAdvance={handleCreateCashAdvance}
-            onUpdateProfile={handleUpdateEmployee}
-            onOpenPayslip={handleOpenPayslip}
-            onSwitchToAdminMode={handleToggleDashboardMode}
-            onSelectEmployee={(empId) => {
-              if (isAdminUnlocked) {
-                setActiveEmployeeId(empId);
-              }
-            }}
-            isAdminUnlocked={isAdminUnlocked}
-            onRequestAdminAccess={() => {
-              if (isAdminUnlocked) {
-                setDashboardMode('admin');
-              }
-            }}
-            onLockAdmin={handleLockAdmin}
-            onReportAssetIssue={(assetId, notes) => {
-              const targetAsset = assets.find((a) => a.id === assetId);
-              logActivity(
-                'ASSET_UPDATE',
-                'Inventaris & Aset',
-                `Laporan kendala inventaris dari karyawan ${currentEmployee?.fullName}: "${notes}".`,
-                {
-                  targetId: assetId,
-                  targetName: targetAsset ? `${targetAsset.name} (${targetAsset.assetCode})` : assetId,
-                  severity: 'warning',
-                  notes,
+          {!currentEmployee ? (
+            <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center max-w-lg mx-auto my-12 shadow-xs">
+              <h2 className="text-lg font-bold text-slate-900">Belum ada data karyawan</h2>
+              <p className="text-xs text-slate-500 mt-1.5">
+                Database Supabase saat ini masih kosong. Silakan tambahkan data karyawan baru terlebih dahulu melalui Panel Admin HR.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  if (isAdminUnlocked) {
+                    setDashboardMode('admin');
+                    setActiveTab('employees');
+                    setIsAddEmployeeModalOpen(true);
+                  } else {
+                    setIsAdminAuthModalOpen(true);
+                  }
+                }}
+                className="mt-4 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/20 cursor-pointer"
+              >
+                + Tambah Karyawan Baru
+              </button>
+            </div>
+          ) : (
+            <EmployeePortalView
+              currentEmployee={currentEmployee}
+              allEmployees={employees}
+              payrollRecord={safePayrolls.find((p) => p.employeeId === currentEmployee?.id) || null}
+              allPayrolls={safePayrolls}
+              attendances={attendances}
+              onAddAttendance={handleAddAttendance}
+              leaveRequests={leaveRequests}
+              overtimeRequests={overtimeRequests}
+              reimbursements={reimbursements}
+              assets={assets}
+              reviews={reviews}
+              companyConfig={companyConfig}
+              notifications={notifications}
+              activePortalTabOverride={portalTabOverride}
+              onApplyLeave={handleAddLeave}
+              onApplyOvertime={handleAddOvertime}
+              onApplyReimbursement={handleAddReimbursement}
+              cashAdvances={cashAdvances}
+              onApplyCashAdvance={handleCreateCashAdvance}
+              onUpdateProfile={handleUpdateEmployee}
+              onOpenPayslip={handleOpenPayslip}
+              onSwitchToAdminMode={handleToggleDashboardMode}
+              onSelectEmployee={(empId) => {
+                if (isAdminUnlocked) {
+                  setActiveEmployeeId(empId);
                 }
-              );
-            }}
-          />
+              }}
+              isAdminUnlocked={isAdminUnlocked}
+              onRequestAdminAccess={() => {
+                if (isAdminUnlocked) {
+                  setDashboardMode('admin');
+                }
+              }}
+              onLockAdmin={handleLockAdmin}
+              onReportAssetIssue={(assetId, notes) => {
+                const targetAsset = assets.find((a) => a.id === assetId);
+                logActivity(
+                  'ASSET_UPDATE',
+                  'Inventaris & Aset',
+                  `Laporan kendala inventaris dari karyawan ${currentEmployee?.fullName}: "${notes}".`,
+                  {
+                    targetId: assetId,
+                    targetName: targetAsset ? `${targetAsset.name} (${targetAsset.assetCode})` : assetId,
+                    severity: 'warning',
+                    notes,
+                  }
+                );
+              }}
+            />
+          )}
         </main>
 
         {/* Slip Gaji Modal (Printable/Downloadable) */}
@@ -4289,7 +4185,14 @@ export default function App() {
         payroll={selectedPayslip}
         employee={selectedEmployeeForPayslip}
         companyConfig={companyConfig}
+        employees={employees}
         onClose={() => setSelectedPayslip(null)}
+        onUpdateSignatories={(newSigConfig) => {
+          setCompanyConfig((prev) => ({
+            ...prev,
+            payrollSignatories: newSigConfig,
+          }));
+        }}
       />
 
       {/* Admin PIN & Supabase Auth Modal */}

@@ -196,20 +196,11 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
       'Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun',
       'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des',
     ];
-    const defaultBirthMap: Record<string, string> = {
-      nana: '1998-10-14',
-      meymey: '2000-10-26',
-      tgi1: '1997-11-05',
-      ani: '1996-10-20',
-    };
     const currentMonth = new Date().getMonth(); // 0-11
 
     return activeEmployees
       .map((emp) => {
-        const rawBirth =
-          emp.birthDate ||
-          defaultBirthMap[emp.fullName.toLowerCase().trim()] ||
-          emp.joinDate;
+        const rawBirth = emp.birthDate || emp.joinDate;
         if (!rawBirth) return null;
         const parsed = new Date(rawBirth);
         if (isNaN(parsed.getTime())) return null;
@@ -488,6 +479,32 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
         {/* Ambient subtle glow background */}
         <div className="absolute right-0 top-0 -mt-12 -mr-12 w-80 h-80 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none"></div>
       </div>
+
+      {/* Empty State Banner when Supabase has 0 employees */}
+      {employees.length === 0 && (
+        <div className="bg-white rounded-2xl border-2 border-dashed border-emerald-300 p-6 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xs">
+          <div className="flex items-center gap-3.5 text-center sm:text-left">
+            <div className="w-12 h-12 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-600 shrink-0 mx-auto sm:mx-0">
+              <Users className="w-6 h-6" />
+            </div>
+            <div>
+              <h2 className="text-sm sm:text-base font-bold text-slate-900">
+                Belum ada data karyawan
+              </h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Database Supabase saat ini masih kosong. Tambahkan karyawan baru untuk memulai pengelolaan presensi dan penggajian.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => onNavigateTab('employees')}
+            className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/20 cursor-pointer shrink-0"
+          >
+            + Tambah Karyawan Baru
+          </button>
+        </div>
+      )}
 
       {/* Top 4 KPI Metrics Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
