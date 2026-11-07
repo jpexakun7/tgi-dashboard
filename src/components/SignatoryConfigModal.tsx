@@ -416,7 +416,7 @@ export const SignatoryConfigModal: React.FC<SignatoryConfigModalProps> = ({
                     <span>Stempel Resmi Perusahaan</span>
                   </span>
                   <span className="text-[10px] text-slate-500 block mt-0.5">
-                    Unggah cap basah/stempel PNG atau gunakan stempel digital PT TGI
+                    Unggah cap basah/stempel PNG atau gunakan stempel digital Tas Grosir Import
                   </span>
                 </div>
                 {formState.companyStampDataUrl && (
@@ -453,7 +453,7 @@ export const SignatoryConfigModal: React.FC<SignatoryConfigModalProps> = ({
                         showStamp: true,
                       },
                     }));
-                    showTempMessage('Stempel Digital Resmi PT Tas Grosir Import berhasil dibuat!');
+                    showTempMessage('Stempel Digital Resmi Tas Grosir Import berhasil dibuat!');
                   }}
                   className="px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg font-bold text-[11px] inline-flex items-center gap-1 cursor-pointer transition-colors"
                 >

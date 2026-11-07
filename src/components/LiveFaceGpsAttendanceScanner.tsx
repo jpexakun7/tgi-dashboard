@@ -36,12 +36,12 @@ interface LiveFaceGpsAttendanceScannerProps {
   onSubmitAttendance: (record: AttendanceRecord, mode: 'check_in' | 'check_out') => void;
 }
 
-// Titik Lokasi Resmi Kantor PT Tas Grosir Import (Sesuai Titik Google Maps)
+// Titik Lokasi Resmi Kantor Tas Grosir Import (Sesuai Titik Google Maps)
 export const OFFICE_REFERENCE_COORDS = {
   latitude: -6.2105112,
   longitude: 106.6847656,
   shortAddress: 'Jl. Sumber Mas I Blok C No. 191, Tangerang, Banten (-6.2105112, 106.6847656)',
-  name: 'Kantor & Gudang PT Tas Grosir Import — Jl. Sumber Mas I Blok C No. 191, Tangerang, Banten (-6.2105112, 106.6847656)',
+  name: 'Kantor & Gudang Tas Grosir Import — Jl. Sumber Mas I Blok C No. 191, Tangerang, Banten (-6.2105112, 106.6847656)',
   mapsUrl: 'https://maps.google.com/maps?q=-6.2105112%2C106.6847656&z=17&hl=id',
   maxRadiusMeters: 25, // Batas maksimal jangkauan wajib 25 meter dari titik koordinat kantor
 };
@@ -775,7 +775,7 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
     ctx.fillStyle = topGrad;
     ctx.fillRect(0, 0, width, 95);
 
-    // Badge Top Left: PT Tas Grosir Import Verified GPS & Face
+    // Badge Top Left: Tas Grosir Import Verified GPS & Face
     ctx.fillStyle =
       attendanceActionLabel === 'ABSEN MASUK'
         ? 'rgba(16, 185, 129, 0.92)'

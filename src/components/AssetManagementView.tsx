@@ -380,7 +380,7 @@ export const AssetManagementView: React.FC<AssetManagementViewProps> = ({
                 Manajemen Aset & Inventaris Perusahaan
               </h1>
               <p className="text-xs text-slate-500 mt-0.5">
-                Pengelolaan fasilitas laptop, peralatan barcode gudang, printer resi, dan penugasan aset ke staf PT Tas Grosir Import
+                Pengelolaan fasilitas laptop, peralatan barcode gudang, printer resi, dan penugasan aset ke staf Tas Grosir Import
               </p>
             </div>
           </div>

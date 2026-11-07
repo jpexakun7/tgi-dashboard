@@ -347,7 +347,7 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
     setFormInitiativeScore(85);
     setFormStrengths('Penyelesaian tugas harian konsisten dan proaktif mendukung pencapaian target divisi.');
     setFormImprovements('Tingkatkan ketelitian laporan administrasi dan komunikasi koordinasi berkala.');
-    setFormGeneralFeedback('Performa kerja memuaskan dan memenuhi standar operasional PT Tas Grosir Import.');
+    setFormGeneralFeedback('Performa kerja memuaskan dan memenuhi standar operasional Tas Grosir Import.');
     setIsCustomBonus(false);
     setCustomBonusAmount(0);
     setAutoApplyToPayroll(true);
@@ -534,7 +534,7 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
                 Penilaian Kinerja & KPI (Performance Review)
               </h1>
               <p className="text-xs text-slate-500 mt-0.5">
-                Evaluasi berkala bulanan/kuartalan staf PT Tas Grosir Import & sinkronisasi otomatis bonus insentif ke modul Payroll.
+                Evaluasi berkala bulanan/kuartalan staf Tas Grosir Import & sinkronisasi otomatis bonus insentif ke modul Payroll.
               </p>
             </div>
           </div>
@@ -677,7 +677,7 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
           </div>
           <div>
             <h4 className="font-bold text-slate-900">
-              Integrasi Penilaian Kinerja dengan Bonus Insentif Payroll PT Tas Grosir Import
+              Integrasi Penilaian Kinerja dengan Bonus Insentif Payroll Tas Grosir Import
             </h4>
             <p className="text-slate-600 text-[11px] mt-0.5">
               Skor terbobot (KPI 40%, Kedisiplinan 20%, Kerjasama 20%, Inisiatif 20%) otomatis menentukan Grade:

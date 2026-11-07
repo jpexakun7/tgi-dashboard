@@ -362,7 +362,7 @@ export const AuditLogsView: React.FC<AuditLogsViewProps> = ({
               <p className="text-sm text-slate-500 mt-1 max-w-3xl">
                 Mencatat secara terperinci setiap tindakan krusial oleh admin—seperti pengubahan gaji,
                 penghapusan karyawan, perubahan hak akses, serta aktivitas persetujuan guna menjamin
-                keamanan data, kepatuhan audit internal, dan transparansi PT Tas Grosir Import.
+                keamanan data, kepatuhan audit internal, dan transparansi Tas Grosir Import.
               </p>
             </div>
           </div>
@@ -971,7 +971,7 @@ export const AuditLogsView: React.FC<AuditLogsViewProps> = ({
             <div className="flex items-center gap-2 p-2.5 bg-slate-100 rounded-xl text-slate-500 text-[11px]">
               <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
               <span>
-                Catatan ini telah terarsip secara permanen (append-only) dan diverifikasi oleh sistem audit internal PT Tas Grosir Import.
+                Catatan ini telah terarsip secara permanen (append-only) dan diverifikasi oleh sistem audit internal Tas Grosir Import.
               </span>
             </div>
 

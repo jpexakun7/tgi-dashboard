@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, Suspense, lazy } from 'react';
 import {
   initialEmployees,
   initialPayrollRecords,
@@ -55,31 +55,67 @@ import {
 } from './utils/formatters';
 import { Sidebar, ActiveTab } from './components/Sidebar';
 import { Header } from './components/Header';
-import { DashboardOverview } from './components/DashboardOverview';
-import { EmployeeManagement } from './components/EmployeeManagement';
-import { PayrollManagement } from './components/PayrollManagement';
-import { AttendanceView } from './components/AttendanceView';
-import { LeaveAndOvertime } from './components/LeaveAndOvertime';
-import { ReimbursementView } from './components/ReimbursementView';
-import { CashAdvanceView } from './components/CashAdvanceView';
-import { AssetManagementView } from './components/AssetManagementView';
-import { PerformanceReviewView } from './components/PerformanceReviewView';
-import { TaxAndBpjsView } from './components/TaxAndBpjsView';
-import { DepartmentKpiView } from './components/DepartmentKpiView';
-import { ReportsView } from './components/ReportsView';
-import { SettingsView } from './components/SettingsView';
 import { PayslipModal } from './components/PayslipModal';
 import { GoogleLoginView } from './components/GoogleLoginView';
-import { AuditLogsView } from './components/AuditLogsView';
-import { EmployeePortalView } from './components/EmployeePortalView';
-import { RoleManagementView } from './components/RoleManagementView';
 import { SupabaseSyncModal } from './components/SupabaseSyncModal';
 import { AdminPinAuthModal } from './components/AdminPinAuthModal';
 import { WebPinGatekeeper } from './components/WebPinGatekeeper';
+
+// Lazy-loaded feature modules to optimize initial login bundle size
+const DashboardOverview = lazy(() =>
+  import('./components/DashboardOverview').then((m) => ({ default: m.DashboardOverview }))
+);
+const EmployeeManagement = lazy(() =>
+  import('./components/EmployeeManagement').then((m) => ({ default: m.EmployeeManagement }))
+);
+const PayrollManagement = lazy(() =>
+  import('./components/PayrollManagement').then((m) => ({ default: m.PayrollManagement }))
+);
+const AttendanceView = lazy(() =>
+  import('./components/AttendanceView').then((m) => ({ default: m.AttendanceView }))
+);
+const LeaveAndOvertime = lazy(() =>
+  import('./components/LeaveAndOvertime').then((m) => ({ default: m.LeaveAndOvertime }))
+);
+const ReimbursementView = lazy(() =>
+  import('./components/ReimbursementView').then((m) => ({ default: m.ReimbursementView }))
+);
+const CashAdvanceView = lazy(() =>
+  import('./components/CashAdvanceView').then((m) => ({ default: m.CashAdvanceView }))
+);
+const AssetManagementView = lazy(() =>
+  import('./components/AssetManagementView').then((m) => ({ default: m.AssetManagementView }))
+);
+const PerformanceReviewView = lazy(() =>
+  import('./components/PerformanceReviewView').then((m) => ({ default: m.PerformanceReviewView }))
+);
+const TaxAndBpjsView = lazy(() =>
+  import('./components/TaxAndBpjsView').then((m) => ({ default: m.TaxAndBpjsView }))
+);
+const DepartmentKpiView = lazy(() =>
+  import('./components/DepartmentKpiView').then((m) => ({ default: m.DepartmentKpiView }))
+);
+const ReportsView = lazy(() =>
+  import('./components/ReportsView').then((m) => ({ default: m.ReportsView }))
+);
+const SettingsView = lazy(() =>
+  import('./components/SettingsView').then((m) => ({ default: m.SettingsView }))
+);
+const AuditLogsView = lazy(() =>
+  import('./components/AuditLogsView').then((m) => ({ default: m.AuditLogsView }))
+);
+const EmployeePortalView = lazy(() =>
+  import('./components/EmployeePortalView').then((m) => ({ default: m.EmployeePortalView }))
+);
+const RoleManagementView = lazy(() =>
+  import('./components/RoleManagementView').then((m) => ({ default: m.RoleManagementView }))
+);
+
 import {
   checkSupabaseStatus,
   autoSeedSupabaseIfEmpty,
   fetchEmployeesFromSupabase,
+  fetchEmployeeByIdFromSupabase,
   insertEmployeeToSupabase,
   updateEmployeeInSupabase,
   deleteEmployeeFromSupabase,
@@ -469,7 +505,7 @@ export default function App() {
       recipientType: 'all',
       recipientName:
         data.department === 'Semua Departemen'
-          ? 'Seluruh Karyawan PT TGI'
+          ? 'Seluruh Karyawan Tas Grosir Import'
           : `Karyawan ${data.department}`,
       title: `Periode Evaluasi Kinerja ${data.period} Telah Dimulai`,
       message: `Proses evaluasi kinerja & review KPI periode ${data.period} telah dimulai. Hasil rapor kerja & rekomendasi bonus insentif akan dipublikasikan setelah disetujui atasan.`,
@@ -624,6 +660,20 @@ export default function App() {
         }
         if (!parsed.address || parsed.address.includes('Hayam Wuruk')) {
           parsed.address = 'Jl. Sumber Mas I Blok C No. 191, Tangerang, Banten, ID';
+        }
+        // Normalize company name to "Tas Grosir Import" without PT prefix
+        if (!parsed.companyName || /^PT\.?\s+/i.test(parsed.companyName)) {
+          parsed.companyName = (parsed.companyName || 'Tas Grosir Import')
+            .replace(/^PT\.?\s+/i, '')
+            .trim() || 'Tas Grosir Import';
+        }
+        // Strip any legacy hardcoded PINs from securitySettings
+        if (parsed.securitySettings) {
+          parsed.securitySettings = {
+            ...parsed.securitySettings,
+            adminPin: '',
+            defaultEmployeePin: '',
+          };
         }
         parsed.attendancePenaltyPolicy = getAttendancePenaltyPolicy(parsed.attendancePenaltyPolicy);
         return parsed;
@@ -1172,28 +1222,57 @@ export default function App() {
   ]);
 
   // -------------------------------------------------------------
-  // Supabase Connection, Real-time Sync for 7 Tables
+  // Supabase Connection, Real-time Sync for 7 Tables (Deferred until Authenticated)
   // -------------------------------------------------------------
+  const isSessionAuthenticated =
+    !(companyConfig.securitySettings?.requirePinForWebAccess ?? true) ||
+    isWebPinUnlocked ||
+    Boolean(adminUser);
+
   const refreshSupabaseStatus = async () => {
     try {
       const status = await checkSupabaseStatus();
       setSupabaseStatus(status);
 
+      // Security Audit Guard: Do NOT fetch sensitive employee/payroll tables before authentication
+      if (!isSessionAuthenticated) {
+        return;
+      }
+
       if (status.isTablesCreated) {
         // Ensure any deleted_employee_ids are permanently deleted from Supabase before fetching
         const deletedList = getDeletedEmployeeIds();
-        if (deletedList.length > 0) {
+        if (deletedList.length > 0 && isAdminUnlocked) {
           await Promise.allSettled(deletedList.map((delId) => deleteEmployeeFromSupabase(delId)));
         }
         const deletedIds = new Set(getDeletedEmployeeIds());
+        const lockedEmpId = sessionStorage.getItem('tgi_locked_employee_id');
 
-        // 1. Fetch employees 100% real-time from Supabase without fallback to dummy arrays
-        const cloudEmps = await fetchEmployeesFromSupabase();
-        let authoritativeEmployees = employees.filter((e) => !deletedIds.has(e.id));
-        if (cloudEmps !== null) {
-          const cleanCloudEmps = cloudEmps.filter((e) => !deletedIds.has(e.id));
-          authoritativeEmployees = cleanCloudEmps;
-          setEmployees(cleanCloudEmps);
+        // 1. Fetch employees real-time from Supabase (if employee-only session, fetch only their own record)
+        let authoritativeEmployees: Employee[] = [];
+        if (!isAdminUnlocked && dashboardMode === 'employee' && lockedEmpId) {
+          const singleEmp = await fetchEmployeeByIdFromSupabase(lockedEmpId);
+          if (singleEmp && !deletedIds.has(singleEmp.id)) {
+            authoritativeEmployees = [singleEmp];
+            setEmployees([singleEmp]);
+          } else {
+            const cloudEmps = await fetchEmployeesFromSupabase();
+            if (cloudEmps !== null) {
+              const filteredOwn = cloudEmps.filter(
+                (e) => e.id === lockedEmpId && !deletedIds.has(e.id)
+              );
+              authoritativeEmployees = filteredOwn;
+              setEmployees(filteredOwn);
+            }
+          }
+        } else {
+          const cloudEmps = await fetchEmployeesFromSupabase();
+          authoritativeEmployees = employees.filter((e) => !deletedIds.has(e.id));
+          if (cloudEmps !== null) {
+            const cleanCloudEmps = cloudEmps.filter((e) => !deletedIds.has(e.id));
+            authoritativeEmployees = cleanCloudEmps;
+            setEmployees(cleanCloudEmps);
+          }
         }
         const validEmpIds = new Set(authoritativeEmployees.map((e) => e.id));
 
@@ -1332,6 +1411,11 @@ export default function App() {
   };
 
   useEffect(() => {
+    // Only fetch sensitive employee & payroll records after session authentication is verified
+    if (!isSessionAuthenticated) {
+      return;
+    }
+
     refreshSupabaseStatus();
 
     // Listen to real-time changes across all core tables
@@ -1513,7 +1597,7 @@ export default function App() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [isSessionAuthenticated, isAdminUnlocked, dashboardMode]);
 
   // Handlers for Employees
   const handleAddEmployee = (newEmp: Employee) => {
@@ -2806,7 +2890,7 @@ export default function App() {
 
     sendNotification({
       recipientType: 'admin',
-      recipientName: 'HRD & Finance PT TGI',
+      recipientName: 'HRD & Finance Tas Grosir Import',
       title: `Pengajuan Kasbon Baru: ${advanceData.employeeName}`,
       message: `${advanceData.employeeName} (${advanceData.employeeNik}) mengajukan pinjaman kasbon sebesar Rp ${advanceData.amount.toLocaleString('id-ID')} (Tenor ${advanceData.tenorMonths} bulan). Alasan: "${advanceData.reason}".`,
       category: 'CASH_ADVANCE',
@@ -3653,80 +3737,88 @@ export default function App() {
         />
 
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">
-          {!currentEmployee ? (
-            <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center max-w-lg mx-auto my-12 shadow-xs">
-              <h2 className="text-lg font-bold text-slate-900">Belum ada data karyawan</h2>
-              <p className="text-xs text-slate-500 mt-1.5">
-                Database Supabase saat ini masih kosong. Silakan tambahkan data karyawan baru terlebih dahulu melalui Panel Admin HR.
-              </p>
-              <button
-                type="button"
-                onClick={() => {
+          <Suspense
+            fallback={
+              <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center max-w-lg mx-auto my-12 shadow-xs">
+                <p className="text-sm font-semibold text-slate-600">Memuat Portal Karyawan...</p>
+              </div>
+            }
+          >
+            {!currentEmployee ? (
+              <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center max-w-lg mx-auto my-12 shadow-xs">
+                <h2 className="text-lg font-bold text-slate-900">Belum ada data karyawan</h2>
+                <p className="text-xs text-slate-500 mt-1.5">
+                  Database Supabase saat ini masih kosong. Silakan tambahkan data karyawan baru terlebih dahulu melalui Panel Admin HR.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isAdminUnlocked) {
+                      setDashboardMode('admin');
+                      setActiveTab('employees');
+                      setIsAddEmployeeModalOpen(true);
+                    } else {
+                      setIsAdminAuthModalOpen(true);
+                    }
+                  }}
+                  className="mt-4 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/20 cursor-pointer"
+                >
+                  + Tambah Karyawan Baru
+                </button>
+              </div>
+            ) : (
+              <EmployeePortalView
+                currentEmployee={currentEmployee}
+                allEmployees={isAdminUnlocked ? employees : [currentEmployee]}
+                payrollRecord={safePayrolls.find((p) => p.employeeId === currentEmployee?.id) || null}
+                allPayrolls={safePayrolls}
+                attendances={attendances}
+                onAddAttendance={handleAddAttendance}
+                leaveRequests={leaveRequests}
+                overtimeRequests={overtimeRequests}
+                reimbursements={reimbursements}
+                assets={assets}
+                reviews={reviews}
+                companyConfig={companyConfig}
+                notifications={notifications}
+                activePortalTabOverride={portalTabOverride}
+                onApplyLeave={handleAddLeave}
+                onApplyOvertime={handleAddOvertime}
+                onApplyReimbursement={handleAddReimbursement}
+                cashAdvances={cashAdvances}
+                onApplyCashAdvance={handleCreateCashAdvance}
+                onUpdateProfile={handleUpdateEmployee}
+                onOpenPayslip={handleOpenPayslip}
+                onSwitchToAdminMode={handleToggleDashboardMode}
+                onSelectEmployee={(empId) => {
                   if (isAdminUnlocked) {
-                    setDashboardMode('admin');
-                    setActiveTab('employees');
-                    setIsAddEmployeeModalOpen(true);
-                  } else {
-                    setIsAdminAuthModalOpen(true);
+                    setActiveEmployeeId(empId);
                   }
                 }}
-                className="mt-4 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/20 cursor-pointer"
-              >
-                + Tambah Karyawan Baru
-              </button>
-            </div>
-          ) : (
-            <EmployeePortalView
-              currentEmployee={currentEmployee}
-              allEmployees={employees}
-              payrollRecord={safePayrolls.find((p) => p.employeeId === currentEmployee?.id) || null}
-              allPayrolls={safePayrolls}
-              attendances={attendances}
-              onAddAttendance={handleAddAttendance}
-              leaveRequests={leaveRequests}
-              overtimeRequests={overtimeRequests}
-              reimbursements={reimbursements}
-              assets={assets}
-              reviews={reviews}
-              companyConfig={companyConfig}
-              notifications={notifications}
-              activePortalTabOverride={portalTabOverride}
-              onApplyLeave={handleAddLeave}
-              onApplyOvertime={handleAddOvertime}
-              onApplyReimbursement={handleAddReimbursement}
-              cashAdvances={cashAdvances}
-              onApplyCashAdvance={handleCreateCashAdvance}
-              onUpdateProfile={handleUpdateEmployee}
-              onOpenPayslip={handleOpenPayslip}
-              onSwitchToAdminMode={handleToggleDashboardMode}
-              onSelectEmployee={(empId) => {
-                if (isAdminUnlocked) {
-                  setActiveEmployeeId(empId);
-                }
-              }}
-              isAdminUnlocked={isAdminUnlocked}
-              onRequestAdminAccess={() => {
-                if (isAdminUnlocked) {
-                  setDashboardMode('admin');
-                }
-              }}
-              onLockAdmin={handleLockAdmin}
-              onReportAssetIssue={(assetId, notes) => {
-                const targetAsset = assets.find((a) => a.id === assetId);
-                logActivity(
-                  'ASSET_UPDATE',
-                  'Inventaris & Aset',
-                  `Laporan kendala inventaris dari karyawan ${currentEmployee?.fullName}: "${notes}".`,
-                  {
-                    targetId: assetId,
-                    targetName: targetAsset ? `${targetAsset.name} (${targetAsset.assetCode})` : assetId,
-                    severity: 'warning',
-                    notes,
+                isAdminUnlocked={isAdminUnlocked}
+                onRequestAdminAccess={() => {
+                  if (isAdminUnlocked) {
+                    setDashboardMode('admin');
                   }
-                );
-              }}
-            />
-          )}
+                }}
+                onLockAdmin={handleLockAdmin}
+                onReportAssetIssue={(assetId, notes) => {
+                  const targetAsset = assets.find((a) => a.id === assetId);
+                  logActivity(
+                    'ASSET_UPDATE',
+                    'Inventaris & Aset',
+                    `Laporan kendala inventaris dari karyawan ${currentEmployee?.fullName}: "${notes}".`,
+                    {
+                      targetId: assetId,
+                      targetName: targetAsset ? `${targetAsset.name} (${targetAsset.assetCode})` : assetId,
+                      severity: 'warning',
+                      notes,
+                    }
+                  );
+                }}
+              />
+            )}
+          </Suspense>
         </main>
 
         {/* Slip Gaji Modal (Printable/Downloadable) */}
@@ -3760,7 +3852,7 @@ export default function App() {
     );
   }
 
-  // View: Admin HR Panel PT Tas Grosir Import (Accessible by Google Admin)
+  // View: Admin HR Panel Tas Grosir Import (Accessible by Google Admin)
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col antialiased font-sans text-slate-800">
       <div className="flex flex-1 min-h-screen">
@@ -3828,6 +3920,13 @@ export default function App() {
           />
 
           <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">
+            <Suspense
+              fallback={
+                <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center my-8 shadow-xs">
+                  <p className="text-sm font-semibold text-slate-600">Memuat modul Tas Grosir Import...</p>
+                </div>
+              }
+            >
             {activeTab === 'overview' && (
               <DashboardOverview
                 employees={employees}
@@ -4176,6 +4275,7 @@ export default function App() {
                 onOpenSupabaseModal={() => setIsSupabaseModalOpen(true)}
               />
             )}
+            </Suspense>
           </main>
         </div>
       </div>

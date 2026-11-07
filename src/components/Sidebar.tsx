@@ -226,7 +226,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="px-4 py-3 mx-3 my-3 rounded-xl bg-slate-800/60 border border-slate-700/60 flex items-center gap-2.5">
           <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></div>
           <div className="overflow-hidden">
-            <p className="text-xs font-medium text-slate-200 truncate">PT Tas Grosir Import</p>
+            <p className="text-xs font-medium text-slate-200 truncate">Tas Grosir Import</p>
             <p className="text-[10px] text-slate-400">Periode: Okt 2026 (Cut-off 25)</p>
           </div>
         </div>

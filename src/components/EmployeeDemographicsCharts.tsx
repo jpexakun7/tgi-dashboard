@@ -229,7 +229,7 @@ export const EmployeeDemographicsCharts: React.FC<EmployeeDemographicsChartsProp
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-base font-bold text-white">
-                  Diagram & Analisis Karyawan PT Tas Grosir Import
+                  Diagram & Analisis Karyawan Tas Grosir Import
                 </h3>
                 <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                   Real-time Data
@@ -533,7 +533,7 @@ export const EmployeeDemographicsCharts: React.FC<EmployeeDemographicsChartsProp
                 </div>
                 <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
                   {totalCount > 0
-                    ? `Struktur SDM PT Tas Grosir Import saat ini terdiri dari ${totalCount} karyawan (${genderStats.pria} Laki-laki / ${genderStats.priaPct}% dan ${genderStats.wanita} Perempuan / ${genderStats.wanitaPct}%) yang bekerja aktif pada departemen ${genderStats.allActiveDeptsLabel} (mayoritas pria di ${genderStats.maleMajorityDept}, mayoritas wanita di ${genderStats.femaleMajorityDept}).`
+                    ? `Struktur SDM Tas Grosir Import saat ini terdiri dari ${totalCount} karyawan (${genderStats.pria} Laki-laki / ${genderStats.priaPct}% dan ${genderStats.wanita} Perempuan / ${genderStats.wanitaPct}%) yang bekerja aktif pada departemen ${genderStats.allActiveDeptsLabel} (mayoritas pria di ${genderStats.maleMajorityDept}, mayoritas wanita di ${genderStats.femaleMajorityDept}).`
                     : 'Belum ada data karyawan aktif yang terdaftar untuk dianalisis.'}
                 </p>
               </div>

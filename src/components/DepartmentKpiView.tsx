@@ -424,7 +424,7 @@ export const DepartmentKpiView: React.FC<DepartmentKpiViewProps> = ({ employees 
           <div>
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-xs font-semibold mb-2 border border-emerald-500/30">
               <Target className="w-3.5 h-3.5 text-emerald-400" />
-              Siklus Evaluasi Kinerja: {selectedQuarter} PT Tas Grosir Import
+              Siklus Evaluasi Kinerja: {selectedQuarter} Tas Grosir Import
             </div>
             <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white flex items-center gap-2.5">
               Analisis KPI & Kinerja Seluruh Departemen

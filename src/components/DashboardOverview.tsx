@@ -439,7 +439,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
               Siklus Penggajian Berjalan: {companyConfig.currentPayrollPeriod}
             </div>
             <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white">
-              Halo, Tim HR PT Tas Grosir Import 👋
+              Halo, Tim HR Tas Grosir Import 👋
             </h1>
             <p className="text-xs sm:text-sm text-slate-300 mt-1 max-w-xl">
               Periode cut-off presensi: Tanggal {companyConfig.cutOffStartDay} s/d{' '}
@@ -1114,7 +1114,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                 Statistik &amp; Diagram Demografi Karyawan (Pria, Wanita &amp; Jabatan)
               </h3>
               <p className="text-xs text-slate-500">
-                Analisis komposisi gender, perbandingan jenis kelamin, dan distribusi posisi kerja PT Tas Grosir Import.
+                Analisis komposisi gender, perbandingan jenis kelamin, dan distribusi posisi kerja Tas Grosir Import.
               </p>
             </div>
           </div>

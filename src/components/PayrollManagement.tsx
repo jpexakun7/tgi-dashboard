@@ -232,7 +232,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
   const totalPph21 = validPayrolls.reduce((acc, curr) => acc + curr.pph21TER, 0);
 
   // Bank Transfer File Export (Format Transfer Bank KlikBCA Bisnis / Mandiri MCM CSV)
-  // Kolom wajib: No Rekening, Nama Pemilik Rekening, Bank, Nominal THP Bersih, Berita Transfer ("Gaji Okt 2026 PT TGI")
+  // Kolom wajib: No Rekening, Nama Pemilik Rekening, Bank, Nominal THP Bersih, Berita Transfer ("Gaji Okt 2026 Tas Grosir Import")
   const handleDownloadBankTransferCSV = (bankType: 'BCA_MANDIRI' | 'BCA' | 'Mandiri' = 'BCA_MANDIRI') => {
     const headers = [
       'No Rekening',
@@ -256,7 +256,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
       const emp = employees.find((e) => e.id === p.employeeId);
       const beritaTransfer = formatBankTransferRemark(
         p.period || companyConfig.currentPayrollPeriod,
-        'PT TGI'
+        'Tas Grosir Import'
       );
       return [
         `'${emp?.bankAccountNumber || ''}`,
@@ -344,6 +344,58 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
       nextWaived
         ? `Dispensasi Denda diberikan untuk ${emp?.fullName || record.employeeId}! Potongan menjadi Rp 0.`
         : `Dispensasi Denda untuk ${emp?.fullName || record.employeeId} dibatalkan.`
+    );
+  };
+
+  // Ubah tahapan status verifikasi & pembayaran slip gaji (Draft -> Menunggu Transfer -> Lunas)
+  const handleChangePaymentStatus = (
+    record: PayrollRecord,
+    nextStatus: PayrollRecord['paymentStatus']
+  ) => {
+    if (isCurrentPeriodLocked) {
+      showToast(
+        `Periode ${companyConfig.currentPayrollPeriod} sedang terkunci! Buka kunci terlebih dahulu untuk mengubah status pembayaran.`
+      );
+      return;
+    }
+
+    const emp = employees.find((e) => e.id === record.employeeId);
+    onUpdatePayrollRecord({
+      ...record,
+      paymentStatus: nextStatus,
+      paymentDate:
+        nextStatus === 'Lunas'
+          ? new Date().toISOString().split('T')[0]
+          : undefined,
+    });
+
+    showToast(
+      `Status slip gaji ${emp?.fullName || record.employeeId} diperbarui menjadi "${nextStatus}".`
+    );
+  };
+
+  const handleBulkUpdatePaymentStatus = (nextStatus: PayrollRecord['paymentStatus']) => {
+    if (isCurrentPeriodLocked) {
+      showToast(`Periode ${companyConfig.currentPayrollPeriod} sedang terkunci!`);
+      return;
+    }
+    const todayStr = new Date().toISOString().split('T')[0];
+    const updated = payrolls.map((rec) =>
+      rec.period === companyConfig.currentPayrollPeriod
+        ? {
+            ...rec,
+            paymentStatus: nextStatus,
+            paymentDate: nextStatus === 'Lunas' ? todayStr : undefined,
+          }
+        : rec
+    );
+    if (onApplyImportedPayroll) {
+      onApplyImportedPayroll(updated);
+    } else {
+      updated.forEach((u) => onUpdatePayrollRecord(u));
+    }
+    showToast(
+      `Seluruh slip gaji periode ${companyConfig.currentPayrollPeriod} diperbarui ke status "${nextStatus}"!`
     );
   };
 
@@ -557,7 +609,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
             type="button"
             onClick={() => setIsBroadcastModalOpen(true)}
             className="px-3.5 py-2 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
-            title="Broadcast WhatsApp Pengumuman Slip Gaji Terbit ke seluruh karyawan PT Tas Grosir Import"
+            title="Broadcast WhatsApp Pengumuman Slip Gaji Terbit ke seluruh karyawan Tas Grosir Import"
           >
             <MessageCircle className="w-4 h-4 text-white" />
             <span>Broadcast WA Slip Gaji Terbit</span>
@@ -639,7 +691,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                       Unduh Format Transfer Bank (CSV BCA/Mandiri)
                     </span>
                     <span className="text-[10px] text-slate-500 block leading-snug mt-0.5">
-                      Kolom: No Rekening, Nama Pemilik Rekening, Bank, Nominal THP Bersih, Berita Transfer (&ldquo;{formatBankTransferRemark(companyConfig.currentPayrollPeriod, 'PT TGI')}&rdquo;)
+                      Kolom: No Rekening, Nama Pemilik Rekening, Bank, Nominal THP Bersih, Berita Transfer (&ldquo;{formatBankTransferRemark(companyConfig.currentPayrollPeriod, 'Tas Grosir Import')}&rdquo;)
                     </span>
                   </div>
                 </button>
@@ -808,24 +860,48 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
               Untuk {validPayrolls.length} Karyawan Aktif {companyConfig.companyName} • Periode {companyConfig.currentPayrollPeriod}
             </p>
           </div>
-          <div className="bg-emerald-950/60 px-4 py-3 rounded-xl border border-emerald-600/40 text-xs text-emerald-100">
-            <div className="flex items-center gap-2">
-              {isCurrentPeriodLocked ? (
-                <>
-                  <Lock className="w-4 h-4 text-amber-400" />
-                  <span className="font-semibold text-amber-300">
-                    Status Payroll: Terkunci &amp; Final (Lunas)
-                  </span>
-                </>
-              ) : (
-                <>
-                  <CheckCircle className="w-4 h-4 text-emerald-400" />
-                  <span className="font-semibold">Status Payroll: Lunas &amp; Terverifikasi</span>
-                </>
+          <div className="bg-emerald-950/60 px-4 py-3 rounded-xl border border-emerald-600/40 text-xs text-emerald-100 space-y-2">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-center gap-2">
+                {isCurrentPeriodLocked ? (
+                  <>
+                    <Lock className="w-4 h-4 text-amber-400" />
+                    <span className="font-semibold text-amber-300">
+                      Status Payroll: Terkunci &amp; Final
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <Clock className="w-4 h-4 text-emerald-400" />
+                    <span className="font-semibold">
+                      Tahapan Slip Gaji:{' '}
+                      {validPayrolls.filter((p) => p.paymentStatus === 'Lunas').length}/
+                      {validPayrolls.length} Lunas
+                    </span>
+                  </>
+                )}
+              </div>
+              {!isCurrentPeriodLocked && validPayrolls.length > 0 && (
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => handleBulkUpdatePaymentStatus('Menunggu Transfer')}
+                    className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-200 text-[10px] font-bold cursor-pointer"
+                  >
+                    Verifikasi Semua (Siap Transfer)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleBulkUpdatePaymentStatus('Lunas')}
+                    className="px-2.5 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-[10px] font-extrabold cursor-pointer"
+                  >
+                    Tandai Semua Lunas
+                  </button>
+                </div>
               )}
             </div>
-            <p className="text-[11px] text-emerald-300 mt-1">
-              Jadwal Pencairan: 28 {companyConfig.currentPayrollPeriod} • Berita: &ldquo;{formatBankTransferRemark(companyConfig.currentPayrollPeriod, 'PT TGI')}&rdquo;
+            <p className="text-[11px] text-emerald-300">
+              Jadwal Pencairan: 28 {companyConfig.currentPayrollPeriod} • Berita: &ldquo;{formatBankTransferRemark(companyConfig.currentPayrollPeriod, 'Tas Grosir Import')}&rdquo;
             </p>
           </div>
         </div>
@@ -1323,8 +1399,9 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                       <span className="font-medium text-rose-600 block">
                         ({formatRupiah(record.totalDeductions)})
                       </span>
-                      <span className="text-[10px] text-slate-400 block">
-                        PPh 21: {formatRupiah(record.pph21TER)}
+                      <span className="text-[10px] text-slate-500 block">
+                        PPh 21 {record.isDecemberReconciliation ? '(Rekon Des A1)' : '(TER+BPJS)'}:{' '}
+                        {formatRupiah(record.pph21TER)}
                       </span>
                     </td>
                     <td className="py-3 px-4">
@@ -1336,11 +1413,40 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                       </span>
                     </td>
                     <td className="py-3 px-4 text-center">
-                      <div className="flex flex-col items-center gap-1">
-                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 font-semibold text-[10px]">
-                          <CheckCircle className="w-3 h-3 text-emerald-600" />
+                      <div className="flex flex-col items-center gap-1.5">
+                        <span
+                          className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full font-semibold text-[10px] ${
+                            record.paymentStatus === 'Lunas'
+                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                              : record.paymentStatus === 'Menunggu Transfer'
+                              ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                              : 'bg-slate-100 text-slate-700 border border-slate-300'
+                          }`}
+                        >
+                          {record.paymentStatus === 'Lunas' ? (
+                            <CheckCircle className="w-3 h-3 text-emerald-600" />
+                          ) : (
+                            <Clock className="w-3 h-3 text-amber-600" />
+                          )}
                           {record.paymentStatus}
                         </span>
+                        {!isCurrentPeriodLocked && (
+                          <select
+                            value={record.paymentStatus}
+                            onChange={(e) =>
+                              handleChangePaymentStatus(
+                                record,
+                                e.target.value as PayrollRecord['paymentStatus']
+                              )
+                            }
+                            aria-label="Tahapan Status Pembayaran Slip Gaji"
+                            className="px-2 py-0.5 text-[10px] font-bold rounded-md border border-slate-300 bg-white text-slate-700 hover:border-emerald-500 focus:outline-none cursor-pointer"
+                          >
+                            <option value="Draft">1. Draft (Verifikasi)</option>
+                            <option value="Menunggu Transfer">2. Menunggu Transfer</option>
+                            <option value="Lunas">3. Lunas (Dibayar)</option>
+                          </select>
+                        )}
                         {isCurrentPeriodLocked && (
                           <span className="inline-flex items-center gap-0.5 text-[9px] font-bold text-amber-800 bg-amber-100 px-1.5 py-0.2 rounded">
                             <Lock className="w-2.5 h-2.5" /> Locked

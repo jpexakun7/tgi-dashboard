@@ -160,15 +160,19 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
             auto_select: false,
           });
 
-          // Render official Google button
+          // Render official Google button with responsive width for mobile screens
           googleBtnContainerRef.current.innerHTML = '';
+          const responsiveBtnWidth =
+            typeof window !== 'undefined'
+              ? Math.max(220, Math.min(300, window.innerWidth - 64))
+              : 280;
           google.accounts.id.renderButton(googleBtnContainerRef.current, {
             theme: 'filled_blue',
             size: 'large',
             shape: 'pill',
             text: 'signin_with',
             locale: 'id',
-            width: 320,
+            width: responsiveBtnWidth,
           });
         } catch (e) {
           console.warn('GSI Init note:', e);
@@ -394,33 +398,33 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
   );
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex flex-col justify-center items-center px-4 py-8 relative overflow-hidden text-slate-100">
+    <div className="min-h-screen w-full max-w-full bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex flex-col justify-center items-center px-3 sm:px-4 py-6 sm:py-8 relative overflow-x-hidden text-slate-100">
       {/* Background Decorative Glows */}
-      <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[700px] h-[380px] bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute bottom-10 right-10 w-[450px] h-[300px] bg-teal-500/10 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute top-10 left-10 w-[350px] h-[250px] bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-full max-w-[700px] h-[380px] bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute bottom-10 right-10 w-64 sm:w-[450px] h-[300px] bg-teal-500/10 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute top-10 left-10 w-64 sm:w-[350px] h-[250px] bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
 
       {/* Main Container */}
-      <div className="w-full max-w-2xl relative z-10 space-y-6">
+      <div className="w-full max-w-2xl mx-auto relative z-10 space-y-5 sm:space-y-6">
         {/* Brand Header */}
         <div className="text-center space-y-2">
-          <div className="inline-flex items-center justify-center gap-3 p-3 bg-slate-800/80 border border-slate-700/80 rounded-2xl shadow-xl shadow-black/30 backdrop-blur-md">
-            <div className="w-11 h-11 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-white font-black text-xl shadow-md shadow-emerald-500/30">
+          <div className="inline-flex items-center justify-center gap-3 p-3 bg-slate-800/80 border border-slate-700/80 rounded-2xl shadow-xl shadow-black/30 backdrop-blur-md max-w-full">
+            <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-white font-black text-lg sm:text-xl shadow-md shadow-emerald-500/30 shrink-0">
               TGI
             </div>
-            <div className="text-left pr-2">
-              <span className="block font-bold text-white text-base leading-tight">
-                PT Tas Grosir Import
+            <div className="text-left pr-1 sm:pr-2 min-w-0">
+              <span className="block font-bold text-white text-sm sm:text-base leading-tight truncate">
+                Tas Grosir Import
               </span>
-              <span className="text-[11px] text-emerald-400 font-semibold tracking-wide">
+              <span className="text-[10px] sm:text-[11px] text-emerald-400 font-semibold tracking-wide block truncate">
                 HRIS & Payroll Executive Dashboard
               </span>
             </div>
           </div>
-          <h1 className="text-2xl font-black text-white tracking-tight mt-2">
+          <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight mt-2">
             Login Real Akun Google
           </h1>
-          <p className="text-xs text-slate-400 max-w-lg mx-auto leading-relaxed">
+          <p className="text-xs text-slate-400 max-w-lg mx-auto leading-relaxed px-2">
             Autentikasi terintegrasi dengan Google Identity Services. Akses dashboard diatur berdasarkan konfigurasi role di panel admin.
           </p>
         </div>
@@ -431,9 +435,9 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
             <div className="p-2 rounded-xl bg-rose-500/20 text-rose-400 border border-rose-500/30 shrink-0">
               <ShieldAlert className="w-5 h-5" />
             </div>
-            <div className="flex-1 text-xs">
+            <div className="flex-1 text-xs min-w-0">
               <h4 className="font-bold text-rose-200">Autentikasi Gagal</h4>
-              <p className="text-rose-300/90 mt-0.5">{loginError}</p>
+              <p className="text-rose-300/90 mt-0.5 break-words">{loginError}</p>
             </div>
             <button
               onClick={() => setLoginError(null)}
@@ -444,44 +448,30 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
           </div>
         )}
 
-        {/* Quick Entry: Portal Layanan Mandiri Karyawan (Non-Admin) */}
+        {/* Quick Entry: Portal Layanan Mandiri Karyawan (Non-Admin, Tanpa Ekspos Daftar Karyawan Sebelum Login) */}
         {onLoginAsEmployee && (
-          <div className="bg-gradient-to-r from-emerald-950/70 via-slate-900/90 to-teal-950/70 border border-emerald-500/30 rounded-2xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-xl backdrop-blur-md">
-            <div className="flex items-center gap-3">
+          <div className="bg-gradient-to-r from-emerald-950/70 via-slate-900/90 to-teal-950/70 border border-emerald-500/30 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xl backdrop-blur-md">
+            <div className="flex items-center gap-3 min-w-0">
               <div className="p-2.5 bg-emerald-500/20 text-emerald-400 rounded-xl border border-emerald-500/30 shrink-0">
                 <UserCheck className="w-5 h-5" />
               </div>
-              <div>
-                <p className="text-xs font-bold text-white flex items-center gap-2">
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-white flex items-center gap-2 flex-wrap">
                   <span>Portal Layanan Mandiri Karyawan (Self-Service)</span>
-                  <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.2 rounded border border-emerald-500/30 font-semibold">
-                    Non-Admin
+                  <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-500/30 font-semibold">
+                    Verifikasi PIN / NIK
                   </span>
                 </p>
                 <p className="text-[11px] text-slate-300 mt-0.5">
-                  Akses slip gaji, pengajuan cuti & izin, klaim lembur, reimbursement, dan data rekening pribadi.
+                  Akses slip gaji, pengajuan cuti & izin, klaim lembur, dan profil pribadi dengan verifikasi NIK & PIN.
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-2 flex-wrap">
-              {employees.length > 0 && (
-                <select
-                  value={selectedPortalEmpId}
-                  onChange={(e) => setSelectedPortalEmpId(e.target.value)}
-                  className="px-2.5 py-2 text-xs bg-slate-800 border border-slate-700 text-slate-200 rounded-xl focus:outline-hidden cursor-pointer"
-                  title="Pilih akun karyawan"
-                >
-                  {employees.map((emp) => (
-                    <option key={emp.id} value={emp.id}>
-                      {emp.fullName} ({emp.role})
-                    </option>
-                  ))}
-                </select>
-              )}
+            <div className="flex items-center gap-2 shrink-0">
               <button
                 type="button"
-                onClick={() => onLoginAsEmployee(selectedPortalEmpId)}
-                className="px-4 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white transition-all shrink-0 shadow-xs flex items-center justify-center gap-1.5 cursor-pointer hover:shadow-emerald-600/30"
+                onClick={() => onLoginAsEmployee(selectedPortalEmpId || undefined)}
+                className="w-full sm:w-auto px-4 py-2.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white transition-all shrink-0 shadow-xs flex items-center justify-center gap-1.5 cursor-pointer hover:shadow-emerald-600/30"
               >
                 <span>Masuk Portal Karyawan</span>
                 <ArrowRight className="w-3.5 h-3.5" />
@@ -1001,7 +991,7 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
         <div className="text-center text-[11px] text-slate-500 space-y-1">
           <p className="flex items-center justify-center gap-1.5">
             <Lock className="w-3 h-3 text-emerald-500" />
-            <span>Terlindungi Autentikasi Google Identity Services &bull; PT Tas Grosir Import &copy; 2026</span>
+            <span>Terlindungi Autentikasi Google Identity Services &bull; Tas Grosir Import &copy; 2026</span>
           </p>
           <p className="text-[10px] text-slate-600">
             Akses multi-pengelola aman dengan Role-Based Access Control (RBAC).

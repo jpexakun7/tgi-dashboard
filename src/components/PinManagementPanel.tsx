@@ -24,6 +24,10 @@ import {
   ActivityCategory,
 } from '../types';
 import { getEmployeeEffectivePin } from '../services/supabaseService';
+import {
+  updateAdminPinSecure,
+  updateEmployeePinSecure,
+} from '../services/authSecurityService';
 
 interface PinManagementPanelProps {
   companyConfig: CompanyConfig;
@@ -45,12 +49,8 @@ export const PinManagementPanel: React.FC<PinManagementPanelProps> = ({
   onUpdateEmployee,
   onLogAudit,
 }) => {
-  const [masterAdminPin, setMasterAdminPin] = useState(
-    companyConfig.securitySettings?.adminPin || '2026'
-  );
-  const [defaultEmployeePin, setDefaultEmployeePin] = useState(
-    companyConfig.securitySettings?.defaultEmployeePin || '1234'
-  );
+  const [masterAdminPin, setMasterAdminPin] = useState('');
+  const [defaultEmployeePin, setDefaultEmployeePin] = useState('');
   const [requirePinForWebAccess, setRequirePinForWebAccess] = useState(
     companyConfig.securitySettings?.requirePinForWebAccess ?? true
   );
@@ -71,26 +71,23 @@ export const PinManagementPanel: React.FC<PinManagementPanelProps> = ({
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   useEffect(() => {
-    setMasterAdminPin(companyConfig.securitySettings?.adminPin || '2026');
-    setDefaultEmployeePin(companyConfig.securitySettings?.defaultEmployeePin || '1234');
     setRequirePinForWebAccess(companyConfig.securitySettings?.requirePinForWebAccess ?? true);
     setRequirePinForAdminMode(companyConfig.securitySettings?.requirePinForAdminMode ?? true);
 
     const initAdminPins: Record<string, string> = {};
     (companyConfig.allowedGoogleAdmins || []).forEach((adm) => {
-      initAdminPins[adm.id] = adm.accessPin || companyConfig.securitySettings?.adminPin || '2026';
+      initAdminPins[adm.id] = '';
     });
     setAdminPins(initAdminPins);
   }, [companyConfig]);
 
   useEffect(() => {
     const initEmpPins: Record<string, string> = {};
-    const defPin = companyConfig.securitySettings?.defaultEmployeePin || '1234';
     employees.forEach((emp) => {
-      initEmpPins[emp.id] = getEmployeeEffectivePin(emp, defPin);
+      initEmpPins[emp.id] = getEmployeeEffectivePin(emp, '');
     });
     setEmployeePins(initEmpPins);
-  }, [employees, companyConfig.securitySettings?.defaultEmployeePin]);
+  }, [employees]);
 
   const showToast = (msg: string) => {
     setToastMsg(msg);
@@ -103,40 +100,61 @@ export const PinManagementPanel: React.FC<PinManagementPanelProps> = ({
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  // Save Master Admin PIN & Per-Admin Account PINs
-  const handleSaveAdminPinConfig = (e: React.FormEvent) => {
+  // Save Master Admin PIN & Per-Admin Account PINs securely via SHA-256 + Supabase RPC
+  const handleSaveAdminPinConfig = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanedMasterPin = masterAdminPin.trim() || '2026';
-    const cleanedDefaultEmpPin = defaultEmployeePin.trim() || '1234';
+    const cleanedMasterPin = masterAdminPin.trim();
+
+    if (cleanedMasterPin && cleanedMasterPin.length < 4) {
+      showToast('PIN Master Admin minimal 4 karakter.');
+      return;
+    }
+
+    if (cleanedMasterPin) {
+      await updateAdminPinSecure(
+        companyConfig.adminGoogleEmail || 'jpexakun7@gmail.com',
+        'Super Admin',
+        cleanedMasterPin
+      );
+    }
+
+    for (const adm of companyConfig.allowedGoogleAdmins || []) {
+      const customAdmPin = (adminPins[adm.id] || '').trim();
+      if (customAdmPin && customAdmPin.length >= 4) {
+        await updateAdminPinSecure(adm.email, 'Super Admin', customAdmPin);
+      } else if (cleanedMasterPin) {
+        await updateAdminPinSecure(adm.email, 'Super Admin', cleanedMasterPin);
+      }
+    }
 
     const updatedAdmins: GoogleAdminAccount[] = (companyConfig.allowedGoogleAdmins || []).map(
-      (adm) => ({
-        ...adm,
-        accessPin: (adminPins[adm.id] || cleanedMasterPin).trim(),
-      })
+      (adm) => {
+        const nextMap = { ...adm };
+        delete nextMap.accessPin; // Jangan simpan PIN plaintext di state objek admin
+        return nextMap;
+      }
     );
 
     const newConfig: CompanyConfig = {
       ...companyConfig,
       allowedGoogleAdmins: updatedAdmins,
       securitySettings: {
-        ...companyConfig.securitySettings,
-        adminPin: cleanedMasterPin,
-        webAccessPin: cleanedMasterPin,
-        defaultEmployeePin: cleanedDefaultEmpPin,
         requirePinForWebAccess,
         requirePinForAdminMode,
       },
     };
 
     onUpdateConfig(newConfig);
-    showToast('Pengaturan PIN Panel Admin HR & Keamanan Akses Web berhasil disimpan!');
+    setMasterAdminPin('');
+    showToast(
+      'Kredensial PIN Admin berhasil di-hash (SHA-256 / Bcrypt RPC) & kebijakan keamanan disimpan!'
+    );
 
     if (onLogAudit) {
       onLogAudit(
         'SETTINGS_MODIFIED',
         'Hak Akses & Admin',
-        `Memperbarui konfigurasi PIN Panel Admin HR (Master PIN: ${cleanedMasterPin}) dan PIN masing-masing akun Admin.`,
+        'Memperbarui hash kredensial PIN Panel Admin HR dan pengaturan keamanan akses web.',
         {
           targetId: 'admin-pin-settings',
           targetName: 'PIN Panel Admin HR',
@@ -146,34 +164,38 @@ export const PinManagementPanel: React.FC<PinManagementPanelProps> = ({
     }
   };
 
-  // Save a single employee's PIN to state, localStorage, and Supabase
-  const handleSaveSingleEmployeePin = (emp: Employee) => {
+  // Save a single employee's PIN to Supabase RPC (bcrypt hash) and local SHA-256 digest
+  const handleSaveSingleEmployeePin = async (emp: Employee) => {
     const newPin = (employeePins[emp.id] || '').trim();
-    if (!newPin) {
-      showToast(`PIN untuk ${emp.fullName} tidak boleh kosong!`);
+    if (!newPin || newPin.length < 4) {
+      showToast(`PIN baru untuk ${emp.fullName} minimal 4 digit/karakter!`);
       return;
     }
+
+    await updateEmployeePinSecure(emp.id, newPin);
 
     if (onUpdateEmployee) {
       onUpdateEmployee({
         ...emp,
-        accessPin: newPin,
+        accessPin: '••••',
       });
     }
 
+    setEmployeePins((prev) => ({ ...prev, [emp.id]: '' }));
+
     showToast(
-      `PIN Portal Karyawan untuk ${emp.fullName} (${emp.nik}) berhasil diubah menjadi "${newPin}" & disinkronkan ke Supabase!`
+      `PIN Portal Karyawan untuk ${emp.fullName} (${emp.nik}) berhasil dienkripsi & disinkronkan ke Supabase!`
     );
 
     if (onLogAudit) {
       onLogAudit(
         'USER_ACCESS_CHANGED',
         'Data Karyawan',
-        `Mengubah kode PIN akses Portal Karyawan untuk ${emp.fullName} (${emp.nik}).`,
+        `Memperbarui hash PIN akses Portal Karyawan untuk ${emp.fullName} (${emp.nik}).`,
         {
           targetId: emp.id,
           targetName: `${emp.fullName} (${emp.nik})`,
-          newValue: `PIN Baru: ${newPin}`,
+          newValue: 'PIN Terenkripsi (Bcrypt / SHA-256)',
           severity: 'info',
         }
       );

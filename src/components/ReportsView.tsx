@@ -565,7 +565,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                 BPJS Kesehatan (Total 5%)
               </span>
               <div className="flex justify-between">
-                <span>Ditanggung Perusahaan PT Tas Grosir Import (4%):</span>
+                <span>Ditanggung Perusahaan Tas Grosir Import (4%):</span>
                 <span className="font-semibold">{formatRupiah(bpjsKesComp)}</span>
               </div>
               <div className="flex justify-between">

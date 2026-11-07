@@ -19,7 +19,11 @@ import {
   Boxes,
   WalletCards,
 } from 'lucide-react';
-import { SUPABASE_URL, SUPABASE_SQL_SCHEMA, SUPABASE_ADDITIONAL_SQL_SCHEMA } from '../lib/supabase';
+import {
+  SUPABASE_URL,
+  SUPABASE_SQL_SCHEMA,
+  SUPABASE_SECURITY_MIGRATION_SQL,
+} from '../lib/supabase';
 import { SupabaseSyncStatus } from '../services/supabaseService';
 
 interface SupabaseSyncModalProps {
@@ -45,11 +49,12 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
 }) => {
   const [copied, setCopied] = useState(false);
   const [activeTab, setActiveTab] = useState<'status' | 'sql'>('status');
-  const [sqlMode, setSqlMode] = useState<'additional' | 'full'>('additional');
+  const [sqlMode, setSqlMode] = useState<'security' | 'full'>('security');
 
   if (!isOpen) return null;
 
-  const currentSql = sqlMode === 'additional' ? SUPABASE_ADDITIONAL_SQL_SCHEMA : SUPABASE_SQL_SCHEMA;
+  const currentSql =
+    sqlMode === 'security' ? SUPABASE_SECURITY_MIGRATION_SQL : SUPABASE_SQL_SCHEMA;
 
   const handleCopySql = () => {
     navigator.clipboard.writeText(currentSql);
@@ -69,7 +74,7 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-slate-200 my-8 animate-in fade-in zoom-in-95">
+      <div className="bg-white rounded-2xl max-w-2xl w-full p-4 sm:p-6 shadow-2xl border border-slate-200 my-8 animate-in fade-in zoom-in-95">
         {/* Header */}
         <div className="flex items-center justify-between pb-4 border-b border-slate-100">
           <div className="flex items-center gap-3">
@@ -78,10 +83,10 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
             </div>
             <div>
               <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                Integrasi Database Supabase Cloud
+                Integrasi Database & Keamanan RLS Supabase
               </h2>
               <p className="text-xs text-slate-500">
-                Penyimpanan Real-time PostgreSQL, Sinkronisasi Otomatis & RLS
+                Tas Grosir Import • Row Level Security (RLS) Ketat & Fungsi RPC Autentikasi
               </p>
             </div>
           </div>
@@ -115,7 +120,7 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
             }`}
           >
             <ShieldCheck className="w-4 h-4" />
-            Skrip SQL Schema & Editor (Copy-Paste)
+            Skrip Migrasi RLS Ketat & RPC Login
           </button>
         </div>
 
@@ -141,7 +146,7 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
                   <h3 className="font-bold text-xs sm:text-sm">{syncStatus.statusText}</h3>
                   <p className="text-[11px] opacity-85 mt-0.5">
                     {syncStatus.error ||
-                      'Tabel Supabase terhubung. Setiap perubahan presensi, cuti, lembur, reimbursement, karyawan, aset, dan payroll tersimpan langsung.'}
+                      'Tabel Supabase terhubung dengan proteksi Row Level Security (RLS) ketat.'}
                   </p>
                 </div>
               </div>
@@ -209,15 +214,15 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
               </div>
             </div>
 
-            {/* Manual Seed Section (Auto-seed is disabled) */}
+            {/* Manual Seed Section */}
             <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
               <div>
                 <h4 className="font-bold text-slate-900 flex items-center gap-1.5 text-xs">
                   <Sparkles className="w-4 h-4 text-emerald-600" />
-                  Unggah Data Mock Contoh (Manual / Opsional)
+                  Sinkronisasi Data ke Supabase (Manual)
                 </h4>
                 <p className="text-[11px] text-slate-600 mt-0.5">
-                  Fitur auto-seed otomatis telah <strong>dimatikan</strong>. Jika tabel Supabase Anda kosong, aplikasi akan menampilkan daftar kosong (0 data). Tombol ini disediakan hanya jika Anda membutuhkan data contoh awal secara manual.
+                  Aplikasi 100% menggunakan data real-time dari Supabase tanpa fallback data dummy.
                 </p>
               </div>
               <button
@@ -227,19 +232,8 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
                 className="px-4 py-2 bg-slate-800 hover:bg-slate-900 disabled:bg-slate-400 text-white font-semibold rounded-xl text-xs flex items-center gap-2 cursor-pointer shadow-xs shrink-0"
               >
                 <UploadCloud className="w-4 h-4" />
-                <span>{isSeeding ? 'Mengunggah...' : 'Unggah Data Mock'}</span>
+                <span>{isSeeding ? 'Menyinkronkan...' : 'Sinkronkan Data'}</span>
               </button>
-            </div>
-
-            {/* Fallback Notice */}
-            <div className="p-3 bg-blue-50/60 rounded-xl border border-blue-200 text-blue-900 text-xs flex items-start gap-2.5">
-              <ShieldCheck className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
-              <div className="text-[11px] space-y-0.5">
-                <p className="font-semibold">Perlindungan Ketersediaan Data (Zero-Downtime Fallback):</p>
-                <p className="text-blue-800">
-                  Jika koneksi internet terputus atau tabel Supabase belum siap, sistem otomatis menggunakan <strong>localStorage</strong> lokal sehingga Anda tetap dapat mencatat presensi, mengajukan cuti, klaim lembur, dan reimbursement tanpa hambatan.
-                </p>
-              </div>
             </div>
           </div>
         )}
@@ -247,42 +241,42 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
         {activeTab === 'sql' && (
           <div className="space-y-3">
             {/* SQL Mode Switcher */}
-            <div className="flex items-center justify-between gap-2 bg-slate-100 p-1 rounded-xl">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 bg-slate-100 p-1 rounded-xl">
               <button
                 type="button"
-                onClick={() => setSqlMode('additional')}
-                className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
-                  sqlMode === 'additional'
+                onClick={() => setSqlMode('security')}
+                className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                  sqlMode === 'security'
                     ? 'bg-white text-emerald-700 shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                1. Skrip Tambahan (4 Tabel: Presensi, Cuti, Lembur, Reimbursement)
+                1. Migrasi Keamanan RLS Ketat & Fungsi RPC Login (Audit Keamanan)
               </button>
               <button
                 type="button"
                 onClick={() => setSqlMode('full')}
-                className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
+                className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
                   sqlMode === 'full'
                     ? 'bg-white text-emerald-700 shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                2. Skrip Lengkap (Semua 7 Tabel)
+                2. Schema Lengkap 7 Tabel + RLS Ketat
               </button>
             </div>
 
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div>
                 <h3 className="font-bold text-xs text-slate-900">
-                  {sqlMode === 'additional'
-                    ? 'Skrip SQL Tambahan: Presensi, Cuti, Lembur & Reimbursement'
-                    : 'Skrip PostgreSQL Schema Lengkap (7 Tabel & RLS)'}
+                  {sqlMode === 'security'
+                    ? 'Skrip Migrasi Keamanan: Hapus Public Access, Terapkan RLS Ketat & Fungsi RPC Bcrypt'
+                    : 'Skrip PostgreSQL Schema Lengkap (7 Tabel + RLS Ketat + RPC Auth)'}
                 </h3>
                 <p className="text-[11px] text-slate-500">
-                  {sqlMode === 'additional'
-                    ? 'Jalankan skrip ini jika tabel karyawan & aset sudah dibuat sebelumnya di Supabase.'
-                    : 'Skrip lengkap membuat seluruh 7 tabel beserta relasi, indeks, dan aturan RLS.'}
+                  {sqlMode === 'security'
+                    ? 'Menutup akses publik (USING true) dan mengaktifkan verifikasi server-side verify_admin_login & verify_employee_login.'
+                    : 'Membuat 7 tabel utama beserta kebijakan RLS terautentikasi dan fungsi RPC keamanan.'}
                 </p>
               </div>
               <button

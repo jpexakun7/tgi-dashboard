@@ -158,7 +158,7 @@ export const PayrollTrendChart: React.FC<PayrollTrendChartProps> = ({
         totalDeductions,
         employeeCount: count,
         avgTHP: count > 0 ? Math.round(totalTHP / count) : 0,
-        notes: `Realisasi payroll ${count} staf aktif PT Tas Grosir Import`,
+        notes: `Realisasi payroll ${count} staf aktif Tas Grosir Import`,
       };
     });
 
@@ -355,7 +355,7 @@ export const PayrollTrendChart: React.FC<PayrollTrendChartProps> = ({
                 </span>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
-                Visualisasi dinamika pengeluaran gaji bersih (THP), beban bruto, dan rata-rata pengeluaran per karyawan PT Tas Grosir Import.
+                Visualisasi dinamika pengeluaran gaji bersih (THP), beban bruto, dan rata-rata pengeluaran per karyawan Tas Grosir Import.
               </p>
             </div>
           </div>

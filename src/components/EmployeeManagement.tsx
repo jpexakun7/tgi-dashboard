@@ -736,10 +736,10 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         <div>
           <h1 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
             <Users className="w-6 h-6 text-emerald-600" />
-            Data Karyawan PT Tas Grosir Import
+            Data Karyawan Tas Grosir Import
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
-            Kelola profil, jabatan, rekening bank, tunjangan, dan data pajak karyawan PT Tas Grosir Import.
+            Kelola profil, jabatan, rekening bank, tunjangan, dan data pajak karyawan Tas Grosir Import.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">

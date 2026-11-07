@@ -183,7 +183,7 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
 
         {/* Printable Payslip Body */}
         <div className="p-6 sm:p-10 overflow-y-auto print:overflow-visible print:p-6 text-slate-800 bg-white print:text-black">
-          {/* Header PT TGI */}
+          {/* Header Tas Grosir Import */}
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center pb-6 border-b-2 border-slate-800 gap-4">
             <div className="flex items-center gap-4">
               <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-emerald-600 to-teal-700 text-white flex items-center justify-center font-black text-2xl shadow-md print:border print:border-slate-300">
@@ -265,17 +265,21 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
                 </div>
                 <div className="flex justify-between py-2 px-4">
                   <div>
-                    <span className="text-slate-700 block">Upah Lembur (Hitungan Per Menit)</span>
+                    <span className="text-slate-700 block">
+                      Upah Lembur (UU Ketenagakerjaan: Jam ke-1 1.5x, Jam ke-2+ 2x)
+                    </span>
                     {payroll.overtimePay > 0 && (
                       <span className="text-[10px] text-emerald-700 font-mono">
                         {(() => {
+                          const mins = payroll.overtimeMinutes || 0;
+                          const firstMins = Math.min(60, mins);
+                          const subMins = Math.max(0, mins - 60);
+                          if (mins > 60) {
+                            return `${firstMins}m (1.5x) + ${subMins}m (2.0x) = ${mins} menit`;
+                          }
                           const ratePerMin =
                             payroll.overtimeRatePerMinute || getOvertimeRatePerMinute(employee, 1.5);
-                          const mins =
-                            payroll.overtimeMinutes !== undefined
-                              ? payroll.overtimeMinutes
-                              : Math.round(payroll.overtimePay / Math.max(100, ratePerMin));
-                          return `${mins} menit × ${formatRupiah(ratePerMin)}/menit`;
+                          return `${mins} menit × ${formatRupiah(ratePerMin)}/menit (1.5x)`;
                         })()}
                       </span>
                     )}
@@ -304,8 +308,16 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
               <div className="divide-y divide-slate-100 text-xs">
                 <div className="flex justify-between py-2 px-4">
                   <div>
-                    <span className="text-slate-700 block">PPh 21 (TER Ketentuan 2026)</span>
-                    <span className="text-[10px] text-slate-400">Pajak Penghasilan Karyawan (Coretax DJP)</span>
+                    <span className="text-slate-700 block">
+                      {payroll.isDecemberReconciliation
+                        ? 'PPh 21 Masa Desember (Rekonsiliasi Pasal 17 Form 1721-A1)'
+                        : 'PPh 21 (TER + Premi BPJS Pemberi Kerja)'}
+                    </span>
+                    <span className="text-[10px] text-slate-400">
+                      {payroll.taxableGrossSalary
+                        ? `DPP Pajak Bruto + BPJS Perusahaan: ${formatRupiah(payroll.taxableGrossSalary)}`
+                        : 'Pajak Penghasilan Karyawan (PP 58/2023 & PMK 168/2023)'}
+                    </span>
                   </div>
                   <span className="font-medium text-rose-600">{formatRupiah(payroll.pph21TER)}</span>
                 </div>

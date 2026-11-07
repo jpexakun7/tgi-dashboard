@@ -76,6 +76,18 @@ export interface WorkShift {
   description?: string;
 }
 
+export interface DecemberPPh21ReconciliationResult {
+  annualGrossIncome: number; // Bruto setahun (termasuk premi BPJS Kes + JKK + JKM pemberi kerja)
+  biayaJabatanAnnual: number; // 5% x Bruto setahun, maks Rp 6.000.000 / tahun
+  bpjsEmployeeAnnualDeduction: number; // Iuran JHT (2%) + JP (1%) yang dibayar karyawan setahun
+  netIncomeAnnual: number; // Penghasilan Neto Setahun
+  ptkpAnnual: number; // PTKP Setahun sesuai status (TK/0 = 54jt, dst)
+  pkpAnnual: number; // Penghasilan Kena Pajak (PKP) dibulatkan ke bawah ribuan penuh
+  annualPph21Pasal17: number; // Total PPh 21 Terutang Setahun (Tarif Progresif Pasal 17)
+  terAlreadyPaidJanToNov: number; // Akumulasi PPh 21 TER yang telah dipotong Masa Jan - Nov
+  decemberPph21Payable: number; // PPh 21 Masa Desember (Kurang / Lebih Bayar)
+}
+
 export interface PayrollRecord {
   id: string;
   employeeId: string;
@@ -88,9 +100,15 @@ export interface PayrollRecord {
   allowanceCommunication: number;
   overtimePay: number;
   overtimeMinutes?: number; // Total durasi lembur dalam menit
-  overtimeRatePerMinute?: number; // Tarif lembur per menit
+  overtimeRatePerMinute?: number; // Tarif lembur dasar per menit (1x)
+  overtimeFirstHourMinutes?: number; // Menit lembur jam pertama (1.5x sesuai UU Ketenagakerjaan)
+  overtimeSubsequentMinutes?: number; // Menit lembur jam ke-2 dst (2.0x sesuai UU Ketenagakerjaan)
+  overtimeFirstHourPay?: number; // Nominal upah lembur jam pertama (1.5x)
+  overtimeSubsequentPay?: number; // Nominal upah lembur jam ke-2 dst (2.0x)
   bonus: number;
   totalGrossSalary: number;
+  employerBpjsTaxableAllowance?: number; // Komponen Premi BPJS Kes (4%) + JKK (0.24%) + JKM (0.3%) penambah DPP PPh 21
+  taxableGrossSalary?: number; // Penghasilan Bruto Pajak (DPP PPh 21 TER = totalGrossSalary + employerBpjsTaxableAllowance)
   
   // Deductions (Potongan)
   lateDeduction: number; // Total gabungan denda keterlambatan + potongan alpha/absen
@@ -111,7 +129,9 @@ export interface PayrollRecord {
   bpjsJpEmployer: number; // 2%
   bpjsJkkEmployer: number; // 0.24% - 1.74%
   bpjsJkmEmployer: number; // 0.3%
-  pph21TER: number; // Pajak Penghasilan TER
+  pph21TER: number; // Pajak Penghasilan TER (atau PPh 21 Rekonsiliasi Pasal 17 pada masa Desember)
+  isDecemberReconciliation?: boolean; // Menandakan masa pajak terakhir (Desember) dengan rekonsiliasi Pasal 17
+  annualPph21Summary?: DecemberPPh21ReconciliationResult;
   otherDeductions: number;
   cashAdvanceDeduction?: number; // Potongan cicilan kasbon bulan berjalan
   cashAdvanceNotes?: string; // e.g. "Angsuran ke-1 dari 3 (Sisa Rp 2.000.000)"

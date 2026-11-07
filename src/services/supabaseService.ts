@@ -26,17 +26,10 @@ export interface SupabaseSyncStatus {
   };
 }
 
-export function getEmployeeEffectivePin(emp?: Partial<Employee> | null, fallbackDefault = '1234'): string {
+export function getEmployeeEffectivePin(emp?: Partial<Employee> | null, fallbackDefault = ''): string {
   if (!emp) return fallbackDefault;
-  if (emp.accessPin && emp.accessPin.trim().length > 0) {
+  if (emp.accessPin && emp.accessPin.trim().length > 0 && emp.accessPin !== '••••') {
     return emp.accessPin.trim();
-  }
-  // Generate deterministic unique 4-digit PIN per employee from NIK (e.g., TGI-2021-001 -> 1001)
-  if (emp.nik) {
-    const digits = emp.nik.replace(/\D/g, '');
-    if (digits.length >= 3) {
-      return `1${digits.slice(-3)}`;
-    }
   }
   return fallbackDefault;
 }
@@ -123,10 +116,10 @@ export function dbToEmployee(row: any): Employee {
       // ignore
     }
   }
-  const storedPin =
-    row.access_pin ||
-    rawAllowances._accessPin ||
-    getEmployeeEffectivePin({ nik: row.nik });
+  // Jangan ekspos PIN plaintext ke state React / DevTools; hanya tandai status terkonfigurasi
+  const hasConfiguredPin = Boolean(
+    row.access_pin_hash || row.access_pin || rawAllowances._accessPin
+  );
 
   return {
     id: row.id,
@@ -177,7 +170,7 @@ export function dbToEmployee(row: any): Employee {
     remainingLeaveDays: Number(row.remaining_leave_days) ?? 12,
     isActive: row.is_active ?? true,
     approvalStatus: row.approval_status || 'approved',
-    accessPin: String(storedPin),
+    accessPin: hasConfiguredPin ? '••••' : '',
   };
 }
 
@@ -1161,4 +1154,19 @@ export async function deleteOvertimeRequestFromSupabase(id: string): Promise<boo
     return false;
   }
 }
+
+export async function fetchEmployeeByIdFromSupabase(employeeId: string): Promise<Employee | null> {
+  try {
+    const { data, error } = await supabase
+      .from('employees')
+      .select('*')
+      .eq('id', employeeId)
+      .single();
+    if (error || !data) return null;
+    return dbToEmployee(data);
+  } catch {
+    return null;
+  }
+}
+
 

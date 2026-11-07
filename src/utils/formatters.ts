@@ -8,6 +8,7 @@ import {
   SignatoryItemConfig,
   PayrollSignatoriesConfig,
   CompanyConfig,
+  DecemberPPh21ReconciliationResult,
 } from '../types';
 
 export function formatRupiah(amount: number): string {
@@ -166,7 +167,134 @@ export function getTERRate(category: 'A' | 'B' | 'C', grossMonthly: number): num
   }
 }
 
-// Hitung Tarif Lembur Per Menit: ((Gaji Pokok + Tunjangan Jabatan) / 173 / 60) * Multiplier
+// Nilai PTKP Tahunan sesuai UU HPP & PMK 168/2023
+export function getPTKPAnnualAmount(ptkp: PTKPStatus): number {
+  switch (ptkp) {
+    case 'TK/0':
+      return 54000000;
+    case 'TK/1':
+    case 'K/0':
+      return 58500000;
+    case 'TK/2':
+    case 'K/1':
+      return 63000000;
+    case 'TK/3':
+    case 'K/2':
+      return 67500000;
+    case 'K/3':
+      return 72000000;
+    default:
+      return 54000000;
+  }
+}
+
+// Perhitungan Tarif Progresif Pasal 17 UU HPP atas Penghasilan Kena Pajak (PKP) Tahunan
+export function calculatePasal17AnnualTax(pkpAnnual: number): number {
+  const pkp = Math.max(0, Math.floor(pkpAnnual / 1000) * 1000);
+  if (pkp <= 0) return 0;
+
+  let remaining = pkp;
+  let totalTax = 0;
+
+  // Lapis 1: 0 s.d Rp 60.000.000 -> 5%
+  const layer1 = Math.min(remaining, 60000000);
+  totalTax += layer1 * 0.05;
+  remaining -= layer1;
+  if (remaining <= 0) return Math.round(totalTax);
+
+  // Lapis 2: > Rp 60.000.000 s.d Rp 250.000.000 (190.000.000) -> 15%
+  const layer2 = Math.min(remaining, 190000000);
+  totalTax += layer2 * 0.15;
+  remaining -= layer2;
+  if (remaining <= 0) return Math.round(totalTax);
+
+  // Lapis 3: > Rp 250.000.000 s.d Rp 500.000.000 (250.000.000) -> 25%
+  const layer3 = Math.min(remaining, 250000000);
+  totalTax += layer3 * 0.25;
+  remaining -= layer3;
+  if (remaining <= 0) return Math.round(totalTax);
+
+  // Lapis 4: > Rp 500.000.000 s.d Rp 5.000.000.000 (4.500.000.000) -> 30%
+  const layer4 = Math.min(remaining, 4500000000);
+  totalTax += layer4 * 0.30;
+  remaining -= layer4;
+  if (remaining <= 0) return Math.round(totalTax);
+
+  // Lapis 5: > Rp 5.000.000.000 -> 35%
+  totalTax += remaining * 0.35;
+  return Math.round(totalTax);
+}
+
+/**
+ * Kalkulasi Rekonsiliasi PPh 21 Masa Pajak Terakhir (Desember - Form 1721-A1)
+ * Menghitung PPh 21 Setahun dengan Tarif Pasal 17 dikurangi akumulasi PPh 21 TER Jan-Nov.
+ */
+export function calculateDecemberPPh21Reconciliation(params: {
+  monthlyTaxableGross: number;
+  bpjsJhtEmployeeMonthly: number;
+  bpjsJpEmployeeMonthly: number;
+  ptkpStatus: PTKPStatus;
+  monthsWorked?: number;
+  terAlreadyPaidJanToNov?: number;
+}): DecemberPPh21ReconciliationResult {
+  const monthsWorked = Math.min(12, Math.max(1, params.monthsWorked || 12));
+  const annualGrossIncome = Math.round(params.monthlyTaxableGross * monthsWorked);
+
+  // Biaya Jabatan: 5% dari Penghasilan Bruto, maksimal Rp 500.000/bulan atau Rp 6.000.000/tahun
+  const maxBiayaJabatan = monthsWorked * 500000;
+  const biayaJabatanAnnual = Math.min(Math.round(annualGrossIncome * 0.05), maxBiayaJabatan);
+
+  // Pengurang Iuran Pensiun/JHT yang dibayar karyawan sendiri (JHT 2% + JP 1%)
+  const bpjsEmployeeAnnualDeduction = Math.round(
+    (params.bpjsJhtEmployeeMonthly + params.bpjsJpEmployeeMonthly) * monthsWorked
+  );
+
+  const netIncomeAnnual = Math.max(
+    0,
+    annualGrossIncome - biayaJabatanAnnual - bpjsEmployeeAnnualDeduction
+  );
+  const ptkpAnnual = getPTKPAnnualAmount(params.ptkpStatus);
+  const pkpAnnual = Math.max(0, Math.floor((netIncomeAnnual - ptkpAnnual) / 1000) * 1000);
+  const annualPph21Pasal17 = calculatePasal17AnnualTax(pkpAnnual);
+
+  const category = getTERCategory(params.ptkpStatus);
+  const defaultMonthlyTer = Math.round(
+    params.monthlyTaxableGross * getTERRate(category, params.monthlyTaxableGross)
+  );
+  const terAlreadyPaidJanToNov =
+    params.terAlreadyPaidJanToNov !== undefined
+      ? Math.max(0, Math.round(params.terAlreadyPaidJanToNov))
+      : defaultMonthlyTer * Math.max(0, monthsWorked - 1);
+
+  const decemberPph21Payable = Math.max(0, annualPph21Pasal17 - terAlreadyPaidJanToNov);
+
+  return {
+    annualGrossIncome,
+    biayaJabatanAnnual,
+    bpjsEmployeeAnnualDeduction,
+    netIncomeAnnual,
+    ptkpAnnual,
+    pkpAnnual,
+    annualPph21Pasal17,
+    terAlreadyPaidJanToNov,
+    decemberPph21Payable,
+  };
+}
+
+// Hitung Tarif Dasar Upah Lembur Per Menit (1x = (Gaji Pokok + Tunjangan Tetap) / 173 / 60)
+export function getBaseOvertimeRatePerMinute(
+  employee?: Partial<Employee> | null,
+  customBaseRatePerMinute?: number
+): number {
+  if (customBaseRatePerMinute && customBaseRatePerMinute > 0) {
+    return customBaseRatePerMinute;
+  }
+  const baseSalary = Number(employee?.baseSalary) || 5000000;
+  const position = Number(employee?.allowances?.position) || 0;
+  return (baseSalary + position) / 173 / 60;
+}
+
+// Hitung Tarif Lembur Per Menit dengan Multiplier tertentu (default 1.5x untuk jam pertama)
 export function getOvertimeRatePerMinute(
   employee?: Partial<Employee> | null,
   multiplier: number = 1.5,
@@ -175,21 +303,70 @@ export function getOvertimeRatePerMinute(
   if (customRatePerMinute && customRatePerMinute > 0) {
     return Math.round(customRatePerMinute);
   }
-  const baseSalary = Number(employee?.baseSalary) || 5000000;
-  const position = Number(employee?.allowances?.position) || 0;
-  const perMinuteBase = (baseSalary + position) / 173 / 60;
+  const perMinuteBase = getBaseOvertimeRatePerMinute(employee);
   return Math.max(100, Math.round(perMinuteBase * multiplier));
 }
 
-// Hitung Total Upah Lembur Berdasarkan Durasi Menit
+export interface OvertimeTierBreakdown {
+  totalMinutes: number;
+  firstHourMinutes: number; // Maksimal 60 menit pertama (1.5x)
+  subsequentMinutes: number; // Menit setelah jam pertama (2.0x)
+  baseRatePerMinute: number; // (Gaji Pokok + Tunj. Jabatan) / 173 / 60
+  firstHourRatePerMinute: number; // 1.5x
+  subsequentRatePerMinute: number; // 2.0x
+  firstHourPay: number;
+  subsequentPay: number;
+  totalOvertimePay: number;
+}
+
+/**
+ * Perhitungan Lembur Sesuai UU Ketenagakerjaan & PP No. 35 Tahun 2021:
+ * - Jam ke-1 (60 menit pertama): 1.5x upah sejam ((Gaji Pokok + Tunjangan Tetap) / 173)
+ * - Jam ke-2 dan berikutnya (menit > 60): 2.0x upah sejam
+ */
+export function calculateOvertimeBreakdown(
+  employee?: Partial<Employee> | null,
+  totalMinutes: number = 0,
+  customRatePerMinute?: number
+): OvertimeTierBreakdown {
+  const cleanMinutes = Math.max(0, Math.round(totalMinutes || 0));
+  const firstHourMinutes = Math.min(60, cleanMinutes);
+  const subsequentMinutes = Math.max(0, cleanMinutes - 60);
+
+  const baseRatePerMinute =
+    customRatePerMinute && customRatePerMinute > 0
+      ? customRatePerMinute / 1.5
+      : getBaseOvertimeRatePerMinute(employee);
+
+  const firstHourRatePerMinute = Math.round(baseRatePerMinute * 1.5);
+  const subsequentRatePerMinute = Math.round(baseRatePerMinute * 2.0);
+
+  const firstHourPay = Math.round(firstHourMinutes * baseRatePerMinute * 1.5);
+  const subsequentPay = Math.round(subsequentMinutes * baseRatePerMinute * 2.0);
+  const totalOvertimePay = firstHourPay + subsequentPay;
+
+  return {
+    totalMinutes: cleanMinutes,
+    firstHourMinutes,
+    subsequentMinutes,
+    baseRatePerMinute: Math.round(baseRatePerMinute),
+    firstHourRatePerMinute,
+    subsequentRatePerMinute,
+    firstHourPay,
+    subsequentPay,
+    totalOvertimePay,
+  };
+}
+
+// Hitung Total Upah Lembur Berdasarkan Durasi Menit sesuai UU Ketenagakerjaan (Jam ke-1: 1.5x, Jam berikutnya: 2x)
 export function calculateOvertimePayByMinutes(
   employee?: Partial<Employee> | null,
   totalMinutes: number = 0,
-  multiplier: number = 1.5,
+  _multiplier: number = 1.5,
   customRatePerMinute?: number
 ): number {
-  const ratePerMin = getOvertimeRatePerMinute(employee, multiplier, customRatePerMinute);
-  return Math.round(Math.max(0, totalMinutes) * ratePerMin);
+  const breakdown = calculateOvertimeBreakdown(employee, totalMinutes, customRatePerMinute);
+  return breakdown.totalOvertimePay;
 }
 
 // Ambil durasi menit dari objek OvertimeRequest (mendukung data lama berbasis jam maupun data baru berbasis menit)
@@ -778,10 +955,12 @@ export function calculatePayroll(
   const meal = Number(allowances.meal) || 0;
   const communication = Number(allowances.communication) || 0;
 
-  // Hitungan Lembur Per Menit: ((Gaji Pokok + Tunjangan Jabatan) / 173 / 60) * 1.5 * Total Menit Lembur
-  const overtimeRatePerMinute = getOvertimeRatePerMinute(employee, 1.5);
+  // Hitungan Lembur Sesuai UU Ketenagakerjaan (PP 35/2021):
+  // Jam ke-1 (60 menit pertama) = 1.5x, Jam ke-2 dst (menit > 60) = 2.0x dari (Gaji Pokok + Tunjangan Jabatan) / 173
   const normalizedMinutes = Math.max(0, Math.round(overtimeMinutes));
-  const overtimePay = Math.round(normalizedMinutes * overtimeRatePerMinute);
+  const otBreakdown = calculateOvertimeBreakdown(employee, normalizedMinutes);
+  const overtimeRatePerMinute = otBreakdown.firstHourRatePerMinute;
+  const overtimePay = otBreakdown.totalOvertimePay;
 
   const totalGrossSalary =
     baseSalary + position + transport + meal + communication + overtimePay + bonus;
@@ -878,26 +1057,46 @@ export function calculatePayroll(
   // BPJS Kesehatan: Max batas atas Rp 12.000.000
   const bpjsKesBase = Math.min(baseSalary + position, 12000000);
   const bpjsKesehatanEmployee = Math.round(bpjsKesBase * 0.01); // 1% potong gaji
-  const bpjsKesehatanEmployer = Math.round(bpjsKesBase * 0.04); // 4% ditanggung perusahaan
+  const bpjsKesehatanEmployer = Math.round(bpjsKesBase * 0.04); // 4% ditanggung perusahaan (Objek PPh 21)
 
   // BPJS Ketenagakerjaan: JHT (Jaminan Hari Tua)
   const bpjsJhtBase = baseSalary + position;
-  const bpjsJhtEmployee = Math.round(bpjsJhtBase * 0.02); // 2% potong gaji
-  const bpjsJhtEmployer = Math.round(bpjsJhtBase * 0.037); // 3.7% perusahaan
+  const bpjsJhtEmployee = Math.round(bpjsJhtBase * 0.02); // 2% potong gaji (Pengurang Bruto Pasal 17)
+  const bpjsJhtEmployer = Math.round(bpjsJhtBase * 0.037); // 3.7% perusahaan (Bukan Objek PPh 21 saat dibayar)
 
   // BPJS Ketenagakerjaan: JP (Jaminan Pensiun) - Plafon 2026: Rp 10.600.000
   const bpjsJpBase = Math.min(baseSalary + position, 10600000);
-  const bpjsJpEmployee = Math.round(bpjsJpBase * 0.01); // 1% potong gaji
-  const bpjsJpEmployer = Math.round(bpjsJpBase * 0.02); // 2% perusahaan
+  const bpjsJpEmployee = Math.round(bpjsJpBase * 0.01); // 1% potong gaji (Pengurang Bruto Pasal 17)
+  const bpjsJpEmployer = Math.round(bpjsJpBase * 0.02); // 2% perusahaan (Bukan Objek PPh 21 saat dibayar)
 
-  // JKK & JKM (Ditanggung perusahaan seluruhnya)
+  // JKK & JKM (Ditanggung perusahaan seluruhnya & merupakan Objek PPh 21 Bruto)
   const bpjsJkkEmployer = Math.round(bpjsJhtBase * 0.0024); // 0.24% risiko rendah
-  const bpjsJkmEmployer = Math.round(bpjsJhtBase * 0.003); // 0.3%
+  const bpjsJkmEmployer = Math.round(bpjsJhtBase * 0.003); // 0.30%
 
-  // PPh 21 TER Ketentuan Terbaru 2026 (Sistem Coretax DJP)
+  // Komponen Premi BPJS Pemberi Kerja yang menambah Penghasilan Bruto Pajak (PP 58/2023 & PMK 168/2023):
+  // BPJS Kesehatan Perusahaan (4%) + JKK (0.24%) + JKM (0.30%)
+  const employerBpjsTaxableAllowance =
+    bpjsKesehatanEmployer + bpjsJkkEmployer + bpjsJkmEmployer;
+  const taxableGrossSalary = totalGrossSalary + employerBpjsTaxableAllowance;
+
+  // Cek apakah periode adalah bulan Desember (Masa Pajak Terakhir - Rekonsiliasi Tahunan Form 1721-A1)
+  const isDecemberReconciliation = (period || '').trim().toLowerCase().startsWith('desember');
   const category = getTERCategory(employee.ptkpStatus);
-  const terRate = getTERRate(category, totalGrossSalary);
-  const pph21TER = Math.round(totalGrossSalary * terRate);
+  const terRate = getTERRate(category, taxableGrossSalary);
+
+  let pph21TER = Math.round(taxableGrossSalary * terRate);
+  let annualPph21Summary: DecemberPPh21ReconciliationResult | undefined;
+
+  if (isDecemberReconciliation) {
+    annualPph21Summary = calculateDecemberPPh21Reconciliation({
+      monthlyTaxableGross: taxableGrossSalary,
+      bpjsJhtEmployeeMonthly: bpjsJhtEmployee,
+      bpjsJpEmployeeMonthly: bpjsJpEmployee,
+      ptkpStatus: employee.ptkpStatus,
+      monthsWorked: 12,
+    });
+    pph21TER = annualPph21Summary.decemberPph21Payable;
+  }
 
   const totalDeductions =
     lateDeduction +
@@ -924,8 +1123,14 @@ export function calculatePayroll(
     overtimePay,
     overtimeMinutes: normalizedMinutes,
     overtimeRatePerMinute,
+    overtimeFirstHourMinutes: otBreakdown.firstHourMinutes,
+    overtimeSubsequentMinutes: otBreakdown.subsequentMinutes,
+    overtimeFirstHourPay: otBreakdown.firstHourPay,
+    overtimeSubsequentPay: otBreakdown.subsequentPay,
     bonus,
     totalGrossSalary,
+    employerBpjsTaxableAllowance,
+    taxableGrossSalary,
     lateDeduction,
     originalLateDeduction,
     isLateFeeWaived,
@@ -945,13 +1150,16 @@ export function calculatePayroll(
     bpjsJkkEmployer,
     bpjsJkmEmployer,
     pph21TER,
+    isDecemberReconciliation,
+    annualPph21Summary,
     otherDeductions: 0,
     cashAdvanceDeduction: cashAdvanceDeduction || 0,
     cashAdvanceNotes,
     totalDeductions,
     takeHomePay,
-    paymentStatus: 'Lunas',
-    paymentDate: new Date().toISOString().split('T')[0],
+    // Status awal saat digenerate adalah Draft (harus melalui tahap Verifikasi / Pembayaran sebelum Lunas)
+    paymentStatus: 'Draft',
+    paymentDate: undefined,
     referenceNumber,
     isLocked: attendancePenaltyMeta?.isLocked,
     lockedAt: attendancePenaltyMeta?.lockedAt,
@@ -1236,8 +1444,8 @@ export function evaluateBankAccountValidity(
   };
 }
 
-// Format Berita Transfer Bank singkat seperti "Gaji Okt 2026 PT TGI"
-export function formatBankTransferRemark(period: string, companyShortName: string = 'PT TGI'): string {
+// Format Berita Transfer Bank singkat seperti "Gaji Okt 2026 Tas Grosir Import"
+export function formatBankTransferRemark(period: string, companyShortName: string = 'Tas Grosir Import'): string {
   const monthShortMap: Record<string, string> = {
     januari: 'Jan',
     februari: 'Feb',
@@ -1422,10 +1630,10 @@ export function generateStylizedSignatureDataUrl(
 }
 
 /**
- * Generator Stempel Resmi Perusahaan (PNG Transparan) untuk PT Tas Grosir Import
+ * Generator Stempel Resmi Perusahaan (PNG Transparan) untuk Tas Grosir Import
  */
 export function generateOfficialCompanyStampDataUrl(
-  companyName: string = 'PT TAS GROSIR IMPORT'
+  companyName: string = 'TAS GROSIR IMPORT'
 ): string {
   if (typeof document === 'undefined') return '';
   const canvas = document.createElement('canvas');

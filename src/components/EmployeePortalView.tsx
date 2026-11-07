@@ -1786,7 +1786,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   Rincian Komponen Slip Gaji Bulan Ini
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Perhitungan resmi berdasarkan regulasi ketenagakerjaan dan kebijakan PT Tas Grosir Import
+                  Perhitungan resmi berdasarkan regulasi ketenagakerjaan dan kebijakan Tas Grosir Import
                 </p>
               </div>
               {currentPay && (
@@ -3225,7 +3225,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   <span>Riwayat Pengajuan Kasbon & Jadwal Cicilan Potong Gaji</span>
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Terhubung langsung secara real-time dengan Panel Kasbon Admin HR & Finance PT Tas Grosir Import.
+                  Terhubung langsung secara real-time dengan Panel Kasbon Admin HR & Finance Tas Grosir Import.
                 </p>
               </div>
               <button
@@ -3651,7 +3651,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 <h3 className="text-xl font-bold text-slate-900 mt-0.5">
                   {formatRupiah(myAssets.reduce((sum, a) => sum + (a.purchaseCost || 0), 0))}
                 </h3>
-                <p className="text-xs text-emerald-600 mt-0.5">Inventaris PT TGI</p>
+                <p className="text-xs text-emerald-600 mt-0.5">Inventaris Tas Grosir Import</p>
               </div>
             </div>
 
@@ -3782,7 +3782,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                             );
                           }
                           setReportedAssetNotice(
-                            `Laporan kendala inventaris ${asset.name} (${asset.assetCode}) telah diteruskan ke tim IT & HR PT Tas Grosir Import.`
+                            `Laporan kendala inventaris ${asset.name} (${asset.assetCode}) telah diteruskan ke tim IT & HR Tas Grosir Import.`
                           );
                           setTimeout(() => setReportedAssetNotice(null), 5000);
                         }}
@@ -3826,7 +3826,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   Rapor Penilaian Kinerja & Evaluasi KPI Pribadi
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Hasil penilaian berkala dari atasan/manajemen PT Tas Grosir Import beserta catatan feedback pembinaan dan insentif bonus.
+                  Hasil penilaian berkala dari atasan/manajemen Tas Grosir Import beserta catatan feedback pembinaan dan insentif bonus.
                 </p>
               </div>
 
@@ -4471,7 +4471,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                       </span>
                     </div>
                     <p className="text-[11px] text-slate-500 mt-0.5">
-                      Dikelola oleh Admin HRD PT Tas Grosir Import • Tersinkronisasi langsung dari menu Data Karyawan
+                      Dikelola oleh Admin HRD Tas Grosir Import • Tersinkronisasi langsung dari menu Data Karyawan
                     </p>
                   </div>
                 </div>

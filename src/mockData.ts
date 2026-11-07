@@ -170,7 +170,7 @@ export const initialAllowedGoogleAdmins: GoogleAdminAccount[] = [
   {
     id: 'gadmin-01',
     email: 'jpexakun7@gmail.com',
-    name: 'Administrator Utama (TGI)',
+    name: 'Administrator Utama (Tas Grosir Import)',
     role: 'Super Admin',
     avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=256&h=256&q=80',
     addedAt: '2024-01-15',
@@ -178,26 +178,24 @@ export const initialAllowedGoogleAdmins: GoogleAdminAccount[] = [
     phone: '0812-9988-7711',
     notes: 'Akun pengelola sistem utama (Master Admin)',
     department: 'Operasional',
-    accessPin: '2026',
   },
   {
     id: 'gadmin-02',
     email: 'hr.lupytamajuperkasa@gmail.com',
-    name: 'HR Admin PT Tas Grosir Import',
+    name: 'HR Admin Tas Grosir Import',
     role: 'HR & Payroll Admin',
     avatarUrl: 'https://images.unsplash.com/photo-1534528741923?auto=format&fit=crop&w=256&h=256&q=80',
     addedAt: '2026-10-20',
     status: 'active',
     phone: '0812-122333',
-    notes: 'Admin HR & Payroll PT Tas Grosir Import',
+    notes: 'Admin HR & Payroll Tas Grosir Import',
     department: 'Operasional',
-    accessPin: '2026',
   },
 ];
 
 export const initialCompanyConfig: CompanyConfig = {
-  companyName: 'PT Tas Grosir Import',
-  brandName: 'TGI Dashboard',
+  companyName: 'Tas Grosir Import',
+  brandName: 'Tas Grosir Import',
   address: 'Jl. Sumber Mas I Blok C No. 191, Tangerang, Banten, ID',
   phone: '(021) 5790-8800',
   npwpCompany: '01.345.678.9-012.000',
@@ -222,11 +220,8 @@ export const initialCompanyConfig: CompanyConfig = {
   workShifts: DEFAULT_WORK_SHIFTS,
   attendancePenaltyPolicy: DEFAULT_ATTENDANCE_PENALTY_POLICY,
   securitySettings: {
-    adminPin: '2026',
     requirePinForAdminMode: true,
-    webAccessPin: '2026',
     requirePinForWebAccess: true,
-    defaultEmployeePin: '1234',
   },
 };
 

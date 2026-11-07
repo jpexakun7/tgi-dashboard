@@ -544,7 +544,7 @@ export function exportPayrollToPDF(
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(148, 163, 184);
     doc.text(
-      `Dokumen Resmi PT Tas Grosir Import • Diunduh melalui TGI Dashboard Penggajian & HR`,
+      `Dokumen Resmi Tas Grosir Import • Diunduh melalui TGI Dashboard Penggajian & HR`,
       14,
       pageHeight - 6
     );

@@ -342,7 +342,7 @@ export function CashAdvanceView({
             </h1>
           </div>
           <p className="text-xs text-slate-500 mt-1">
-            Kelola persetujuan pinjaman kasbon darurat karyawan, otorisasi pencairan dana, dan sinkronisasi otomatis potongan cicilan ke modul Payroll PT Tas Grosir Import.
+            Kelola persetujuan pinjaman kasbon darurat karyawan, otorisasi pencairan dana, dan sinkronisasi otomatis potongan cicilan ke modul Payroll Tas Grosir Import.
           </p>
         </div>
 
@@ -749,7 +749,7 @@ export function CashAdvanceView({
                                 type="button"
                                 onClick={() => {
                                   const note =
-                                    'Permohonan kasbon Anda telah disetujui HRD PT Tas Grosir Import dan segera diproses pencairannya oleh tim Finance.';
+                                    'Permohonan kasbon Anda telah disetujui HRD Tas Grosir Import dan segera diproses pencairannya oleh tim Finance.';
                                   onApproveCashAdvance(adv.id, note);
                                   setAdminWaNote(note);
                                   setWaQuickPrompt({

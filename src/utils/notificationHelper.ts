@@ -8,7 +8,7 @@ import {
 } from '../types';
 import { formatRupiah, formatIndoDate, formatOvertimeMinutes } from './formatters';
 
-const DEFAULT_COMPANY_NAME = 'PT Tas Grosir Import';
+const DEFAULT_COMPANY_NAME = 'Tas Grosir Import';
 
 /**
  * Otomatis memformat nomor HP/WhatsApp karyawan ke format internasional Indonesia (628...)

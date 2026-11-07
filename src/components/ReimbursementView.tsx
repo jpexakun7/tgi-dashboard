@@ -837,7 +837,7 @@ export const ReimbursementView: React.FC<ReimbursementViewProps> = ({
                     Pengajuan Klaim Reimbursement Baru
                   </h3>
                   <p className="text-xs text-slate-500">
-                    Unggah struk atau kuitansi untuk diverifikasi oleh admin keuangan PT Tas Grosir Import.
+                    Unggah struk atau kuitansi untuk diverifikasi oleh admin keuangan Tas Grosir Import.
                   </p>
                 </div>
               </div>
