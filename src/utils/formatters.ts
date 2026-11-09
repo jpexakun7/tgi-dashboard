@@ -9,6 +9,8 @@ import {
   PayrollSignatoriesConfig,
   CompanyConfig,
   DecemberPPh21ReconciliationResult,
+  DailyWorkWageItem,
+  LiveStreamSalesRecord,
 } from '../types';
 
 export function formatRupiah(amount: number): string {
@@ -281,6 +283,390 @@ export function calculateDecemberPPh21Reconciliation(params: {
   };
 }
 
+// Standar Jam Kerja Harian Tas Grosir Import = 9 Jam / Hari
+export const STANDARD_WORK_HOURS_PER_DAY = 9;
+
+// Ambil Tarif Gaji Per Jam (hourly_rate) Karyawan (otomatis fallback ke dailySalary / 9 jam atau baseSalary / (25 hari × 9 jam))
+export function getEmployeeHourlyRate(
+  employee?: Partial<Employee> | null,
+  standardWorkHoursPerDay: number = STANDARD_WORK_HOURS_PER_DAY,
+  standardWorkingDays: number = 25
+): number {
+  if (!employee) return 0;
+  const hoursPerDay = Math.max(1, Number(standardWorkHoursPerDay) || STANDARD_WORK_HOURS_PER_DAY);
+  const explicitHourly = Number(employee.hourlyRate ?? employee.hourly_rate);
+  if (!isNaN(explicitHourly) && explicitHourly > 0) {
+    return Math.round(explicitHourly);
+  }
+  const explicitDaily = Number(employee.dailySalary ?? employee.daily_salary);
+  if (!isNaN(explicitDaily) && explicitDaily > 0) {
+    return Math.round(explicitDaily / hoursPerDay);
+  }
+  const divisorDays = Math.max(1, Math.round(standardWorkingDays || 25));
+  const monthlyBase = Number(employee.baseSalary) || 0;
+  return monthlyBase > 0 ? Math.round(monthlyBase / (divisorDays * hoursPerDay)) : 0;
+}
+
+// Ambil Tarif Gaji Per Hari (daily_salary = 9 Jam × Tarif Gaji Per Jam)
+export function getEmployeeDailySalary(
+  employee?: Partial<Employee> | null,
+  standardWorkingDays: number = 25,
+  standardWorkHoursPerDay: number = STANDARD_WORK_HOURS_PER_DAY
+): number {
+  if (!employee) return 0;
+  const hoursPerDay = Math.max(1, Number(standardWorkHoursPerDay) || STANDARD_WORK_HOURS_PER_DAY);
+  const explicitHourly = Number(employee.hourlyRate ?? employee.hourly_rate);
+  if (!isNaN(explicitHourly) && explicitHourly > 0) {
+    return Math.round(explicitHourly * hoursPerDay);
+  }
+  const explicitDaily = Number(employee.dailySalary ?? employee.daily_salary);
+  if (!isNaN(explicitDaily) && explicitDaily > 0) {
+    return Math.round(explicitDaily);
+  }
+  const divisor = Math.max(1, Math.round(standardWorkingDays || 25));
+  const monthlyBase = Number(employee.baseSalary) || 0;
+  return monthlyBase > 0 ? Math.round(monthlyBase / divisor) : 0;
+}
+
+export interface LiveSalesCommissionSummary {
+  isLiveStreamHost: boolean;
+  isCoHostLiveStream: boolean;
+  commissionPercentage: number;
+  coHostCommissionPercentage: number;
+  commissionPerPcs: number;
+  coHostCommissionPerPcs: number;
+  sessionsCount: number;
+  hostSessionsCount: number;
+  coHostSessionsCount: number;
+  totalDurationHours: number;
+  totalOmset: number;
+  hostOmset: number;
+  coHostOmset: number;
+  totalPcs: number;
+  hostPcs: number;
+  coHostPcs: number;
+  commissionFromPercentage: number;
+  commissionFromPcs: number;
+  hostCommissionAmount: number;
+  coHostCommissionAmount: number;
+  totalCommission: number;
+  commissionNotes: string;
+  notes: string;
+  records: LiveStreamSalesRecord[];
+  filteredLogs: LiveStreamSalesRecord[];
+}
+
+// Hitung Otomatis Insentif / Komisi Penjualan Host & Co-Host Live Streaming (TikTok Shop / Shopee Live)
+// Mendukung % Omset dan Tarif per Pcs (Rp/Pcs Tas Terjual) secara terpisah & fleksibel untuk Host maupun Co-Host
+export function calculateEmployeeLiveSalesCommission(
+  employee?: Partial<Employee> | null,
+  period?: string,
+  extraLogs?: LiveStreamSalesRecord[]
+): LiveSalesCommissionSummary {
+  if (!employee) {
+    return {
+      isLiveStreamHost: false,
+      isCoHostLiveStream: false,
+      commissionPercentage: 0,
+      coHostCommissionPercentage: 0,
+      commissionPerPcs: 0,
+      coHostCommissionPerPcs: 0,
+      sessionsCount: 0,
+      hostSessionsCount: 0,
+      coHostSessionsCount: 0,
+      totalDurationHours: 0,
+      totalOmset: 0,
+      hostOmset: 0,
+      coHostOmset: 0,
+      totalPcs: 0,
+      hostPcs: 0,
+      coHostPcs: 0,
+      commissionFromPercentage: 0,
+      commissionFromPcs: 0,
+      hostCommissionAmount: 0,
+      coHostCommissionAmount: 0,
+      totalCommission: 0,
+      commissionNotes: '',
+      notes: '',
+      records: [],
+      filteredLogs: [],
+    };
+  }
+
+  const commissionPercentage = Math.max(
+    0,
+    Number(employee.salesCommissionPercentage ?? employee.host_commission_pct) || 0
+  );
+  const coHostCommissionPercentage = Math.max(
+    0,
+    Number(employee.coHostCommissionPercentage ?? employee.co_host_commission_pct) || 0
+  );
+  const commissionPerPcs = Math.max(
+    0,
+    Number(employee.salesCommissionPerPcs ?? employee.host_commission_per_pcs) || 0
+  );
+  const coHostCommissionPerPcs = Math.max(
+    0,
+    Number(employee.coHostCommissionPerPcs ?? employee.co_host_commission_per_pcs) || 0
+  );
+  const roleIsCoHost = /co[\s-]*host/i.test(employee.role || '');
+
+  const rawLogs = [
+    ...(Array.isArray(employee.liveStreamSalesLogs) ? employee.liveStreamSalesLogs : []),
+    ...(Array.isArray(extraLogs)
+      ? extraLogs.filter((l) => (l.employeeId || l.employee_id) === employee.id)
+      : []),
+  ];
+
+  // Deduplicate by id
+  const uniqueMap = new Map<string, LiveStreamSalesRecord>();
+  for (const log of rawLogs) {
+    if (!log || !log.id) continue;
+    uniqueMap.set(log.id, log);
+  }
+  const allLogs = Array.from(uniqueMap.values()).filter((l) => l.status !== 'Ditolak');
+
+  // Filter by period if logs exist for that period; otherwise if logs don't have period mismatch, include them
+  const strictPeriodLogs = period
+    ? allLogs.filter(
+        (l) =>
+          !l?.period ||
+          String(l.period).trim().toLowerCase() === String(period).trim().toLowerCase()
+      )
+    : allLogs;
+  const matchingLogs = strictPeriodLogs.length > 0 ? strictPeriodLogs : allLogs;
+
+  let totalOmset = 0;
+  let hostOmset = 0;
+  let coHostOmset = 0;
+  let totalPcs = 0;
+  let hostPcs = 0;
+  let coHostPcs = 0;
+  let totalDurationHours = 0;
+  let commissionFromPercentage = 0;
+  let commissionFromPcs = 0;
+  let hostCommissionAmount = 0;
+  let coHostCommissionAmount = 0;
+  let hostSessionsCount = 0;
+  let coHostSessionsCount = 0;
+  let totalCommission = 0;
+
+  const isEmpHost = Boolean(employee.isLiveStreamHost || employee.is_host);
+  const isEmpCoHost = Boolean(employee.isCoHostLiveStream || employee.is_co_host);
+
+  const defaultSessionRole: 'Host' | 'Co-Host' =
+    (isEmpCoHost ||
+      coHostCommissionPercentage > 0 ||
+      coHostCommissionPerPcs > 0 ||
+      roleIsCoHost) &&
+    !isEmpHost
+      ? 'Co-Host'
+      : 'Host';
+
+  const updatedRecords = matchingLogs.map((rec) => {
+    const omset = Math.max(0, Number(rec.omsetAmount ?? rec.omset) || 0);
+    const pcs = Math.max(0, Math.round(Number(rec.pcsSold ?? rec.pcs_sold) || 0));
+    const hrs = Math.max(0, Number(rec.durationHours) || 0);
+    const resolvedRole: 'Host' | 'Co-Host' =
+      rec.sessionRole ||
+      (rec.role_type === 'co_host'
+        ? 'Co-Host'
+        : rec.role_type === 'host'
+        ? 'Host'
+        : defaultSessionRole);
+
+    const snapPct = Math.max(
+      0,
+      Number(rec.commissionPercentageSnapshot ?? rec.commission_pct_used) || 0
+    );
+    const snapPerPcs = Math.max(
+      0,
+      Number(rec.commissionPerPcsSnapshot ?? rec.commission_per_pcs_used) || 0
+    );
+
+    const effectivePct =
+      snapPct > 0
+        ? snapPct
+        : resolvedRole === 'Co-Host'
+        ? coHostCommissionPercentage > 0
+          ? coHostCommissionPercentage
+          : commissionPercentage
+        : commissionPercentage > 0
+        ? commissionPercentage
+        : coHostCommissionPercentage > 0 && !isEmpHost
+        ? coHostCommissionPercentage
+        : 0;
+
+    const effectivePerPcs =
+      snapPerPcs > 0
+        ? snapPerPcs
+        : resolvedRole === 'Co-Host'
+        ? coHostCommissionPerPcs > 0
+          ? coHostCommissionPerPcs
+          : commissionPerPcs
+        : commissionPerPcs > 0
+        ? commissionPerPcs
+        : coHostCommissionPerPcs > 0 && !isEmpHost
+        ? coHostCommissionPerPcs
+        : 0;
+
+    const rowPctComm = Math.round((omset * effectivePct) / 100);
+    const rowPcsComm = Math.round(pcs * effectivePerPcs);
+
+    const calcComm =
+      effectivePct > 0 || effectivePerPcs > 0
+        ? rowPctComm + rowPcsComm
+        : Math.max(
+            0,
+            Math.round(Number(rec.calculatedCommission ?? rec.total_commission) || 0)
+          );
+
+    totalOmset += omset;
+    totalPcs += pcs;
+    totalDurationHours = Number((totalDurationHours + hrs).toFixed(1));
+    commissionFromPercentage += rowPctComm;
+    commissionFromPcs += rowPcsComm;
+    totalCommission += calcComm;
+
+    if (resolvedRole === 'Co-Host') {
+      coHostSessionsCount += 1;
+      coHostOmset += omset;
+      coHostPcs += pcs;
+      coHostCommissionAmount += calcComm;
+    } else {
+      hostSessionsCount += 1;
+      hostOmset += omset;
+      hostPcs += pcs;
+      hostCommissionAmount += calcComm;
+    }
+
+    const resolvedDate = rec.date || rec.session_date || new Date().toISOString().split('T')[0];
+
+    return {
+      ...rec,
+      date: resolvedDate,
+      session_date: resolvedDate,
+      sessionRole: resolvedRole,
+      role_type: (resolvedRole === 'Co-Host' ? 'co_host' : 'host') as 'host' | 'co_host',
+      omsetAmount: omset,
+      omset,
+      pcsSold: pcs,
+      pcs_sold: pcs,
+      commissionPercentageSnapshot: effectivePct,
+      commission_pct_used: effectivePct,
+      commissionPerPcsSnapshot: effectivePerPcs,
+      commission_per_pcs_used: effectivePerPcs,
+      calculatedCommission: calcComm,
+      total_commission: calcComm,
+    };
+  });
+
+  const isCoHostLiveStream = Boolean(
+    employee.isCoHostLiveStream ||
+      coHostCommissionPercentage > 0 ||
+      coHostCommissionPerPcs > 0 ||
+      roleIsCoHost ||
+      coHostSessionsCount > 0
+  );
+
+  const isLiveStreamHost = Boolean(
+    employee.isLiveStreamHost ||
+      commissionPercentage > 0 ||
+      commissionPerPcs > 0 ||
+      hostSessionsCount > 0
+  );
+
+  const noteParts: string[] = [];
+  if (hostSessionsCount > 0) {
+    const hostDetails: string[] = [];
+    if (hostOmset > 0) {
+      hostDetails.push(
+        `Omset ${formatRupiah(hostOmset)}${commissionPercentage > 0 ? ` × ${commissionPercentage}%` : ''}`
+      );
+    }
+    if (hostPcs > 0) {
+      hostDetails.push(
+        `${hostPcs.toLocaleString('id-ID')} Tas${
+          commissionPerPcs > 0 ? ` × ${formatRupiah(commissionPerPcs)}/pcs` : ''
+        }`
+      );
+    }
+    noteParts.push(`Host ${hostSessionsCount} Sesi (${hostDetails.join(' + ')})`);
+  }
+  if (coHostSessionsCount > 0) {
+    const coHostDetails: string[] = [];
+    if (coHostOmset > 0) {
+      coHostDetails.push(
+        `Omset ${formatRupiah(coHostOmset)}${
+          coHostCommissionPercentage > 0 ? ` × ${coHostCommissionPercentage}%` : ''
+        }`
+      );
+    }
+    if (coHostPcs > 0) {
+      const coPcsRate = coHostCommissionPerPcs > 0 ? coHostCommissionPerPcs : commissionPerPcs;
+      coHostDetails.push(
+        `${coHostPcs.toLocaleString('id-ID')} Tas${
+          coPcsRate > 0 ? ` × ${formatRupiah(coPcsRate)}/pcs` : ''
+        }`
+      );
+    }
+    noteParts.push(`Co-Host ${coHostSessionsCount} Sesi (${coHostDetails.join(' + ')})`);
+  }
+
+  const schemeParts: string[] = [];
+  if (isLiveStreamHost && (commissionPercentage > 0 || commissionPerPcs > 0)) {
+    schemeParts.push(
+      `Host: ${commissionPercentage > 0 ? `${commissionPercentage}% Omset` : ''}${
+        commissionPercentage > 0 && commissionPerPcs > 0 ? ' + ' : ''
+      }${commissionPerPcs > 0 ? `${formatRupiah(commissionPerPcs)}/pcs` : ''}`
+    );
+  }
+  if (isCoHostLiveStream && (coHostCommissionPercentage > 0 || coHostCommissionPerPcs > 0)) {
+    schemeParts.push(
+      `Co-Host: ${coHostCommissionPercentage > 0 ? `${coHostCommissionPercentage}% Omset` : ''}${
+        coHostCommissionPercentage > 0 && coHostCommissionPerPcs > 0 ? ' + ' : ''
+      }${coHostCommissionPerPcs > 0 ? `${formatRupiah(coHostCommissionPerPcs)}/pcs` : ''}`
+    );
+  }
+
+  const commissionNotes =
+    updatedRecords.length > 0
+      ? noteParts.join(' • ')
+      : schemeParts.length > 0
+      ? `Skema Live (${schemeParts.join(' | ')})`
+      : '';
+
+  const sortedRecords = updatedRecords.sort((a, b) => b.date.localeCompare(a.date));
+
+  return {
+    isLiveStreamHost,
+    isCoHostLiveStream,
+    commissionPercentage,
+    coHostCommissionPercentage,
+    commissionPerPcs,
+    coHostCommissionPerPcs,
+    sessionsCount: sortedRecords.length,
+    hostSessionsCount,
+    coHostSessionsCount,
+    totalDurationHours,
+    totalOmset,
+    hostOmset,
+    coHostOmset,
+    totalPcs,
+    hostPcs,
+    coHostPcs,
+    commissionFromPercentage,
+    commissionFromPcs,
+    hostCommissionAmount,
+    coHostCommissionAmount,
+    totalCommission,
+    commissionNotes,
+    notes: commissionNotes,
+    records: sortedRecords,
+    filteredLogs: sortedRecords,
+  };
+}
+
 // Hitung Tarif Dasar Upah Lembur Per Menit (1x = (Gaji Pokok + Tunjangan Tetap) / 173 / 60)
 export function getBaseOvertimeRatePerMinute(
   employee?: Partial<Employee> | null,
@@ -289,7 +675,8 @@ export function getBaseOvertimeRatePerMinute(
   if (customBaseRatePerMinute && customBaseRatePerMinute > 0) {
     return customBaseRatePerMinute;
   }
-  const baseSalary = Number(employee?.baseSalary) || 5000000;
+  const dailyRate = getEmployeeDailySalary(employee, 25, STANDARD_WORK_HOURS_PER_DAY);
+  const baseSalary = Number(employee?.baseSalary) || (dailyRate > 0 ? dailyRate * 25 : 5000000);
   const position = Number(employee?.allowances?.position) || 0;
   return (baseSalary + position) / 173 / 60;
 }
@@ -602,9 +989,7 @@ export function evaluateAttendanceAgainstShift(
       actualEnd += 24 * 60;
     }
     const rawDurationMins = Math.max(0, actualEnd - actualStart);
-    const netDurationMins =
-      rawDurationMins > 240 ? Math.max(0, rawDurationMins - breakMins) : rawDurationMins;
-    workHours = Number((netDurationMins / 60).toFixed(1));
+    workHours = Number((rawDurationMins / 60).toFixed(2));
 
     // Check early leave against scheduledEnd
     let normalizedOut = outH * 60 + outM;
@@ -615,11 +1000,8 @@ export function evaluateAttendanceAgainstShift(
       earlyLeaveMinutes = Math.max(0, scheduledEnd - normalizedOut);
     }
   } else {
-    // Default scheduled work hours if checkOut not yet filled
-    const scheduledRaw = Math.max(0, scheduledEnd - scheduledStart);
-    const scheduledNet =
-      scheduledRaw > 240 ? Math.max(0, scheduledRaw - breakMins) : scheduledRaw;
-    workHours = Number((scheduledNet / 60).toFixed(1));
+    // Default scheduled work hours if checkOut not yet filled (Standar 9 Jam Kerja / Hari)
+    workHours = STANDARD_WORK_HOURS_PER_DAY;
   }
 
   const status: 'Hadir Tepat Waktu' | 'Terlambat' =
@@ -802,6 +1184,10 @@ export function getTodayDeduplicatedAttendances(
 
 export interface EmployeeAttendancePenaltySummary {
   employeeId: string;
+  hourlyRate: number; // Tarif Gaji Per Jam (hourly_rate)
+  standardWorkHoursPerDay: number; // Standar 9 jam / hari
+  totalActualWorkHours: number; // Akumulasi jam kerja riil seluruh hari masuk
+  dailyWorkBreakdown: DailyWorkWageItem[]; // Rincian gaji harian = Jam Kerja Aktual Hari Tersebut × Tarif Per Jam
   presentDaysCount: number;
   onTimeDaysCount: number;
   lateFrequency: number; // Berapa kali/hari terlambat melewati toleransi
@@ -810,12 +1196,12 @@ export interface EmployeeAttendancePenaltySummary {
   alphaDaysCount: number; // Jumlah hari Alpha / Mangkir
   alphaPenaltyAmount: number; // Nominal potongan Alpha (Rp)
   sickOrLeaveDaysCount: number; // Jumlah hari Sakit / Izin / Cuti
-  totalDeductionAmount: number; // Total gabungan (latePenaltyAmount + alphaPenaltyAmount)
-  deductionNotes: string; // Contoh: "Potongan Terlambat 4x / 210 mnt: -Rp 100.000"
+  totalDeductionAmount: number; // Total gabungan denda keterlambatan
+  deductionNotes: string;
   deduplicatedRecords: AttendanceRecord[];
 }
 
-// Hitung otomatis Frekuensi Terlambat, Total Menit Terlambat, Alpha, dan Nominal Potongan per Karyawan
+// Hitung otomatis Akumulasi Jam Kerja Riil, Gaji Harian Per Jam, Frekuensi Terlambat, Alpha, dan Nominal Potongan per Karyawan
 export function calculateEmployeeAttendancePenalty(
   employee: Employee,
   attendances: AttendanceRecord[],
@@ -826,25 +1212,71 @@ export function calculateEmployeeAttendancePenalty(
   const empAttendances = (attendances || []).filter((a) => a.employeeId === employee.id);
   const deduped = deduplicateDailyAttendances(empAttendances, [employee], shifts, policy);
 
+  const divisor = Math.max(1, policy.alphaWorkingDaysDivisor || 25);
+  const standardWorkHoursPerDay = STANDARD_WORK_HOURS_PER_DAY; // 9 jam / hari
+  const hourlyRate = getEmployeeHourlyRate(employee, standardWorkHoursPerDay, divisor);
+  const dailySalary = Math.round(hourlyRate * standardWorkHoursPerDay);
+
   let presentDaysCount = 0;
   let onTimeDaysCount = 0;
+  let totalActualWorkHours = 0;
   let lateFrequency = 0;
   let totalLateMinutes = 0;
   let alphaDaysCount = 0;
   let sickOrLeaveDaysCount = 0;
+  const dailyWorkBreakdown: DailyWorkWageItem[] = [];
 
   for (const rec of deduped) {
     if (rec.status === 'Alpa') {
+      // Alpha / Tanpa Keterangan: 0 jam kerja aktual
       alphaDaysCount += 1;
+      dailyWorkBreakdown.push({
+        date: rec.date,
+        checkIn: rec.checkIn || '-',
+        checkOut: rec.checkOut || '-',
+        workHours: 0,
+        dailyWage: 0,
+        status: rec.status,
+      });
     } else if (rec.status === 'Sakit' || rec.status === 'Izin' || rec.status === 'Cuti') {
       sickOrLeaveDaysCount += 1;
+      dailyWorkBreakdown.push({
+        date: rec.date,
+        checkIn: rec.checkIn || '-',
+        checkOut: rec.checkOut || '-',
+        workHours: 0,
+        dailyWage: 0,
+        status: rec.status,
+      });
     } else if (rec.status === 'Terlambat' || rec.lateMinutes > 0) {
       presentDaysCount += 1;
       lateFrequency += 1;
       totalLateMinutes += Math.max(0, Math.round(rec.lateMinutes || 0));
+      const actualHours =
+        rec.workHours && rec.workHours > 0 ? Number(rec.workHours) : standardWorkHoursPerDay;
+      totalActualWorkHours = Number((totalActualWorkHours + actualHours).toFixed(2));
+      dailyWorkBreakdown.push({
+        date: rec.date,
+        checkIn: rec.checkIn || '-',
+        checkOut: rec.checkOut || '-',
+        workHours: actualHours,
+        dailyWage: Math.round(actualHours * hourlyRate),
+        status: rec.status,
+      });
     } else if (rec.status === 'Hadir Tepat Waktu') {
       presentDaysCount += 1;
       onTimeDaysCount += 1;
+      const actualHours =
+        rec.workHours && rec.workHours > 0 ? Number(rec.workHours) : standardWorkHoursPerDay;
+      totalActualWorkHours = Number((totalActualWorkHours + actualHours).toFixed(2));
+      dailyWorkBreakdown.push({
+        date: rec.date,
+        checkIn: rec.checkIn || '-',
+        checkOut: rec.checkOut || '-',
+        workHours: actualHours,
+        dailyWage: Math.round(actualHours * hourlyRate),
+        status: rec.status,
+      });
     }
   }
 
@@ -861,7 +1293,6 @@ export function calculateEmployeeAttendancePenalty(
       } else if (policy.latePenaltyScheme === 'daily_allowance_cut') {
         const mealAndTransport =
           (Number(employee.allowances?.meal) || 0) + (Number(employee.allowances?.transport) || 0);
-        const divisor = Math.max(1, policy.alphaWorkingDaysDivisor || 25);
         const dailyAllowance =
           mealAndTransport > 0 ? Math.round(mealAndTransport / divisor) : 50000;
         const cutPerIncident = Math.round(
@@ -871,37 +1302,48 @@ export function calculateEmployeeAttendancePenalty(
       }
     }
 
-    // 2. Kalkulasi Potongan Alpha / Mangkir sesuai Skema Admin
+    // 2. Kalkulasi Nilai Hari Alpha / Tanpa Keterangan (9 Jam × Tarif Per Jam)
     if (alphaDaysCount > 0) {
       if (policy.alphaPenaltyScheme === 'proportional_25') {
-        const divisor = Math.max(1, policy.alphaWorkingDaysDivisor || 25);
-        const perDayBase = Math.round((Number(employee.baseSalary) || 0) / divisor);
-        alphaPenaltyAmount = Math.round(alphaDaysCount * perDayBase);
+        alphaPenaltyAmount = Math.round(alphaDaysCount * dailySalary);
       } else {
-        alphaPenaltyAmount = Math.round(alphaDaysCount * policy.fixedAlphaPenaltyAmount);
+        alphaPenaltyAmount = Math.round(alphaDaysCount * (dailySalary || policy.fixedAlphaPenaltyAmount));
       }
     }
+  } else if (alphaDaysCount > 0) {
+    alphaPenaltyAmount = Math.round(alphaDaysCount * dailySalary);
   }
 
-  const totalDeductionAmount = latePenaltyAmount + alphaPenaltyAmount;
+  // Karena Gaji Pokok dihitung real-time = Akumulasi Jam Kerja Riil × Tarif Gaji Per Jam,
+  // hari Alpha (0 jam kerja) sudah otomatis tidak dibayar.
+  // Denda tambahan yang memotong dari Gaji Kotor adalah denda keterlambatan (latePenaltyAmount).
+  const totalDeductionAmount = latePenaltyAmount;
 
-  let deductionNotes = 'Disiplin Penuh (0x Terlambat • 0 Alpha)';
+  let deductionNotes = `Akumulasi ${totalActualWorkHours} Jam Kerja (${presentDaysCount} Hari) × ${formatRupiah(
+    hourlyRate
+  )}/jam`;
   if (lateFrequency > 0 && alphaDaysCount > 0) {
-    deductionNotes = `Potongan Terlambat ${lateFrequency}x / ${totalLateMinutes} mnt (-${formatRupiah(
+    deductionNotes = `Terlambat ${lateFrequency}x / ${totalLateMinutes} mnt (-${formatRupiah(
       latePenaltyAmount
-    )}) & Alpha ${alphaDaysCount}x (-${formatRupiah(alphaPenaltyAmount)})`;
+    )}) • Alpha ${alphaDaysCount} Hari (0 Jam) otomatis dipotong (-${formatRupiah(
+      alphaPenaltyAmount
+    )})`;
   } else if (lateFrequency > 0) {
     deductionNotes = `Potongan Terlambat ${lateFrequency}x / ${totalLateMinutes} mnt: -${formatRupiah(
       latePenaltyAmount
     )}`;
   } else if (alphaDaysCount > 0) {
-    deductionNotes = `Potongan Alpha / Mangkir ${alphaDaysCount}x: -${formatRupiah(
+    deductionNotes = `Alpha ${alphaDaysCount} Hari (0 Jam Kerja) otomatis dipotong/diabaikan (-${formatRupiah(
       alphaPenaltyAmount
-    )}`;
+    )})`;
   }
 
   return {
     employeeId: employee.id,
+    hourlyRate,
+    standardWorkHoursPerDay,
+    totalActualWorkHours,
+    dailyWorkBreakdown,
     presentDaysCount,
     onTimeDaysCount,
     lateFrequency,
@@ -917,6 +1359,12 @@ export function calculateEmployeeAttendancePenalty(
 }
 
 export interface PayrollAttendancePenaltyMeta {
+  hourlyRate?: number;
+  totalActualWorkHours?: number;
+  standardWorkHoursPerDay?: number;
+  dailyWorkBreakdown?: DailyWorkWageItem[];
+  presentDaysCount?: number;
+  dailySalary?: number;
   lateFrequency?: number;
   totalLateMinutes?: number;
   latePenaltyAmount?: number;
@@ -932,7 +1380,7 @@ export interface PayrollAttendancePenaltyMeta {
   penaltyPolicy?: Partial<AttendancePenaltyPolicy> | null;
 }
 
-// Hitung Payroll Karyawan Lengkap sesuai Regulasi Indonesia (Lembur dihitung Per Menit & Potongan Terlambat/Absen Otomatis)
+// Hitung Payroll Karyawan Lengkap berbasis Gaji Per Jam (Total Gaji Pokok = Akumulasi Jam Kerja Riil × Tarif Gaji Per Jam)
 export function calculatePayroll(
   employee: Employee,
   period: string,
@@ -943,7 +1391,32 @@ export function calculatePayroll(
   cashAdvanceNotes?: string,
   attendancePenaltyMeta?: PayrollAttendancePenaltyMeta
 ): PayrollRecord {
-  const baseSalary = Number(employee.baseSalary) || 0;
+  const policy = getAttendancePenaltyPolicy(attendancePenaltyMeta?.penaltyPolicy);
+  const standardWorkingDays = Math.max(1, policy.alphaWorkingDaysDivisor || 25);
+  const standardWorkHoursPerDay =
+    attendancePenaltyMeta?.standardWorkHoursPerDay || STANDARD_WORK_HOURS_PER_DAY; // 9 jam / hari
+
+  const hourlyRate =
+    attendancePenaltyMeta?.hourlyRate !== undefined && attendancePenaltyMeta.hourlyRate > 0
+      ? Math.round(attendancePenaltyMeta.hourlyRate)
+      : getEmployeeHourlyRate(employee, standardWorkHoursPerDay, standardWorkingDays);
+
+  const dailySalary = Math.round(hourlyRate * standardWorkHoursPerDay);
+
+  const resolvedAlphaDays = Math.max(0, Math.round(attendancePenaltyMeta?.alphaDaysCount || 0));
+  const hasExplicitPresentDays = attendancePenaltyMeta?.presentDaysCount !== undefined;
+  const resolvedPresentDays = hasExplicitPresentDays
+    ? Math.max(0, Math.round(attendancePenaltyMeta!.presentDaysCount!))
+    : Math.max(0, standardWorkingDays - resolvedAlphaDays);
+
+  const resolvedActualWorkHours =
+    attendancePenaltyMeta?.totalActualWorkHours !== undefined
+      ? Math.max(0, Number(attendancePenaltyMeta.totalActualWorkHours))
+      : Number((resolvedPresentDays * standardWorkHoursPerDay).toFixed(2));
+
+  // Kalkulasi Real-Time Gaji Pokok Bulanan = Akumulasi Jam Kerja Riil Seluruh Hari Masuk × Tarif Gaji Per Jam
+  const baseSalary = Math.round(resolvedActualWorkHours * hourlyRate);
+
   const allowances = employee.allowances || {
     position: 0,
     transport: 0,
@@ -962,11 +1435,21 @@ export function calculatePayroll(
   const overtimeRatePerMinute = otBreakdown.firstHourRatePerMinute;
   const overtimePay = otBreakdown.totalOvertimePay;
 
+  // Hitungan Otomatis Insentif / Komisi Penjualan Host Live Streaming (TikTok Shop / Shopee Live)
+  const liveSalesSummary = calculateEmployeeLiveSalesCommission(employee, period);
+  const salesCommission = liveSalesSummary.totalCommission;
+
   const totalGrossSalary =
-    baseSalary + position + transport + meal + communication + overtimePay + bonus;
+    baseSalary +
+    position +
+    transport +
+    meal +
+    communication +
+    overtimePay +
+    bonus +
+    salesCommission;
 
   // Denda Keterlambatan & Potongan Absen (Otomatis dari Rekap Presensi atau Parameter)
-  const policy = getAttendancePenaltyPolicy(attendancePenaltyMeta?.penaltyPolicy);
   const resolvedTotalLateMins =
     attendancePenaltyMeta?.totalLateMinutes !== undefined
       ? Math.max(0, Math.round(attendancePenaltyMeta.totalLateMinutes))
@@ -977,10 +1460,9 @@ export function calculatePayroll(
       : resolvedTotalLateMins > policy.gracePeriodMinutes
       ? 1
       : 0;
-  const resolvedAlphaDays = Math.max(0, Math.round(attendancePenaltyMeta?.alphaDaysCount || 0));
 
   let latePenaltyAmount = 0;
-  let alphaPenaltyAmount = 0;
+  let alphaPenaltyAmount = Math.round(resolvedAlphaDays * dailySalary);
   let lateDeduction = 0;
 
   if (attendancePenaltyMeta?.customLateDeduction !== undefined) {
@@ -989,7 +1471,10 @@ export function calculatePayroll(
       attendancePenaltyMeta.latePenaltyAmount !== undefined
         ? attendancePenaltyMeta.latePenaltyAmount
         : lateDeduction;
-    alphaPenaltyAmount = attendancePenaltyMeta.alphaPenaltyAmount || 0;
+    alphaPenaltyAmount =
+      attendancePenaltyMeta.alphaPenaltyAmount !== undefined
+        ? attendancePenaltyMeta.alphaPenaltyAmount
+        : Math.round(resolvedAlphaDays * dailySalary);
   } else if (policy.enabled) {
     if (resolvedLateFreq > 0 && resolvedTotalLateMins > 0) {
       if (policy.latePenaltyScheme === 'flat_per_incident') {
@@ -1006,15 +1491,12 @@ export function calculatePayroll(
     }
 
     if (resolvedAlphaDays > 0) {
-      if (policy.alphaPenaltyScheme === 'proportional_25') {
-        const divisor = Math.max(1, policy.alphaWorkingDaysDivisor || 25);
-        alphaPenaltyAmount = Math.round(resolvedAlphaDays * (baseSalary / divisor));
-      } else {
-        alphaPenaltyAmount = Math.round(resolvedAlphaDays * policy.fixedAlphaPenaltyAmount);
-      }
+      alphaPenaltyAmount = Math.round(resolvedAlphaDays * dailySalary);
     }
 
-    lateDeduction = latePenaltyAmount + alphaPenaltyAmount;
+    // Alpha sudah otomatis dikurangi melalui jam kerja riil (0 jam pada hari Alpha),
+    // sehingga lateDeduction hanya mengambil denda keterlambatan agar tidak terpotong ganda.
+    lateDeduction = latePenaltyAmount;
   }
 
   const originalLateDeduction =
@@ -1027,7 +1509,6 @@ export function calculatePayroll(
   if (isLateFeeWaived) {
     lateDeduction = 0;
     latePenaltyAmount = 0;
-    alphaPenaltyAmount = 0;
   }
 
   let attendanceDeductionNotes = attendancePenaltyMeta?.attendanceDeductionNotes;
@@ -1040,17 +1521,23 @@ export function calculatePayroll(
         : `Dispensasi Denda Absensi Aktif (${waiverReason || 'Tugas Luar / Kebijakan HR'}): Rp 0`;
   } else if (!attendanceDeductionNotes) {
     if (resolvedLateFreq > 0 && resolvedAlphaDays > 0) {
-      attendanceDeductionNotes = `Potongan Terlambat ${resolvedLateFreq}x / ${resolvedTotalLateMins} mnt (-${formatRupiah(
+      attendanceDeductionNotes = `Terlambat ${resolvedLateFreq}x / ${resolvedTotalLateMins} mnt (-${formatRupiah(
         latePenaltyAmount
-      )}) & Alpha ${resolvedAlphaDays}x (-${formatRupiah(alphaPenaltyAmount)})`;
+      )}) • Alpha ${resolvedAlphaDays} Hari (0 Jam) dipotong (-${formatRupiah(
+        alphaPenaltyAmount
+      )})`;
     } else if (resolvedLateFreq > 0 && lateDeduction > 0) {
       attendanceDeductionNotes = `Potongan Terlambat ${resolvedLateFreq}x / ${resolvedTotalLateMins} mnt: -${formatRupiah(
         lateDeduction
       )}`;
-    } else if (resolvedAlphaDays > 0 && lateDeduction > 0) {
-      attendanceDeductionNotes = `Potongan Alpha / Mangkir ${resolvedAlphaDays}x: -${formatRupiah(
+    } else if (resolvedAlphaDays > 0) {
+      attendanceDeductionNotes = `Alpha ${resolvedAlphaDays} Hari (0 Jam Kerja) otomatis dipotong/diabaikan (-${formatRupiah(
         alphaPenaltyAmount
-      )}`;
+      )})`;
+    } else {
+      attendanceDeductionNotes = `Gaji Per Jam Real-Time: ${resolvedActualWorkHours} Jam (${resolvedPresentDays} Hari) × ${formatRupiah(
+        hourlyRate
+      )}/jam`;
     }
   }
 
@@ -1115,6 +1602,13 @@ export function calculatePayroll(
     employeeId: employee.id,
     period,
     createdAt: new Date().toISOString(),
+    hourlyRate,
+    totalActualWorkHours: resolvedActualWorkHours,
+    standardWorkHoursPerDay,
+    dailyWorkBreakdown: attendancePenaltyMeta?.dailyWorkBreakdown || [],
+    dailySalary,
+    presentDaysCount: resolvedPresentDays,
+    standardWorkingDays,
     baseSalary,
     allowancePosition: position,
     allowanceTransport: transport,
@@ -1128,6 +1622,16 @@ export function calculatePayroll(
     overtimeFirstHourPay: otBreakdown.firstHourPay,
     overtimeSubsequentPay: otBreakdown.subsequentPay,
     bonus,
+    salesCommission,
+    totalLiveSalesOmset: liveSalesSummary.totalOmset,
+    totalLiveSalesPcs: liveSalesSummary.totalPcs,
+    liveSalesSessionsCount: liveSalesSummary.sessionsCount,
+    salesCommissionPercentage: liveSalesSummary.commissionPercentage,
+    coHostCommissionPercentage: liveSalesSummary.coHostCommissionPercentage,
+    coHostCommissionPerPcs: liveSalesSummary.coHostCommissionPerPcs,
+    coHostCommissionAmount: liveSalesSummary.coHostCommissionAmount,
+    salesCommissionPerPcs: liveSalesSummary.commissionPerPcs,
+    salesCommissionNotes: liveSalesSummary.commissionNotes,
     totalGrossSalary,
     employerBpjsTaxableAllowance,
     taxableGrossSalary,

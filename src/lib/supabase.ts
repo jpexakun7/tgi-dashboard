@@ -104,6 +104,8 @@ CREATE POLICY "No Direct Client Access to Credentials"
   WITH CHECK (false);
 
 ALTER TABLE public.employees ADD COLUMN IF NOT EXISTS access_pin_hash TEXT;
+ALTER TABLE public.employees ADD COLUMN IF NOT EXISTS daily_salary NUMERIC NOT NULL DEFAULT 0;
+ALTER TABLE public.employees ADD COLUMN IF NOT EXISTS hourly_rate NUMERIC NOT NULL DEFAULT 0;
 
 UPDATE public.employees
 SET
@@ -344,6 +346,7 @@ CREATE TABLE IF NOT EXISTS employees (
   employment_status TEXT NOT NULL DEFAULT 'PKWT (Kontrak)',
   join_date DATE NOT NULL DEFAULT CURRENT_DATE,
   base_salary NUMERIC NOT NULL DEFAULT 0,
+  daily_salary NUMERIC NOT NULL DEFAULT 0,
   allowances JSONB NOT NULL DEFAULT '{"position":0,"transport":0,"meal":0,"communication":0}'::jsonb,
   bank_name TEXT NOT NULL DEFAULT 'BCA',
   bank_account_number TEXT NOT NULL DEFAULT '',

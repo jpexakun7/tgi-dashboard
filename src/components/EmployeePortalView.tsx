@@ -55,6 +55,7 @@ import {
   Trash2,
   RefreshCw,
   Image as ImageIcon,
+  Video,
 } from 'lucide-react';
 import {
   Employee,
@@ -90,12 +91,21 @@ import {
   formatNpwpInput,
   getNpwpStatusInfo,
   getContractValidityInfo,
+  getEmployeeDailySalary,
+  getEmployeeHourlyRate,
+  STANDARD_WORK_HOURS_PER_DAY,
+  calculateEmployeeLiveSalesCommission,
 } from '../utils/formatters';
 import { formatWhatsAppPhone } from '../utils/notificationHelper';
-import { getEmployeeEffectivePin } from '../services/supabaseService';
+import {
+  getEmployeeEffectivePin,
+  fetchEmployeeByIdFromSupabase,
+  fetchLivestreamSessionsFromSupabase,
+} from '../services/supabaseService';
 import { supabase } from '../lib/supabase';
 import { validateImageFile, compressImage, compressVideoFrame } from '../utils/imageUtils';
 import { LiveFaceGpsAttendanceScanner } from './LiveFaceGpsAttendanceScanner';
+import { LiveStreamSalesRecord } from '../types';
 
 interface EmployeePortalViewProps {
   currentEmployee: Employee;
@@ -117,7 +127,7 @@ interface EmployeePortalViewProps {
   onSelectEmployee: (empId: string) => void;
   onReportAssetIssue?: (assetId: string, notes: string) => void;
   notifications?: AppNotification[];
-  activePortalTabOverride?: 'home' | 'payroll' | 'attendance' | 'leave' | 'claims' | 'cash_advance' | 'assets' | 'performance' | 'profile' | null;
+  activePortalTabOverride?: 'home' | 'payroll' | 'attendance' | 'leave' | 'claims' | 'cash_advance' | 'assets' | 'performance' | 'profile' | 'live_commission' | null;
   onOpenNotifications?: () => void;
   isAdminUnlocked?: boolean;
   onRequestAdminAccess?: () => void;
@@ -183,7 +193,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
   cashAdvances = [],
   onApplyCashAdvance,
 }) => {
-  const [activePortalTab, setActivePortalTab] = useState<'home' | 'payroll' | 'attendance' | 'leave' | 'claims' | 'cash_advance' | 'assets' | 'performance' | 'profile'>('home');
+  const [activePortalTab, setActivePortalTab] = useState<'home' | 'payroll' | 'attendance' | 'leave' | 'claims' | 'cash_advance' | 'assets' | 'performance' | 'profile' | 'live_commission'>('home');
   const [isMobileMenuSheetOpen, setIsMobileMenuSheetOpen] = useState(false);
   const [isSwitchProfileModalOpen, setIsSwitchProfileModalOpen] = useState(false);
   const [profileSearchQuery, setProfileSearchQuery] = useState('');
@@ -202,12 +212,180 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
   const [cashAdvanceError, setCashAdvanceError] = useState<string | null>(null);
   const [cashAdvanceSuccessMsg, setCashAdvanceSuccessMsg] = useState<string | null>(null);
 
-  // Sync tab if commanded by notification navigation
+  // Real-time synced profile & live sessions from Supabase / Admin Role Updates
+  const [liveSyncedEmployee, setLiveSyncedEmployee] = useState<Partial<Employee> | null>(null);
+  const [liveSyncedSessions, setLiveSyncedSessions] = useState<LiveStreamSalesRecord[]>([]);
+
+  React.useEffect(() => {
+    setLiveSyncedEmployee(null);
+    setLiveSyncedSessions([]);
+  }, [currentEmployee.id]);
+
+  React.useEffect(() => {
+    if (!currentEmployee?.id) return;
+    let isMounted = true;
+
+    const refreshLiveRoleAndSessions = async () => {
+      const [dbEmp, dbSessions] = await Promise.all([
+        fetchEmployeeByIdFromSupabase(currentEmployee.id),
+        fetchLivestreamSessionsFromSupabase(
+          currentEmployee.id,
+          companyConfig.currentPayrollPeriod
+        ),
+      ]);
+      if (!isMounted) return;
+      if (dbEmp) {
+        setLiveSyncedEmployee(dbEmp);
+      }
+      if (Array.isArray(dbSessions)) {
+        setLiveSyncedSessions(dbSessions);
+      }
+    };
+
+    refreshLiveRoleAndSessions();
+
+    const handleLiveUpdated = (e: Event) => {
+      const customEv = e as CustomEvent;
+      if (customEv?.detail?.id === currentEmployee.id) {
+        setLiveSyncedEmployee((prev) => ({ ...(prev || {}), ...customEv.detail }));
+      }
+      refreshLiveRoleAndSessions();
+    };
+
+    const handleStorageOrFocus = () => {
+      refreshLiveRoleAndSessions();
+    };
+
+    window.addEventListener('tgi_employee_live_updated', handleLiveUpdated);
+    window.addEventListener('tgi_livestream_sessions_updated', handleLiveUpdated);
+    window.addEventListener('storage', handleStorageOrFocus);
+    window.addEventListener('focus', handleStorageOrFocus);
+
+    const channel = supabase
+      .channel(`tgi-portal-live-${currentEmployee.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'employees', filter: `id=eq.${currentEmployee.id}` },
+        () => refreshLiveRoleAndSessions()
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'tgi_employees', filter: `id=eq.${currentEmployee.id}` },
+        () => refreshLiveRoleAndSessions()
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'tgi_livestream_sessions',
+          filter: `employee_id=eq.${currentEmployee.id}`,
+        },
+        () => refreshLiveRoleAndSessions()
+      )
+      .subscribe();
+
+    return () => {
+      isMounted = false;
+      window.removeEventListener('tgi_employee_live_updated', handleLiveUpdated);
+      window.removeEventListener('tgi_livestream_sessions_updated', handleLiveUpdated);
+      window.removeEventListener('storage', handleStorageOrFocus);
+      window.removeEventListener('focus', handleStorageOrFocus);
+      supabase.removeChannel(channel);
+    };
+  }, [currentEmployee.id, companyConfig.currentPayrollPeriod]);
+
+  const effectivePortalEmployee = useMemo<Employee>(() => {
+    const mergedLogsMap = new Map<string, LiveStreamSalesRecord>();
+    const propLogs = Array.isArray(currentEmployee.liveStreamSalesLogs)
+      ? currentEmployee.liveStreamSalesLogs
+      : [];
+    const syncedEmpLogs = Array.isArray(liveSyncedEmployee?.liveStreamSalesLogs)
+      ? liveSyncedEmployee!.liveStreamSalesLogs!
+      : [];
+    for (const s of [...liveSyncedSessions, ...syncedEmpLogs, ...propLogs]) {
+      if (s?.id) mergedLogsMap.set(s.id, s);
+    }
+
+    const resolvedHost = Boolean(
+      liveSyncedEmployee?.is_host ??
+        liveSyncedEmployee?.isLiveStreamHost ??
+        currentEmployee.is_host ??
+        currentEmployee.isLiveStreamHost
+    );
+    const resolvedCoHost = Boolean(
+      liveSyncedEmployee?.is_co_host ??
+        liveSyncedEmployee?.isCoHostLiveStream ??
+        currentEmployee.is_co_host ??
+        currentEmployee.isCoHostLiveStream
+    );
+
+    return {
+      ...currentEmployee,
+      ...(liveSyncedEmployee || {}),
+      id: currentEmployee.id,
+      isLiveStreamHost: resolvedHost,
+      is_host: resolvedHost,
+      isCoHostLiveStream: resolvedCoHost,
+      is_co_host: resolvedCoHost,
+      salesCommissionPercentage:
+        Number(
+          liveSyncedEmployee?.salesCommissionPercentage ??
+            liveSyncedEmployee?.host_commission_pct ??
+            currentEmployee.salesCommissionPercentage ??
+            currentEmployee.host_commission_pct
+        ) || 0,
+      salesCommissionPerPcs:
+        Number(
+          liveSyncedEmployee?.salesCommissionPerPcs ??
+            liveSyncedEmployee?.host_commission_per_pcs ??
+            currentEmployee.salesCommissionPerPcs ??
+            currentEmployee.host_commission_per_pcs
+        ) || 0,
+      coHostCommissionPercentage:
+        Number(
+          liveSyncedEmployee?.coHostCommissionPercentage ??
+            liveSyncedEmployee?.co_host_commission_pct ??
+            currentEmployee.coHostCommissionPercentage ??
+            currentEmployee.co_host_commission_pct
+        ) || 0,
+      coHostCommissionPerPcs:
+        Number(
+          liveSyncedEmployee?.coHostCommissionPerPcs ??
+            liveSyncedEmployee?.co_host_commission_per_pcs ??
+            currentEmployee.coHostCommissionPerPcs ??
+            currentEmployee.co_host_commission_per_pcs
+        ) || 0,
+      liveStreamSalesLogs: Array.from(mergedLogsMap.values()),
+    };
+  }, [currentEmployee, liveSyncedEmployee, liveSyncedSessions]);
+
+  // Validasi Peran (Role) Live Streaming Karyawan: is_host (Host Live Stream) & is_co_host (Co-Host Live Stream)
+  const is_host = Boolean(
+    effectivePortalEmployee.is_host === true || effectivePortalEmployee.isLiveStreamHost === true
+  );
+  const is_co_host = Boolean(
+    effectivePortalEmployee.is_co_host === true ||
+      effectivePortalEmployee.isCoHostLiveStream === true
+  );
+  const canAccessLiveCommissionPanel = is_host === true || is_co_host === true;
+
+  // Sync tab if commanded by notification navigation (dan cegah akses tab live_commission bagi non-Host/Co-Host)
   React.useEffect(() => {
     if (activePortalTabOverride) {
-      setActivePortalTab(activePortalTabOverride);
+      if (activePortalTabOverride === 'live_commission' && !canAccessLiveCommissionPanel) {
+        setActivePortalTab('home');
+      } else {
+        setActivePortalTab(activePortalTabOverride);
+      }
     }
-  }, [activePortalTabOverride]);
+  }, [activePortalTabOverride, canAccessLiveCommissionPanel]);
+
+  React.useEffect(() => {
+    if (!canAccessLiveCommissionPanel && activePortalTab === 'live_commission') {
+      setActivePortalTab('home');
+    }
+  }, [canAccessLiveCommissionPanel, activePortalTab]);
 
   // Personal Attendances & Shift Schedule
   const myShift = useMemo(
@@ -966,25 +1144,78 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     }
   };
 
-  // Calculate current employee total monthly gross and deductions
-  const baseSal = currentEmployee.baseSalary;
+  // Calculate current employee hourly rate, daily salary (9 hours), and real-time monthly gross/THP
+  const currentPay = payrollRecord || allPayrolls.find((p) => p.employeeId === currentEmployee.id);
+  const myHourlyRate =
+    currentPay?.hourlyRate ||
+    getEmployeeHourlyRate(currentEmployee, STANDARD_WORK_HOURS_PER_DAY, 25);
+  const myDailySalary =
+    currentPay?.dailySalary ||
+    getEmployeeDailySalary(currentEmployee, 25, STANDARD_WORK_HOURS_PER_DAY);
+  const myTotalActualWorkHours =
+    currentPay?.totalActualWorkHours !== undefined
+      ? currentPay.totalActualWorkHours
+      : myPenaltySummary.totalActualWorkHours;
+  const myPresentDaysCount =
+    currentPay?.presentDaysCount !== undefined
+      ? currentPay.presentDaysCount
+      : myPenaltySummary.presentDaysCount;
+  const myDailyWorkBreakdown =
+    currentPay?.dailyWorkBreakdown || myPenaltySummary.dailyWorkBreakdown || [];
+
+  const baseSal = currentPay
+    ? currentPay.baseSalary
+    : Math.round(myTotalActualWorkHours * myHourlyRate);
   const posAllow = currentEmployee.allowances?.position || 0;
   const transAllow = currentEmployee.allowances?.transport || 0;
   const mealAllow = currentEmployee.allowances?.meal || 0;
   const commAllow = currentEmployee.allowances?.communication || 0;
   const totalAllow = posAllow + transAllow + mealAllow + commAllow;
 
-  const currentPay = payrollRecord || allPayrolls.find((p) => p.employeeId === currentEmployee.id);
-  const overtimePay = currentPay ? currentPay.overtimePay : 0;
-  const bonusPay = currentPay ? currentPay.bonus : 0;
-  const grossSalary = currentPay ? currentPay.totalGrossSalary : baseSal + totalAllow + overtimePay + bonusPay;
-  const totalDeduct = currentPay ? currentPay.totalDeductions : Math.round(grossSalary * 0.08);
-  const takeHomePay = currentPay ? currentPay.takeHomePay : Math.max(0, grossSalary - totalDeduct);
+  const myLiveSalesSummary = useMemo(
+    () =>
+      calculateEmployeeLiveSalesCommission(
+        effectivePortalEmployee,
+        companyConfig.currentPayrollPeriod
+      ),
+    [effectivePortalEmployee, companyConfig.currentPayrollPeriod]
+  );
+
+  const overtimePay = Number(currentPay?.overtimePay) || 0;
+  const bonusPay = Number(currentPay?.bonus) || 0;
+  const rawCommissionPay = Math.max(
+    Number(currentPay?.salesCommission) || 0,
+    Number(myLiveSalesSummary.totalCommission) || 0
+  );
+  const salesCommissionPay =
+    canAccessLiveCommissionPanel || rawCommissionPay > 0 ? rawCommissionPay : 0;
+
+  const baseEarningsWithoutLiveComm =
+    (Number(baseSal) || 0) + (Number(totalAllow) || 0) + overtimePay + bonusPay;
+  const grossSalary = Math.max(
+    Number(currentPay?.totalGrossSalary) || 0,
+    baseEarningsWithoutLiveComm + salesCommissionPay
+  );
+  const totalDeduct =
+    currentPay?.totalDeductions !== undefined
+      ? Number(currentPay.totalDeductions) || 0
+      : Math.round(grossSalary * 0.08);
+  const takeHomePay = Math.max(0, grossSalary - totalDeduct);
+  const effectivePayRecord: PayrollRecord | null = currentPay
+    ? {
+        ...currentPay,
+        salesCommission: salesCommissionPay,
+        salesCommissionNotes: currentPay.salesCommissionNotes || myLiveSalesSummary.notes,
+        totalGrossSalary: grossSalary,
+        takeHomePay,
+      }
+    : null;
 
   const portalTabLabels: Record<typeof activePortalTab, string> = {
     home: 'Beranda Ringkasan Karyawan',
     attendance: 'Kamera Absen Wajah & GPS HP',
     payroll: 'Gaji & Slip Gaji Pribadi',
+    live_commission: 'Komisi Live Host & Co-Host',
     leave: 'Pengajuan Cuti & Izin',
     claims: 'Klaim Lembur & Reimbursement',
     cash_advance: 'Pengajuan Kasbon & Cicilan',
@@ -1012,6 +1243,32 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 <span className="px-2.5 py-0.5 rounded-full text-[10px] sm:text-xs font-semibold bg-emerald-400/30 text-emerald-100 border border-emerald-300/30">
                   {currentEmployee.employmentStatus}
                 </span>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] sm:text-xs font-extrabold bg-amber-300 text-slate-950 border border-amber-200 shadow-2xs">
+                  Tarif Gaji: {formatRupiah(myHourlyRate)} / jam (Std {STANDARD_WORK_HOURS_PER_DAY} Jam/Hari)
+                </span>
+                {canAccessLiveCommissionPanel && (
+                  <button
+                    type="button"
+                    onClick={() => setActivePortalTab('live_commission')}
+                    className="px-2.5 py-0.5 rounded-full text-[10px] sm:text-xs font-extrabold bg-pink-500 hover:bg-pink-400 text-white border border-pink-300 shadow-2xs inline-flex items-center gap-1 cursor-pointer"
+                  >
+                    <Video className="w-3 h-3" />
+                    <span>
+                      {is_co_host && !is_host
+                        ? `Co-Host Live (${currentEmployee.coHostCommissionPercentage || 0}% Omset${
+                            (currentEmployee.coHostCommissionPerPcs || 0) > 0
+                              ? ` + ${formatRupiah(currentEmployee.coHostCommissionPerPcs || 0)}/pcs`
+                              : ''
+                          })`
+                        : `Host Live (${currentEmployee.salesCommissionPercentage || 0}% Omset${
+                            (currentEmployee.salesCommissionPerPcs || 0) > 0
+                              ? ` + ${formatRupiah(currentEmployee.salesCommissionPerPcs || 0)}/pcs`
+                              : ''
+                          })`}{' '}
+                      • Komisi: {formatRupiah(salesCommissionPay)}
+                    </span>
+                  </button>
+                )}
               </div>
               <h1 className="text-lg sm:text-2xl font-bold text-white mt-1 truncate">
                 Halo, {currentEmployee.fullName}
@@ -1374,6 +1631,25 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
           Slip Gaji Pribadi
         </button>
 
+        {canAccessLiveCommissionPanel && (
+          <button
+            onClick={() => setActivePortalTab('live_commission')}
+            className={`flex items-center gap-2 px-3.5 py-2.5 text-xs sm:text-sm font-semibold rounded-xl whitespace-nowrap transition-all cursor-pointer ${
+              activePortalTab === 'live_commission'
+                ? 'bg-pink-600 text-white shadow-xs'
+                : 'text-pink-700 bg-pink-50/70 hover:bg-pink-100 border border-pink-200'
+            }`}
+          >
+            <Video className="w-4 h-4" />
+            <span>Komisi Live Host &amp; Co-Host</span>
+            {salesCommissionPay > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-pink-600 text-white">
+                +{formatRupiah(salesCommissionPay)}
+              </span>
+            )}
+          </button>
+        )}
+
         <button
           onClick={() => setActivePortalTab('leave')}
           className={`flex items-center gap-2 px-3.5 py-2.5 text-xs sm:text-sm font-semibold rounded-xl whitespace-nowrap transition-all cursor-pointer ${
@@ -1518,7 +1794,10 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 <div className="text-2xl font-extrabold mt-2 tabular-nums tracking-tight">
                   {formatCurrency(takeHomePay)}
                 </div>
-                <p className="text-[11px] text-emerald-100 mt-1">
+                <p className="text-[11px] text-emerald-50 font-semibold mt-1">
+                  {myTotalActualWorkHours} Jam Kerja Riil ({myPresentDaysCount} Hari) × {formatRupiah(myHourlyRate)}/jam
+                </p>
+                <p className="text-[11px] text-emerald-100 mt-0.5">
                   Rekening: {currentEmployee.bankName} ({currentEmployee.bankAccountNumber})
                 </p>
               </div>
@@ -1611,6 +1890,44 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
             </div>
           </div>
 
+          {/* Kartu Ringkasan Komisi Live Host & Co-Host (HANYA tampil jika is_host === true ATAU is_co_host === true) */}
+          {canAccessLiveCommissionPanel && (
+            <div className="bg-gradient-to-r from-pink-600 via-fuchsia-600 to-violet-700 rounded-2xl p-4 sm:p-5 text-white shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-white/20 text-[10px] font-extrabold">
+                    <Video className="w-3.5 h-3.5" />
+                    <span>
+                      {is_host && is_co_host
+                        ? 'Host & Co-Host Live Stream'
+                        : is_co_host
+                        ? 'Co-Host Live Stream'
+                        : 'Host Live Stream'}
+                    </span>
+                  </span>
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-950/30 border border-white/25 text-amber-200 text-[10px] font-bold">
+                    <Lock className="w-3 h-3" />
+                    <span>Read-Only</span>
+                  </span>
+                </div>
+                <h4 className="text-sm sm:text-base font-extrabold">
+                  Komisi Live Host &amp; Co-Host ({companyConfig.currentPayrollPeriod}): +{formatRupiah(salesCommissionPay)}
+                </h4>
+                <p className="text-xs text-pink-100">
+                  Total Omset: <strong>{formatRupiah(myLiveSalesSummary.totalOmset)}</strong> • Tas Terjual:{' '}
+                  <strong>{myLiveSalesSummary.totalPcs.toLocaleString('id-ID')} Pcs</strong> ({myLiveSalesSummary.sessionsCount} Sesi Terverifikasi Admin)
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActivePortalTab('live_commission')}
+                className="px-4 py-2.5 rounded-xl bg-white text-pink-800 hover:bg-pink-50 text-xs font-extrabold shrink-0 cursor-pointer shadow-xs"
+              >
+                Lihat Rekap Komisi Live →
+              </button>
+            </div>
+          )}
+
           {/* Native-App Quick Menu Grid (Great for Mobile Thumb Access) */}
           <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-xs">
             <h3 className="text-xs sm:text-sm font-bold text-slate-900 mb-3">
@@ -1632,6 +1949,22 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   icon: WalletCards,
                   color: 'bg-teal-50 text-teal-700 border-teal-200',
                 },
+                ...(canAccessLiveCommissionPanel
+                  ? [
+                      {
+                        id: 'live_commission' as const,
+                        label: 'Komisi Live Host & Co-Host',
+                        sub:
+                          salesCommissionPay > 0
+                            ? `+${formatRupiah(salesCommissionPay)}`
+                            : is_co_host && !is_host
+                            ? `Co-Host ${currentEmployee.coHostCommissionPercentage || 0}% Omset`
+                            : `Host ${currentEmployee.salesCommissionPercentage || 0}% Omset`,
+                        icon: Video,
+                        color: 'bg-pink-50 text-pink-700 border-pink-200',
+                      },
+                    ]
+                  : []),
                 {
                   id: 'leave' as const,
                   label: 'Cuti & Izin',
@@ -1724,10 +2057,10 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 </p>
               </div>
 
-              {currentPay && (
+              {effectivePayRecord && (
                 <div className="mt-4 pt-3 border-t border-white/20">
                   <button
-                    onClick={() => onOpenPayslip(currentPay)}
+                    onClick={() => onOpenPayslip(effectivePayRecord)}
                     className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-white text-emerald-800 text-xs font-bold hover:bg-emerald-50 transition-colors shadow-xs cursor-pointer"
                   >
                     <Download className="w-3.5 h-3.5 text-emerald-600" />
@@ -1740,19 +2073,24 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
             {/* Total Penghasilan Bruto */}
             <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs flex flex-col justify-between">
               <div>
-                <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                  Total Penghasilan Bruto
-                </span>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                    Total Penghasilan Bruto
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                    {formatRupiah(myHourlyRate)} / jam
+                  </span>
+                </div>
                 <h3 className="text-2xl font-bold text-slate-900 mt-1">
                   {formatCurrency(grossSalary)}
                 </h3>
                 <p className="text-xs text-slate-500 mt-1">
-                  Gaji Pokok + 4 Komponen Tunjangan + Lembur & Bonus
+                  Gaji Jam Kerja Riil ({myTotalActualWorkHours} Jam) + Tunjangan + Lembur &amp; Bonus
                 </p>
               </div>
               <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-600">
-                <span>Gaji Pokok:</span>
-                <span className="font-semibold text-slate-800">{formatCurrency(baseSal)}</span>
+                <span>Gaji Pokok ({myTotalActualWorkHours} Jam × {formatRupiah(myHourlyRate)}/jam):</span>
+                <span className="font-bold text-emerald-700">{formatCurrency(baseSal)}</span>
               </div>
             </div>
 
@@ -1789,9 +2127,9 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   Perhitungan resmi berdasarkan regulasi ketenagakerjaan dan kebijakan Tas Grosir Import
                 </p>
               </div>
-              {currentPay && (
+              {effectivePayRecord && (
                 <button
-                  onClick={() => onOpenPayslip(currentPay)}
+                  onClick={() => onOpenPayslip(effectivePayRecord)}
                   className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 transition-colors cursor-pointer"
                 >
                   <Download className="w-3.5 h-3.5 text-indigo-600" />
@@ -1809,9 +2147,23 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 </h4>
 
                 <div className="bg-slate-50 rounded-xl p-4 space-y-2.5 text-xs">
-                  <div className="flex justify-between items-center text-slate-700">
-                    <span>Gaji Pokok (Base Salary)</span>
-                    <span className="font-semibold text-slate-900">{formatCurrency(baseSal)}</span>
+                  <div className="p-3 bg-emerald-50/90 border border-emerald-200 rounded-xl space-y-1.5">
+                    <div className="flex justify-between items-start gap-2">
+                      <div>
+                        <span className="font-bold text-emerald-950 block">
+                          Gaji Pokok (Kalkulasi Jam Kerja Riil)
+                        </span>
+                        <span className="text-[11px] font-mono font-semibold text-emerald-800 block mt-0.5">
+                          {myTotalActualWorkHours} Jam Kerja Aktual ({myPresentDaysCount} Hari Masuk) × {formatRupiah(myHourlyRate)} / jam
+                        </span>
+                        <span className="text-[10px] text-slate-600 block mt-0.5">
+                          Standar Jam Kerja: {STANDARD_WORK_HOURS_PER_DAY} Jam / Hari = {formatRupiah(myDailySalary)} / hari
+                        </span>
+                      </div>
+                      <span className="font-extrabold text-emerald-800 text-sm shrink-0">
+                        {formatCurrency(baseSal)}
+                      </span>
+                    </div>
                   </div>
                   <div className="flex justify-between items-center text-slate-700">
                     <span>Tunjangan Jabatan</span>
@@ -1833,6 +2185,59 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                     <div className="flex justify-between items-center text-indigo-700 bg-indigo-50/70 px-2 py-1 rounded">
                       <span className="font-semibold">Upah Lembur Terverifikasi</span>
                       <span className="font-bold">+{formatCurrency(overtimePay)}</span>
+                    </div>
+                  )}
+                  {(salesCommissionPay > 0 || canAccessLiveCommissionPanel) && (
+                    <div className="p-3 bg-pink-50/90 border border-pink-200 rounded-xl space-y-1.5">
+                      <div className="flex justify-between items-start gap-2">
+                        <div>
+                          <span className="font-bold text-pink-950 flex items-center gap-1.5">
+                            <Video className="w-3.5 h-3.5 text-pink-600" />
+                            <span>
+                              Insentif / Komisi Penjualan (
+                              {is_co_host && !is_host
+                                ? 'Co-Host Live Streaming'
+                                : is_co_host && is_host
+                                ? 'Host & Co-Host Live Streaming'
+                                : 'Host Live Streaming'}
+                              )
+                            </span>
+                          </span>
+                          <span className="text-[11px] font-mono font-semibold text-pink-800 block mt-0.5">
+                            {currentPay?.salesCommissionNotes ||
+                              myLiveSalesSummary.notes ||
+                              (is_co_host && !is_host
+                                ? `Skema Co-Host: ${effectivePortalEmployee.coHostCommissionPercentage || 0}% dari Omset Sesi Live${
+                                    (effectivePortalEmployee.coHostCommissionPerPcs || 0) > 0
+                                      ? ` + ${formatRupiah(effectivePortalEmployee.coHostCommissionPerPcs || 0)}/pcs`
+                                      : ''
+                                  }`
+                                : `Skema Host: ${effectivePortalEmployee.salesCommissionPercentage || 0}% Omset${
+                                    (effectivePortalEmployee.salesCommissionPerPcs || 0) > 0
+                                      ? ` + ${formatRupiah(effectivePortalEmployee.salesCommissionPerPcs || 0)}/pcs`
+                                      : ''
+                                  }${
+                                    is_co_host
+                                      ? ` | Co-Host: ${effectivePortalEmployee.coHostCommissionPercentage || 0}% Omset`
+                                      : ''
+                                  }`)}
+                          </span>
+                        </div>
+                        <span className="font-extrabold text-pink-700 text-sm shrink-0">
+                          +{formatCurrency(salesCommissionPay)}
+                        </span>
+                      </div>
+                      {canAccessLiveCommissionPanel && (
+                        <div className="pt-1 flex justify-end">
+                          <button
+                            type="button"
+                            onClick={() => setActivePortalTab('live_commission')}
+                            className="text-[11px] font-bold text-pink-700 hover:text-pink-900 underline cursor-pointer"
+                          >
+                            Buka Rekap Komisi Live Host &amp; Co-Host (Read-Only) →
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
                   {bonusPay > 0 && (
@@ -1913,6 +2318,110 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   </div>
                 </div>
               </div>
+            </div>
+
+            {/* Rincian Transparan Gaji Harian & Bulanan Berbasis Jam Kerja Riil */}
+            <div className="p-4 bg-emerald-50/50 rounded-2xl border border-emerald-200 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-emerald-200/80 pb-3">
+                <div>
+                  <h4 className="text-xs sm:text-sm font-extrabold text-emerald-950 flex items-center gap-1.5">
+                    <Clock className="w-4 h-4 text-emerald-600" />
+                    <span>Transparansi Kalkulasi Gaji Per Jam &amp; Jam Kerja Harian Riil</span>
+                  </h4>
+                  <p className="text-[11px] text-emerald-800 mt-0.5">
+                    Jam kerja standar adalah <strong>{STANDARD_WORK_HOURS_PER_DAY} jam/hari</strong>. Gaji Harian dihitung dari <strong>Jam Kerja Aktual Hari Tersebut × Tarif Per Jam ({formatRupiah(myHourlyRate)}/jam)</strong>.
+                  </p>
+                </div>
+                <span className="px-3 py-1 rounded-xl bg-white border border-emerald-300 text-emerald-900 text-xs font-extrabold shrink-0">
+                  Tarif Anda: {formatRupiah(myHourlyRate)} / jam
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                <div className="bg-white p-3 rounded-xl border border-emerald-200">
+                  <span className="text-[10px] text-slate-500 block">Tarif Gaji Per Jam</span>
+                  <span className="font-extrabold text-emerald-700 text-sm block mt-0.5">
+                    {formatRupiah(myHourlyRate)} / jam
+                  </span>
+                </div>
+                <div className="bg-white p-3 rounded-xl border border-emerald-200">
+                  <span className="text-[10px] text-slate-500 block">Gaji Harian ({STANDARD_WORK_HOURS_PER_DAY} Jam)</span>
+                  <span className="font-bold text-slate-900 text-sm block mt-0.5">
+                    {formatRupiah(myDailySalary)} / hari
+                  </span>
+                </div>
+                <div className="bg-white p-3 rounded-xl border border-emerald-200">
+                  <span className="text-[10px] text-slate-500 block">Akumulasi Jam Kerja Riil</span>
+                  <span className="font-extrabold text-indigo-700 text-sm block mt-0.5">
+                    {myTotalActualWorkHours} Jam ({myPresentDaysCount} Hari)
+                  </span>
+                </div>
+                <div className="bg-white p-3 rounded-xl border border-emerald-200">
+                  <span className="text-[10px] text-slate-500 block">Total Gaji Jam Kerja</span>
+                  <span className="font-extrabold text-emerald-800 text-sm block mt-0.5">
+                    {formatRupiah(baseSal)}
+                  </span>
+                </div>
+              </div>
+
+              {myDailyWorkBreakdown.length > 0 ? (
+                <div className="overflow-x-auto bg-white rounded-xl border border-emerald-200">
+                  <table className="w-full text-xs text-left">
+                    <thead className="bg-emerald-900/5 text-slate-700 font-bold border-b border-emerald-200">
+                      <tr>
+                        <th className="py-2.5 px-3">Tanggal Masuk</th>
+                        <th className="py-2.5 px-3">Jam Masuk – Pulang</th>
+                        <th className="py-2.5 px-3">Jam Kerja Aktual</th>
+                        <th className="py-2.5 px-3">Tarif Per Jam</th>
+                        <th className="py-2.5 px-3 text-right">Total Gaji Harian</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {myDailyWorkBreakdown.map((item) => (
+                        <tr key={item.date} className="hover:bg-emerald-50/40">
+                          <td className="py-2 px-3 font-medium text-slate-800">
+                            {formatIndoDate(item.date)}
+                          </td>
+                          <td className="py-2 px-3 font-mono text-slate-600">
+                            {item.checkIn || '-'} – {item.checkOut || '-'} WIB
+                          </td>
+                          <td className="py-2 px-3">
+                            <span className="px-2 py-0.5 rounded bg-indigo-50 text-indigo-800 border border-indigo-200 font-mono font-bold text-[11px]">
+                              {item.workHours} Jam
+                            </span>
+                          </td>
+                          <td className="py-2 px-3 font-mono text-slate-600">
+                            × {formatRupiah(myHourlyRate)}/jam
+                          </td>
+                          <td className="py-2 px-3 text-right font-bold text-emerald-800">
+                            {formatRupiah(item.dailyWage)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot className="bg-emerald-50/90 font-bold text-slate-900 border-t border-emerald-200">
+                      <tr>
+                        <td colSpan={2} className="py-2.5 px-3">
+                          Total Akumulasi ({myPresentDaysCount} Hari Kehadiran)
+                        </td>
+                        <td className="py-2.5 px-3 font-mono text-indigo-800">
+                          {myTotalActualWorkHours} Jam
+                        </td>
+                        <td className="py-2.5 px-3 font-mono text-slate-700">
+                          × {formatRupiah(myHourlyRate)}/jam
+                        </td>
+                        <td className="py-2.5 px-3 text-right text-emerald-800 text-sm">
+                          {formatRupiah(baseSal)}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              ) : (
+                <div className="p-3 bg-white rounded-xl border border-emerald-200 text-xs text-slate-500 text-center">
+                  Belum ada log jam kerja hadir pada periode ini. Gaji harian dan bulanan akan otomatis bertambah sesuai jam kerja aktual saat Anda melakukan presensi.
+                </div>
+              )}
             </div>
 
             {/* Legal Information Note */}
@@ -2355,7 +2864,10 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                                 Masuk: {att.checkIn || '-'}
                               </span>
                               <span className="block text-indigo-700 font-bold text-[11px]">
-                                Pulang: {att.checkOut || '-'} ({att.workHours}j)
+                                Pulang: {att.checkOut || '-'} ({att.workHours} jam)
+                              </span>
+                              <span className="block text-[10px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5 mt-0.5">
+                                Gaji Hari Ini: {formatRupiah(Math.round((Number(att.workHours) || 0) * myHourlyRate))}
                               </span>
                             </td>
                             <td className="py-3 px-4">
@@ -4665,6 +5177,18 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   <span className="text-slate-400 block text-[11px]">No. BPJS Ketenagakerjaan:</span>
                   <span className="font-mono text-slate-700">{currentEmployee.bpjsKetenagakerjaanNo || '-'}</span>
                 </div>
+                <div className="p-2 bg-emerald-50 border border-emerald-200 rounded-lg">
+                  <span className="text-emerald-800 font-semibold block text-[10px]">Tarif Gaji Per Jam:</span>
+                  <span className="font-extrabold text-emerald-700 text-xs">
+                    {formatRupiah(myHourlyRate)} / jam
+                  </span>
+                </div>
+                <div className="p-2 bg-emerald-50/60 border border-emerald-200 rounded-lg">
+                  <span className="text-slate-600 font-semibold block text-[10px]">Gaji Harian (Std {STANDARD_WORK_HOURS_PER_DAY} Jam):</span>
+                  <span className="font-bold text-slate-900 text-xs">
+                    {formatRupiah(myDailySalary)} / hari
+                  </span>
+                </div>
               </div>
             </div>
 
@@ -5734,6 +6258,302 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
         </div>
       )}
 
+      {/* TAB: MODUL TRANSPARANSI KOMISI PENJUALAN HOST & CO-HOST LIVE STREAMING (READ-ONLY — HANYA JIKA is_host === true ATAU is_co_host === true) */}
+      {canAccessLiveCommissionPanel && activePortalTab === 'live_commission' && (() => {
+        const pctRate = Math.max(0, Number(currentEmployee.salesCommissionPercentage) || 0);
+        const pcsRate = Math.max(0, Number(currentEmployee.salesCommissionPerPcs) || 0);
+        const coHostPctRate = Math.max(0, Number(currentEmployee.coHostCommissionPercentage) || 0);
+        const coHostPcsRate = Math.max(0, Number(currentEmployee.coHostCommissionPerPcs) || 0);
+
+        return (
+          <div className="space-y-6 animate-in fade-in">
+            {/* Banner Header Host & Co-Host Live Streaming (Read-Only Transparency) */}
+            <div className="bg-gradient-to-r from-pink-600 via-fuchsia-600 to-violet-700 rounded-2xl p-5 text-white shadow-md">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/20 text-white text-[11px] font-bold">
+                      <Video className="w-3.5 h-3.5" />
+                      <span>Komisi Live Host &amp; Co-Host</span>
+                    </span>
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-950/35 border border-white/25 text-amber-200 text-[11px] font-extrabold">
+                      <Lock className="w-3 h-3" />
+                      <span>Mode Lihat Saja (Read-Only)</span>
+                    </span>
+                  </div>
+                  <h2 className="text-xl sm:text-2xl font-extrabold">
+                    Rekap Omset, Tas Terjual (Pcs) &amp; Rincian Komisi Live Streaming Anda
+                  </h2>
+                  <p className="text-xs text-pink-100">
+                    Data sesi live streaming, nilai omset penjualan, jumlah tas yang terjual (pcs), dan tarif komisi (% Omset &amp; Rp/Pcs) diinput serta diverifikasi langsung oleh <strong>Admin HR / Finance</strong>. Rincian di bawah ini ditampilkan secara real-time untuk transparansi komponen <strong>&ldquo;Insentif / Komisi Penjualan&rdquo;</strong> pada Slip Gaji periode <strong>{companyConfig.currentPayrollPeriod}</strong>.
+                  </p>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-2.5 shrink-0">
+                  <div className="bg-white/15 backdrop-blur-xs border border-white/25 rounded-xl p-3 text-xs">
+                    <span className="text-pink-100 block text-[10px] uppercase font-bold">
+                      Tarif Komisi Host Utama
+                    </span>
+                    <span className="text-base font-extrabold block mt-0.5">
+                      {pctRate}% Omset
+                      {pcsRate > 0 ? ` + ${formatRupiah(pcsRate)}/pcs` : ''}
+                    </span>
+                    <span className="text-[10px] text-pink-100 block mt-0.5">
+                      Status Host: {is_host ? 'Aktif Terdaftar' : 'Nonaktif'}
+                    </span>
+                  </div>
+                  <div className="bg-violet-950/40 backdrop-blur-xs border border-violet-300/40 rounded-xl p-3 text-xs">
+                    <span className="text-violet-200 block text-[10px] uppercase font-bold">
+                      Tarif Komisi Co-Host
+                    </span>
+                    <span className="text-base font-extrabold text-white block mt-0.5">
+                      {coHostPctRate}% Omset
+                      {coHostPcsRate > 0 ? ` + ${formatRupiah(coHostPcsRate)}/pcs` : ''}
+                    </span>
+                    <span className="text-[10px] text-violet-200 block mt-0.5">
+                      Status Co-Host: {is_co_host ? 'Aktif Terdaftar' : 'Nonaktif'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 4 Summary Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+                <span className="text-[11px] font-bold uppercase text-slate-400 block">
+                  Total Omset &amp; Tas Terjual ({companyConfig.currentPayrollPeriod})
+                </span>
+                <span className="text-xl font-extrabold text-slate-900 block mt-1 font-mono">
+                  {formatRupiah(myLiveSalesSummary.totalOmset)}
+                </span>
+                <span className="text-[11px] text-indigo-700 font-bold block mt-1">
+                  Total Tas Terjual: {myLiveSalesSummary.totalPcs.toLocaleString('id-ID')} Pcs ({myLiveSalesSummary.sessionsCount} Sesi)
+                </span>
+              </div>
+
+              <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+                <span className="text-[11px] font-bold uppercase text-slate-400 block">
+                  Komisi Sesi Host Utama
+                </span>
+                <span className="text-xl font-extrabold text-pink-700 block mt-1 font-mono">
+                  {formatRupiah(myLiveSalesSummary.hostCommissionAmount)}
+                </span>
+                <span className="text-[11px] text-slate-500 block mt-1">
+                  Omset: {formatRupiah(myLiveSalesSummary.hostOmset)} • {myLiveSalesSummary.hostPcs.toLocaleString('id-ID')} Pcs ({pctRate}%
+                  {pcsRate > 0 ? ` + ${formatRupiah(pcsRate)}/pcs` : ''})
+                </span>
+              </div>
+
+              <div className="bg-white p-4 rounded-2xl border border-violet-200 shadow-xs">
+                <span className="text-[11px] font-bold uppercase text-violet-600 block">
+                  Komisi Sesi Co-Host ({coHostPctRate}%{coHostPcsRate > 0 ? ` + ${formatRupiah(coHostPcsRate)}/pcs` : ''})
+                </span>
+                <span className="text-xl font-extrabold text-violet-700 block mt-1 font-mono">
+                  {formatRupiah(myLiveSalesSummary.coHostCommissionAmount)}
+                </span>
+                <span className="text-[11px] text-slate-500 block mt-1">
+                  Omset: {formatRupiah(myLiveSalesSummary.coHostOmset)} • {myLiveSalesSummary.coHostPcs.toLocaleString('id-ID')} Pcs ({myLiveSalesSummary.coHostSessionsCount} sesi)
+                </span>
+              </div>
+
+              <div className="bg-gradient-to-br from-pink-600 via-fuchsia-600 to-violet-700 p-4 rounded-2xl text-white shadow-sm">
+                <span className="text-[11px] font-bold uppercase text-pink-100 block">
+                  Total Insentif / Komisi Penjualan
+                </span>
+                <span className="text-2xl font-extrabold block mt-1 font-mono">
+                  +{formatRupiah(salesCommissionPay)}
+                </span>
+                <div className="mt-2 flex items-center justify-between text-[11px]">
+                  <span className="text-pink-100">Otomatis Masuk Slip Gaji</span>
+                  <button
+                    type="button"
+                    onClick={() => setActivePortalTab('payroll')}
+                    className="underline font-bold text-white cursor-pointer"
+                  >
+                    Cek Slip →
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Banner Kebijakan Kendali Penuh Admin (Terkunci / Read-Only di Portal Karyawan) */}
+            <div className="bg-amber-50/90 border border-amber-200 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-start gap-3">
+                <div className="p-2.5 rounded-xl bg-amber-100 text-amber-800 border border-amber-300 shrink-0">
+                  <Lock className="w-5 h-5" />
+                </div>
+                <div className="space-y-1 text-xs">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-extrabold text-amber-950 text-xs sm:text-sm">
+                      Akses Read-Only (Input Omset &amp; Tas Terjual Dikendalikan Admin)
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full bg-amber-200/80 text-amber-950 font-bold text-[10px]">
+                      Terverifikasi Sistem Payroll
+                    </span>
+                  </div>
+                  <p className="text-amber-900 leading-relaxed">
+                    Untuk menjaga akurasi audit penggajian, <strong>Host &amp; Co-Host hanya dapat melihat (Read-Only) rekap omset, jumlah tas terjual, dan rincian komisi</strong>. Seluruh pencatatan nilai omset penjualan sesi live, jumlah tas terjual (pcs), serta pengaturan persentase komisi (% Omset) dan tarif per pcs (Rp/Pcs) dilakukan terpusat oleh <strong>Admin di Modul Penggajian atau Detail Karyawan</strong>.
+                  </p>
+                </div>
+              </div>
+              {isAdminUnlocked && (
+                <button
+                  type="button"
+                  onClick={onSwitchToAdminMode}
+                  className="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold inline-flex items-center gap-2 shrink-0 cursor-pointer shadow-xs"
+                >
+                  <Shield className="w-4 h-4 text-emerald-400" />
+                  <span>Kelola Omset di Panel Admin</span>
+                </button>
+              )}
+            </div>
+
+            {/* Tabel Riwayat Sesi Live Streaming (Read-Only) */}
+            <div className="bg-white rounded-2xl p-5 sm:p-6 border border-slate-200 shadow-xs space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-sm sm:text-base font-bold text-slate-900">
+                    Rincian Sesi Live Streaming, Jumlah Tas Terjual &amp; Komisi Terverifikasi ({companyConfig.currentPayrollPeriod})
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Daftar sesi live streaming (Host &amp; Co-Host) dari TikTok Shop / Shopee Live yang telah diinput oleh Admin untuk perhitungan Insentif / Komisi Penjualan bulan ini
+                  </p>
+                </div>
+                <span className="px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-bold self-start sm:self-center">
+                  {myLiveSalesSummary.sessionsCount} Sesi Terverifikasi
+                </span>
+              </div>
+
+              {myLiveSalesSummary.filteredLogs.length === 0 ? (
+                <div className="p-8 text-center bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-500">
+                  Belum ada data omset penjualan &amp; jumlah tas terjual live streaming yang diinput oleh Admin pada periode <strong>{companyConfig.currentPayrollPeriod}</strong>. Data sesi live dan rincian komisi Anda akan otomatis tampil secara real-time di halaman ini segera setelah diinput oleh Admin HR / Finance.
+                </div>
+              ) : (
+                <div className="overflow-x-auto border border-slate-200 rounded-xl">
+                  <table className="w-full text-xs text-left">
+                    <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
+                      <tr>
+                        <th className="py-3 px-4">Tanggal &amp; Platform</th>
+                        <th className="py-3 px-4">Peran &amp; Judul Sesi</th>
+                        <th className="py-3 px-4 text-right">Omset Sesi Live (IDR)</th>
+                        <th className="py-3 px-4 text-right">Jumlah Tas Terjual (Pcs)</th>
+                        <th className="py-3 px-4 text-right">Rincian Komisi</th>
+                        <th className="py-3 px-4 text-center">Status Data</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {myLiveSalesSummary.filteredLogs.map((log) => {
+                        const isCoHostRow =
+                          log.sessionRole === 'Co-Host' ||
+                          (!log.sessionRole &&
+                            currentEmployee.isCoHostLiveStream &&
+                            !currentEmployee.isLiveStreamHost);
+                        const effectiveRowPct = isCoHostRow
+                          ? coHostPctRate > 0
+                            ? coHostPctRate
+                            : Number(log.commissionPercentageSnapshot) || 0
+                          : pctRate > 0
+                          ? pctRate
+                          : Number(log.commissionPercentageSnapshot) || 0;
+                        const effectiveRowPcsRate = isCoHostRow
+                          ? coHostPcsRate > 0
+                            ? coHostPcsRate
+                            : Number(log.commissionPerPcsSnapshot) || 0
+                          : pcsRate > 0
+                          ? pcsRate
+                          : Number(log.commissionPerPcsSnapshot) || 0;
+                        const rowComm = Math.round(
+                          ((Number(log.omsetAmount) || 0) * effectiveRowPct) / 100 +
+                            (Number(log.pcsSold) || 0) * effectiveRowPcsRate
+                        );
+                        return (
+                          <tr key={log.id} className="hover:bg-slate-50">
+                            <td className="py-3 px-4">
+                              <span className="font-bold text-slate-900 block">
+                                {formatIndoDate(log.date)}
+                              </span>
+                              <span className="inline-block mt-0.5 px-2 py-0.5 rounded bg-pink-50 text-pink-700 border border-pink-200 text-[10px] font-bold">
+                                {log.platform}
+                              </span>
+                            </td>
+                            <td className="py-3 px-4">
+                              <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
+                                <span
+                                  className={`px-2 py-0.5 rounded text-[10px] font-extrabold ${
+                                    isCoHostRow
+                                      ? 'bg-violet-100 text-violet-800 border border-violet-200'
+                                      : 'bg-pink-100 text-pink-800 border border-pink-200'
+                                  }`}
+                                >
+                                  {isCoHostRow
+                                    ? `Co-Host (${effectiveRowPct}%${effectiveRowPcsRate > 0 ? ` + ${formatRupiah(effectiveRowPcsRate)}/pcs` : ''})`
+                                    : `Host (${effectiveRowPct}%${effectiveRowPcsRate > 0 ? ` + ${formatRupiah(effectiveRowPcsRate)}/pcs` : ''})`}
+                                </span>
+                                <span className="font-semibold text-slate-800">
+                                  {log.sessionTitle}
+                                </span>
+                              </div>
+                              <span className="text-[11px] text-slate-500 block">
+                                Durasi Live: {log.durationHours} jam
+                                {log.notes ? ` • Catatan: ${log.notes}` : ''}
+                              </span>
+                            </td>
+                            <td className="py-3 px-4 text-right font-mono font-bold text-slate-900">
+                              {formatRupiah(log.omsetAmount)}
+                            </td>
+                            <td className="py-3 px-4 text-right font-mono font-bold text-indigo-800">
+                              {log.pcsSold.toLocaleString('id-ID')} Pcs
+                            </td>
+                            <td
+                              className={`py-3 px-4 text-right font-mono font-extrabold ${
+                                isCoHostRow ? 'text-violet-700' : 'text-pink-700'
+                              }`}
+                            >
+                              +{formatRupiah(rowComm)}
+                              <span className="block text-[10px] font-normal text-slate-500">
+                                {effectiveRowPct}% × {formatRupiah(log.omsetAmount)}
+                                {effectiveRowPcsRate > 0 && log.pcsSold > 0
+                                  ? ` + ${log.pcsSold} Pcs × ${formatRupiah(effectiveRowPcsRate)}`
+                                  : ''}
+                              </span>
+                            </td>
+                            <td className="py-3 px-4 text-center">
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-bold">
+                                <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                <span>Diinput Admin</span>
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot className="bg-slate-50 font-bold text-slate-900 border-t border-slate-200">
+                      <tr>
+                        <td colSpan={2} className="py-3 px-4">
+                          Total Rekap Periode {companyConfig.currentPayrollPeriod} ({myLiveSalesSummary.sessionsCount} Sesi)
+                        </td>
+                        <td className="py-3 px-4 text-right font-mono text-slate-900">
+                          {formatRupiah(myLiveSalesSummary.totalOmset)}
+                        </td>
+                        <td className="py-3 px-4 text-right font-mono text-indigo-800">
+                          {myLiveSalesSummary.totalPcs.toLocaleString('id-ID')} Pcs
+                        </td>
+                        <td className="py-3 px-4 text-right font-mono text-pink-700 text-sm">
+                          +{formatRupiah(salesCommissionPay)}
+                        </td>
+                        <td className="py-3 px-4 text-center text-[10px] text-emerald-700">
+                          Sinkron Slip Gaji
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Mobile Bottom Sheet Drawer for Secondary Employee Portal Menus (<768px) */}
       {isMobileMenuSheetOpen && (
         <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-end justify-center md:hidden animate-in fade-in">
@@ -5779,6 +6599,17 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   icon: WalletCards,
                   badge: 'PDF',
                 },
+                ...(canAccessLiveCommissionPanel
+                  ? [
+                      {
+                        id: 'live_commission' as const,
+                        label: 'Komisi Live Host & Co-Host',
+                        desc: 'TikTok Shop & Shopee Live (Read-Only)',
+                        icon: Video,
+                        badge: salesCommissionPay > 0 ? `+${formatRupiah(salesCommissionPay)}` : '',
+                      },
+                    ]
+                  : []),
                 {
                   id: 'leave' as const,
                   label: 'Cuti & Izin',

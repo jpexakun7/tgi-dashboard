@@ -12,6 +12,10 @@ import {
   getOvertimeRatePerMinute,
   getPayrollSignatoriesConfig,
   savePayrollSignatoriesConfig,
+  getEmployeeDailySalary,
+  getEmployeeHourlyRate,
+  STANDARD_WORK_HOURS_PER_DAY,
+  calculateEmployeeLiveSalesCommission,
 } from '../utils/formatters';
 import { getPayslipWhatsAppUrl, getPayslipEmailUrl } from '../utils/notificationHelper';
 import {
@@ -24,8 +28,14 @@ import {
   Mail,
   PenTool,
   Check,
+  Video,
 } from 'lucide-react';
 import { SignatoryConfigModal } from './SignatoryConfigModal';
+import {
+  fetchLivestreamSessionsFromSupabase,
+  fetchEmployeeByIdFromSupabase,
+} from '../services/supabaseService';
+import { LiveStreamSalesRecord } from '../types';
 
 interface PayslipModalProps {
   payroll: PayrollRecord | null;
@@ -49,6 +59,8 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
   );
   const [isSignatoryModalOpen, setIsSignatoryModalOpen] = useState(false);
   const [savedToast, setSavedToast] = useState<string | null>(null);
+  const [cloudLiveSessions, setCloudLiveSessions] = useState<LiveStreamSalesRecord[]>([]);
+  const [syncedEmployeeData, setSyncedEmployeeData] = useState<Partial<Employee> | null>(null);
 
   useEffect(() => {
     setSignatories(getPayrollSignatoriesConfig(companyConfig));
@@ -61,6 +73,43 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
     window.addEventListener('tgi_signatories_updated', handleSync);
     return () => window.removeEventListener('tgi_signatories_updated', handleSync);
   }, [companyConfig]);
+
+  useEffect(() => {
+    if (!employee?.id) return;
+    let isMounted = true;
+
+    const loadLiveCommissionData = async () => {
+      const [sessions, empFromDb] = await Promise.all([
+        fetchLivestreamSessionsFromSupabase(employee.id, payroll?.period),
+        fetchEmployeeByIdFromSupabase(employee.id),
+      ]);
+      if (!isMounted) return;
+      if (Array.isArray(sessions) && sessions.length > 0) {
+        setCloudLiveSessions(sessions);
+      }
+      if (empFromDb) {
+        setSyncedEmployeeData(empFromDb);
+      }
+    };
+
+    loadLiveCommissionData();
+
+    const handleLiveUpdated = (e: Event) => {
+      const customEv = e as CustomEvent;
+      if (customEv?.detail?.id === employee.id) {
+        setSyncedEmployeeData(customEv.detail);
+      }
+      loadLiveCommissionData();
+    };
+
+    window.addEventListener('tgi_employee_live_updated', handleLiveUpdated);
+    window.addEventListener('tgi_livestream_sessions_updated', handleLiveUpdated);
+    return () => {
+      isMounted = false;
+      window.removeEventListener('tgi_employee_live_updated', handleLiveUpdated);
+      window.removeEventListener('tgi_livestream_sessions_updated', handleLiveUpdated);
+    };
+  }, [employee?.id, payroll?.period]);
 
   if (!payroll || !employee) return null;
 
@@ -76,7 +125,81 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
     setTimeout(() => setSavedToast(null), 3500);
   };
 
-  const totalEarnings = payroll.totalGrossSalary;
+  const mergedLiveLogs = (() => {
+    const map = new Map<string, LiveStreamSalesRecord>();
+    const propLogs = Array.isArray(employee.liveStreamSalesLogs)
+      ? employee.liveStreamSalesLogs
+      : [];
+    const dbEmpLogs = Array.isArray(syncedEmployeeData?.liveStreamSalesLogs)
+      ? syncedEmployeeData!.liveStreamSalesLogs!
+      : [];
+    for (const s of [...cloudLiveSessions, ...dbEmpLogs, ...propLogs]) {
+      if (s?.id) map.set(s.id, s);
+    }
+    return Array.from(map.values());
+  })();
+
+  const effectiveEmployee: Employee = {
+    ...employee,
+    ...(syncedEmployeeData || {}),
+    id: employee.id,
+    isLiveStreamHost: Boolean(
+      syncedEmployeeData?.is_host ??
+        syncedEmployeeData?.isLiveStreamHost ??
+        employee.is_host ??
+        employee.isLiveStreamHost
+    ),
+    is_host: Boolean(
+      syncedEmployeeData?.is_host ??
+        syncedEmployeeData?.isLiveStreamHost ??
+        employee.is_host ??
+        employee.isLiveStreamHost
+    ),
+    isCoHostLiveStream: Boolean(
+      syncedEmployeeData?.is_co_host ??
+        syncedEmployeeData?.isCoHostLiveStream ??
+        employee.is_co_host ??
+        employee.isCoHostLiveStream
+    ),
+    is_co_host: Boolean(
+      syncedEmployeeData?.is_co_host ??
+        syncedEmployeeData?.isCoHostLiveStream ??
+        employee.is_co_host ??
+        employee.isCoHostLiveStream
+    ),
+    liveStreamSalesLogs: mergedLiveLogs,
+  };
+
+  const liveSalesSummary = calculateEmployeeLiveSalesCommission(
+    effectiveEmployee,
+    payroll.period
+  );
+  const salesCommissionAmount = Math.max(
+    Number(payroll.salesCommission) || 0,
+    Number(liveSalesSummary.totalCommission) || 0
+  );
+
+  const baseEarningsWithoutCommission =
+    (Number(payroll.baseSalary) || 0) +
+    (Number(payroll.allowancePosition) || 0) +
+    (Number(payroll.allowanceTransport) || 0) +
+    (Number(payroll.allowanceMeal) || 0) +
+    (Number(payroll.allowanceCommunication) || 0) +
+    (Number(payroll.overtimePay) || 0) +
+    (Number(payroll.bonus) || 0);
+
+  const totalEarnings = Math.max(
+    Number(payroll.totalGrossSalary) || 0,
+    baseEarningsWithoutCommission + salesCommissionAmount
+  );
+  const effectiveTotalDeductions = Number(payroll.totalDeductions) || 0;
+  const effectiveTakeHomePay = Math.max(0, totalEarnings - effectiveTotalDeductions);
+  const isHostActive = Boolean(
+    effectiveEmployee.is_host === true || effectiveEmployee.isLiveStreamHost === true
+  );
+  const isCoHostActive = Boolean(
+    effectiveEmployee.is_co_host === true || effectiveEmployee.isCoHostLiveStream === true
+  );
 
   const effectiveSignDate =
     signatories.customDateText && signatories.customDateText.trim()
@@ -226,11 +349,33 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
               <span className="text-slate-500 block mt-1">NPWP: {employee.npwp}</span>
             </div>
             <div>
-              <span className="text-slate-500 block">Pembayaran Bank</span>
-              <span className="font-semibold text-slate-900">
+              <span className="text-slate-500 block">Tarif Gaji &amp; Bank</span>
+              <span className="font-bold text-emerald-700 block">
+                {formatRupiah(
+                  payroll.hourlyRate ||
+                    getEmployeeHourlyRate(employee, STANDARD_WORK_HOURS_PER_DAY, 25)
+                )}{' '}
+                / jam (Std 9 Jam/Hr)
+              </span>
+              {(employee.isLiveStreamHost || salesCommissionAmount > 0) && (
+                <span className="font-bold text-pink-700 block text-[10px] mt-0.5">
+                  Host Live: {employee.salesCommissionPercentage || 0}% Omset
+                  {(employee.salesCommissionPerPcs || 0) > 0
+                    ? ` + ${formatRupiah(employee.salesCommissionPerPcs || 0)}/pcs`
+                    : ''}
+                </span>
+              )}
+              {(employee.isCoHostLiveStream ||
+                (employee.coHostCommissionPercentage || 0) > 0 ||
+                liveSalesSummary.isCoHostLiveStream) && (
+                <span className="font-bold text-violet-700 block text-[10px] mt-0.5">
+                  Co-Host Live: {employee.coHostCommissionPercentage || 0}% dari Omset Live
+                </span>
+              )}
+              <span className="font-semibold text-slate-900 block mt-0.5">
                 {employee.bankName} - {employee.bankAccountNumber}
               </span>
-              <span className="text-slate-500 block mt-1">a/n {employee.bankAccountHolder}</span>
+              <span className="text-slate-500 block">a/n {employee.bankAccountHolder}</span>
             </div>
           </div>
 
@@ -244,8 +389,40 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
               </div>
               <div className="divide-y divide-slate-100 text-xs">
                 <div className="flex justify-between py-2 px-4">
-                  <span className="text-slate-700">Gaji Pokok</span>
-                  <span className="font-medium">{formatRupiah(payroll.baseSalary)}</span>
+                  <div>
+                    <span className="text-slate-700 font-medium block">
+                      Gaji Pokok (Real-Time Jam Kerja Aktual)
+                    </span>
+                    <span className="text-[10px] text-emerald-700 font-mono block">
+                      {payroll.totalActualWorkHours ?? 0} Jam Kerja Riil ({payroll.presentDaysCount ?? 0} Hari Masuk) ×{' '}
+                      {formatRupiah(
+                        payroll.hourlyRate ||
+                          getEmployeeHourlyRate(employee, STANDARD_WORK_HOURS_PER_DAY, 25)
+                      )}
+                      /jam
+                    </span>
+                    <span className="text-[10px] text-slate-500 block">
+                      Standar 9 Jam/Hari ={' '}
+                      {formatRupiah(
+                        payroll.dailySalary ||
+                          getEmployeeDailySalary(employee, 25, STANDARD_WORK_HOURS_PER_DAY)
+                      )}
+                      /hari
+                    </span>
+                    {(payroll.alphaDaysCount || 0) > 0 && (
+                      <span className="text-[10px] text-rose-600 font-semibold block">
+                        Alpha / Tanpa Keterangan {payroll.alphaDaysCount} hari (0 jam) otomatis dipotong (-
+                        {formatRupiah(
+                          payroll.alphaPenaltyAmount ||
+                            (payroll.alphaDaysCount || 0) *
+                              (payroll.dailySalary ||
+                                getEmployeeDailySalary(employee, 25, STANDARD_WORK_HOURS_PER_DAY))
+                        )}
+                        )
+                      </span>
+                    )}
+                  </div>
+                  <span className="font-semibold">{formatRupiah(payroll.baseSalary)}</span>
                 </div>
                 <div className="flex justify-between py-2 px-4">
                   <span className="text-slate-700">Tunjangan Jabatan</span>
@@ -286,6 +463,51 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
                   </div>
                   <span className="font-medium">{formatRupiah(payroll.overtimePay)}</span>
                 </div>
+                {(salesCommissionAmount > 0 ||
+                  isHostActive ||
+                  isCoHostActive ||
+                  liveSalesSummary.isLiveStreamHost ||
+                  liveSalesSummary.isCoHostLiveStream) && (
+                  <div className="flex justify-between py-2 px-4 bg-pink-50/70 border-l-2 border-pink-500">
+                    <div>
+                      <span className="text-slate-900 font-bold block">
+                        Insentif / Komisi Penjualan (
+                        {isCoHostActive && !isHostActive
+                          ? 'Co-Host Live Streaming'
+                          : isCoHostActive && isHostActive
+                          ? 'Host & Co-Host Live Streaming'
+                          : 'Host Live Streaming'}
+                        )
+                      </span>
+                      <span className="text-[10px] text-pink-700 font-medium block">
+                        {payroll.salesCommissionNotes ||
+                          liveSalesSummary.notes ||
+                          (isCoHostActive && !isHostActive
+                            ? `Komisi Co-Host Live (${effectiveEmployee.coHostCommissionPercentage || 0}% Omset${
+                                (effectiveEmployee.coHostCommissionPerPcs || 0) > 0
+                                  ? ` + ${formatRupiah(effectiveEmployee.coHostCommissionPerPcs || 0)}/pcs`
+                                  : ''
+                              })`
+                            : `Komisi Host Live (${effectiveEmployee.salesCommissionPercentage || 0}% Omset${
+                                (effectiveEmployee.salesCommissionPerPcs || 0) > 0
+                                  ? ` + ${formatRupiah(effectiveEmployee.salesCommissionPerPcs || 0)}/pcs`
+                                  : ''
+                              }${
+                                isCoHostActive
+                                  ? ` | Co-Host: ${effectiveEmployee.coHostCommissionPercentage || 0}% Omset${
+                                      (effectiveEmployee.coHostCommissionPerPcs || 0) > 0
+                                        ? ` + ${formatRupiah(effectiveEmployee.coHostCommissionPerPcs || 0)}/pcs`
+                                        : ''
+                                    }`
+                                  : ''
+                              })`)}
+                      </span>
+                    </div>
+                    <span className="font-bold text-pink-700">
+                      {formatRupiah(salesCommissionAmount)}
+                    </span>
+                  </div>
+                )}
                 {payroll.bonus > 0 && (
                   <div className="flex justify-between py-2 px-4 bg-emerald-50/50">
                     <span className="text-slate-700 font-medium">Bonus &amp; Insentif Kinerja</span>
@@ -431,6 +653,62 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
             </div>
           </div>
 
+          {/* LAMPIRAN TRANSPARANSI SESI LIVE STREAMING (BILA ADA KOMISI LIVE) */}
+          {liveSalesSummary.filteredLogs.length > 0 && (
+            <div className="mt-4 p-3.5 bg-pink-50/60 rounded-xl border border-pink-200/80 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2 font-semibold text-pink-950 mb-2">
+                <div className="flex items-center gap-1.5">
+                  <Video className="w-4 h-4 text-pink-600" />
+                  <span>
+                    Rincian Sesi Live Streaming &amp; Komisi Penjualan ({liveSalesSummary.sessionsCount} Sesi)
+                  </span>
+                </div>
+                <span className="text-[11px] font-bold text-pink-700">
+                  Total Omset: {formatRupiah(liveSalesSummary.totalOmset)} • Tas Terjual:{' '}
+                  {(liveSalesSummary.totalPcs ?? 0).toLocaleString('id-ID')} Pcs • Total Komisi:{' '}
+                  {formatRupiah(salesCommissionAmount)}
+                </span>
+              </div>
+              <div className="overflow-x-auto bg-white rounded-lg border border-pink-100">
+                <table className="w-full text-[11px] text-left">
+                  <thead className="bg-pink-50/80 text-pink-950 font-semibold border-b border-pink-100">
+                    <tr>
+                      <th className="py-1.5 px-2.5">Tanggal</th>
+                      <th className="py-1.5 px-2.5">Peran &amp; Platform</th>
+                      <th className="py-1.5 px-2.5 text-right">Omset Live</th>
+                      <th className="py-1.5 px-2.5 text-right">Tas Terjual</th>
+                      <th className="py-1.5 px-2.5 text-right">Komisi Sesi</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-pink-50">
+                    {liveSalesSummary.filteredLogs.map((log) => (
+                      <tr key={log.id}>
+                        <td className="py-1 px-2.5 font-medium text-slate-700">
+                          {formatIndoDate(log.date || log.session_date || '')}
+                        </td>
+                        <td className="py-1 px-2.5">
+                          <span className="font-bold text-pink-800">
+                            {log.sessionRole || (log.role_type === 'co_host' ? 'Co-Host' : 'Host')}
+                          </span>{' '}
+                          • <span className="text-slate-600">{log.platform}</span>
+                        </td>
+                        <td className="py-1 px-2.5 text-right font-mono">
+                          {formatRupiah(Number(log.omsetAmount ?? log.omset) || 0)}
+                        </td>
+                        <td className="py-1 px-2.5 text-right font-mono font-semibold text-indigo-800">
+                          {(Number(log.pcsSold ?? log.pcs_sold) || 0).toLocaleString('id-ID')} Pcs
+                        </td>
+                        <td className="py-1 px-2.5 text-right font-mono font-bold text-pink-700">
+                          +{formatRupiah(Number(log.calculatedCommission ?? log.total_commission) || 0)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
           {/* TAKE HOME PAY HIGHLIGHT */}
           <div className="mt-6 p-5 bg-gradient-to-r from-emerald-600 to-teal-700 rounded-xl text-white shadow-md flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
             <div>
@@ -438,10 +716,10 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
                 PENGHASILAN BERSIH DITERIMA (TAKE HOME PAY)
               </span>
               <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight mt-0.5">
-                {formatRupiah(payroll.takeHomePay)}
+                {formatRupiah(effectiveTakeHomePay)}
               </h2>
               <p className="text-xs italic text-emerald-100 mt-1 font-serif">
-                &ldquo;{terbilangRupiah(payroll.takeHomePay)}&rdquo;
+                &ldquo;{terbilangRupiah(effectiveTakeHomePay)}&rdquo;
               </p>
             </div>
             <div className="sm:text-right text-xs bg-emerald-800/60 sm:bg-transparent p-2.5 sm:p-0 rounded-lg w-full sm:w-auto">

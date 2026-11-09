@@ -30,6 +30,9 @@ import {
   Calendar,
   ShieldCheck,
   PenTool,
+  Video,
+  Plus,
+  Trash2,
 } from 'lucide-react';
 import {
   Employee,
@@ -38,6 +41,8 @@ import {
   CompanyConfig,
   PerformanceReview,
   AttendancePenaltyPolicy,
+  LiveStreamSalesRecord,
+  LiveStreamPlatform,
 } from '../types';
 import {
   formatRupiah,
@@ -49,6 +54,10 @@ import {
   evaluateBankAccountValidity,
   formatBankTransferRemark,
   AVAILABLE_PAYROLL_PERIODS,
+  getEmployeeDailySalary,
+  getEmployeeHourlyRate,
+  STANDARD_WORK_HOURS_PER_DAY,
+  calculateEmployeeLiveSalesCommission,
 } from '../utils/formatters';
 import {
   getPayslipWhatsAppUrl,
@@ -60,6 +69,7 @@ import {
 import { UploadPayrollModal } from './UploadPayrollModal';
 import { PayrollReportModal } from './PayrollReportModal';
 import { SignatoryConfigModal } from './SignatoryConfigModal';
+import { LiveStreamSessionModal } from './LiveStreamSessionModal';
 import { exportPayrollToCSV, exportPayrollToPDF } from '../utils/payrollExporter';
 
 interface PayrollManagementProps {
@@ -71,6 +81,7 @@ interface PayrollManagementProps {
   onOpenPayslip: (payroll: PayrollRecord) => void;
   onRecalculatePayroll: () => void;
   onUpdatePayrollRecord: (record: PayrollRecord) => void;
+  onUpdateEmployee?: (emp: Employee) => void;
   onUpdatePenaltyPolicy?: (newPolicy: AttendancePenaltyPolicy) => void;
   onChangePayrollPeriod?: (newPeriod: string) => void;
   onToggleLockPayrollPeriod?: (periodToToggle?: string) => void;
@@ -89,6 +100,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
   onOpenPayslip,
   onRecalculatePayroll,
   onUpdatePayrollRecord,
+  onUpdateEmployee,
   onUpdatePenaltyPolicy,
   onChangePayrollPeriod,
   onToggleLockPayrollPeriod,
@@ -141,6 +153,21 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
   const [isBroadcastModalOpen, setIsBroadcastModalOpen] = useState(false);
 
+  // State for Admin Live Stream Sales Omset & Commission Modal
+  const [liveSalesEmployeeId, setLiveSalesEmployeeId] = useState<string | null>(null);
+  const [editingLiveLogId, setEditingLiveLogId] = useState<string | null>(null);
+  const [liveSessionRole, setLiveSessionRole] = useState<'Host' | 'Co-Host'>('Host');
+  const [liveSessionDate, setLiveSessionDate] = useState<string>(
+    () => new Date().toISOString().split('T')[0]
+  );
+  const [liveSessionPlatform, setLiveSessionPlatform] =
+    useState<LiveStreamPlatform>('TikTok Shop Live');
+  const [liveSessionTitle, setLiveSessionTitle] = useState<string>('');
+  const [liveSessionDurationHours, setLiveSessionDurationHours] = useState<number>(3);
+  const [liveSessionOmset, setLiveSessionOmset] = useState<number>(0);
+  const [liveSessionPcs, setLiveSessionPcs] = useState<number>(0);
+  const [liveSessionNotes, setLiveSessionNotes] = useState<string>('');
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3500);
@@ -179,7 +206,8 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
           record.allowanceMeal +
           record.allowanceCommunication +
           record.overtimePay +
-          newBonus;
+          newBonus +
+          (record.salesCommission || 0);
         const newTHP = Math.max(0, newGross - record.totalDeductions);
 
         updatedCount++;
@@ -222,6 +250,10 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
   );
   const totalOvertime = validPayrolls.reduce((acc, curr) => acc + curr.overtimePay, 0);
   const totalBonus = validPayrolls.reduce((acc, curr) => acc + curr.bonus, 0);
+  const totalSalesCommission = validPayrolls.reduce(
+    (acc, curr) => acc + (curr.salesCommission || 0),
+    0
+  );
   const totalGross = validPayrolls.reduce((acc, curr) => acc + curr.totalGrossSalary, 0);
   const totalDeductions = validPayrolls.reduce((acc, curr) => acc + curr.totalDeductions, 0);
   const totalLateAndAlphaDeductions = validPayrolls.reduce(
@@ -462,7 +494,8 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
       editingBonusRecord.allowanceMeal +
       editingBonusRecord.allowanceCommunication +
       newOvertimePay +
-      Number(bonusInput);
+      Number(bonusInput) +
+      (editingBonusRecord.salesCommission || 0);
 
     const newTHP = Math.max(0, newGross - editingBonusRecord.totalDeductions);
 
@@ -613,6 +646,32 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
           >
             <MessageCircle className="w-4 h-4 text-white" />
             <span>Broadcast WA Slip Gaji Terbit</span>
+          </button>
+
+          {/* Kelola Omset & Komisi Live Streaming (Host & Co-Host) — Terpusat di Admin */}
+          <button
+            type="button"
+            onClick={() => {
+              const firstHostOrEmp =
+                employees.find((e) => e.isLiveStreamHost || e.isCoHostLiveStream) ||
+                employees[0];
+              if (firstHostOrEmp) {
+                setEditingLiveLogId(null);
+                setLiveSalesEmployeeId(firstHostOrEmp.id);
+                setLiveSessionRole(
+                  firstHostOrEmp.isCoHostLiveStream && !firstHostOrEmp.isLiveStreamHost
+                    ? 'Co-Host'
+                    : 'Host'
+                );
+              } else {
+                showToast('Belum ada data karyawan untuk dikelola.');
+              }
+            }}
+            className="px-3.5 py-2 bg-gradient-to-r from-pink-600 via-fuchsia-600 to-violet-600 hover:from-pink-700 hover:to-violet-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
+            title="Pusat Kendali Admin: Input & Edit Omset Live Streaming, Pcs Terjual, dan Persentase Komisi Host & Co-Host"
+          >
+            <Video className="w-4 h-4 text-white" />
+            <span>Input &amp; Edit Omset Live (Host / Co-Host)</span>
           </button>
 
           {/* Tarik Bonus dari Penilaian Kinerja */}
@@ -921,8 +980,13 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
             <span className="font-bold text-sm">{formatRupiah(totalOvertime)}</span>
           </div>
           <div className="bg-emerald-700/40 p-2.5 rounded-xl border border-emerald-600/30">
-            <span className="text-emerald-200 block text-[11px]">Total Bonus</span>
-            <span className="font-bold text-sm">{formatRupiah(totalBonus)}</span>
+            <span className="text-emerald-200 block text-[11px]">Total Bonus &amp; Komisi Live</span>
+            <span className="font-bold text-sm">{formatRupiah(totalBonus + totalSalesCommission)}</span>
+            {totalSalesCommission > 0 && (
+              <span className="block text-[10px] text-pink-200 font-semibold mt-0.5">
+                Komisi Host: {formatRupiah(totalSalesCommission)}
+              </span>
+            )}
           </div>
           <div className="bg-emerald-700/40 p-2.5 rounded-xl border border-emerald-600/30">
             <span className="text-emerald-200 block text-[11px]">Total PPh 21 TER</span>
@@ -1296,37 +1360,110 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                       </div>
                     </td>
                     <td className="py-3 px-4">
-                      <span className="font-semibold text-slate-900 block">
+                      <span className="font-bold text-slate-900 block">
                         Pokok: {formatRupiah(record.baseSalary)}
                       </span>
-                      <span className="text-[11px] text-slate-500 block">
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 mt-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold text-[10px]">
+                        {record.totalActualWorkHours ?? 0} Jam Kerja ({record.presentDaysCount ?? 0} Hr) ×{' '}
+                        {formatRupiah(
+                          record.hourlyRate ||
+                            getEmployeeHourlyRate(emp, STANDARD_WORK_HOURS_PER_DAY, 25)
+                        )}
+                        /jam
+                      </span>
+                      <span className="block text-[10px] text-slate-500 mt-0.5">
+                        Standar 9 Jam/Hr:{' '}
+                        {formatRupiah(
+                          record.dailySalary ||
+                            getEmployeeDailySalary(emp, 25, STANDARD_WORK_HOURS_PER_DAY)
+                        )}
+                        /hari
+                      </span>
+                      {(record.alphaDaysCount || 0) > 0 && (
+                        <span className="block text-[10px] font-bold text-rose-600 mt-0.5">
+                          Alpha {record.alphaDaysCount} Hr (0 Jam) dipotong (-
+                          {formatRupiah(
+                            record.alphaPenaltyAmount ||
+                              (record.alphaDaysCount || 0) *
+                                (record.dailySalary ||
+                                  getEmployeeDailySalary(emp, 25, STANDARD_WORK_HOURS_PER_DAY))
+                          )}
+                          )
+                        </span>
+                      )}
+                      <span className="text-[11px] text-slate-500 block mt-0.5">
                         Tunjangan: +{formatRupiah(totalTunjangan)}
                       </span>
                     </td>
                     <td className="py-3 px-4">
                       <div>
                         <span className="font-medium text-slate-800 block">
-                          {formatRupiah(record.overtimePay + record.bonus)}
+                          {formatRupiah(
+                            record.overtimePay + record.bonus + (record.salesCommission || 0)
+                          )}
                         </span>
                         <span className="text-[10px] text-emerald-600 block">
                           OT: {formatRupiah(record.overtimePay)}{' '}
                           {record.overtimeMinutes ? `(${record.overtimeMinutes} mnt)` : ''} | Bns:{' '}
                           {formatRupiah(record.bonus)}
                         </span>
-                        {matchingRev && (
-                          <span
-                            className={`inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded mt-0.5 border ${
-                              record.bonus === matchingRev.recommendedBonus && matchingRev.recommendedBonus > 0
-                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                                : 'bg-indigo-50 text-indigo-700 border-indigo-200/80'
-                            }`}
-                            title={`Skor KPI: ${matchingRev.kpiScore}, Skor Akhir: ${matchingRev.finalScore} (Grade ${matchingRev.grade}) • Rekomendasi: ${formatRupiah(matchingRev.recommendedBonus)}`}
-                          >
-                            <Award className="w-2.5 h-2.5" />
-                            KPI {matchingRev.finalScore} ({matchingRev.grade})
-                            {record.bonus === matchingRev.recommendedBonus && matchingRev.recommendedBonus > 0 && ' ✓'}
-                          </span>
+                        {((record.salesCommission || 0) > 0 ||
+                          emp?.isLiveStreamHost ||
+                          emp?.isCoHostLiveStream) && (
+                          <div className="mt-1 space-y-0.5">
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-pink-50 text-pink-700 border border-pink-200 text-[10px] font-bold">
+                              <Video className="w-2.5 h-2.5 text-pink-600" />
+                              Insentif / Komisi Penjualan: +{formatRupiah(record.salesCommission || 0)}
+                            </span>
+                            {record.salesCommissionNotes && (
+                              <span className="block text-[9px] text-pink-600 font-medium">
+                                {record.salesCommissionNotes}
+                              </span>
+                            )}
+                          </div>
                         )}
+                        <div className="mt-1 flex items-center gap-1 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (emp) {
+                                setLiveSalesEmployeeId(emp.id);
+                                setLiveSessionRole(
+                                  emp.isCoHostLiveStream && !emp.isLiveStreamHost
+                                    ? 'Co-Host'
+                                    : 'Host'
+                                );
+                              }
+                            }}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-pink-600 hover:bg-pink-700 text-white text-[10px] font-bold transition-colors cursor-pointer shadow-2xs"
+                            title="Rekam atau lihat omset penjualan Live Streaming (Host / Co-Host) untuk kalkulasi komisi otomatis"
+                          >
+                            <Video className="w-2.5 h-2.5" />
+                            <span>
+                              {emp?.isLiveStreamHost && emp?.isCoHostLiveStream
+                                ? 'Omset Host & Co-Host'
+                                : emp?.isCoHostLiveStream
+                                ? 'Omset Co-Host Live'
+                                : emp?.isLiveStreamHost
+                                ? 'Omset Live Host'
+                                : 'Set Host / Co-Host Live'}
+                            </span>
+                          </button>
+                          {matchingRev && (
+                            <span
+                              className={`inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded border ${
+                                record.bonus === matchingRev.recommendedBonus && matchingRev.recommendedBonus > 0
+                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                  : 'bg-indigo-50 text-indigo-700 border-indigo-200/80'
+                              }`}
+                              title={`Skor KPI: ${matchingRev.kpiScore}, Skor Akhir: ${matchingRev.finalScore} (Grade ${matchingRev.grade}) • Rekomendasi: ${formatRupiah(matchingRev.recommendedBonus)}`}
+                            >
+                              <Award className="w-2.5 h-2.5" />
+                              KPI {matchingRev.finalScore} ({matchingRev.grade})
+                              {record.bonus === matchingRev.recommendedBonus && matchingRev.recommendedBonus > 0 && ' ✓'}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </td>
                     <td className="py-3 px-4">
@@ -1358,6 +1495,21 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                                 `Potongan Terlambat ${record.lateFrequency || 1}x / ${
                                   record.totalLateMinutes || 0
                                 } mnt: -${formatRupiah(record.lateDeduction)}`}
+                            </span>
+                          </div>
+                        ) : (record.alphaDaysCount || 0) > 0 ? (
+                          <div className="space-y-0.5">
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded">
+                              Alpha {record.alphaDaysCount} Hari Otomatis Dipotong dari Gaji Pokok
+                            </span>
+                            <span className="text-[10px] text-slate-500 block">
+                              Diabaikan dari hari hadir (-
+                              {formatRupiah(
+                                record.alphaPenaltyAmount ||
+                                  (record.alphaDaysCount || 0) *
+                                    (record.dailySalary || getEmployeeDailySalary(emp, 25))
+                              )}
+                              )
                             </span>
                           </div>
                         ) : (
@@ -1796,6 +1948,19 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
             'Konfigurasi Penandatangan, Tanda Tangan & Stempel berhasil disimpan untuk Laporan & Slip Gaji!'
           );
         }}
+      />
+
+      {/* Modal Input Interaktif Sesi Live Streaming & Komisi (Host / Co-Host) */}
+      <LiveStreamSessionModal
+        isOpen={Boolean(liveSalesEmployeeId)}
+        onClose={() => setLiveSalesEmployeeId(null)}
+        employees={employees}
+        initialEmployeeId={liveSalesEmployeeId}
+        currentPeriod={companyConfig.currentPayrollPeriod}
+        onUpdateEmployee={(updated) => {
+          onUpdateEmployee?.(updated);
+        }}
+        onNotify={(msg) => showToast(msg)}
       />
 
       {/* Modal Broadcast WA Slip Gaji Terbit & Kirim Cepat per Karyawan */}

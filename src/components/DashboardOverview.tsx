@@ -312,6 +312,11 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
         existing?.cashAdvanceDeduction || 0,
         existing?.cashAdvanceNotes,
         {
+          hourlyRate: penaltySummary.hourlyRate,
+          totalActualWorkHours: penaltySummary.totalActualWorkHours,
+          standardWorkHoursPerDay: penaltySummary.standardWorkHoursPerDay,
+          dailyWorkBreakdown: penaltySummary.dailyWorkBreakdown,
+          presentDaysCount: penaltySummary.presentDaysCount,
           lateFrequency: penaltySummary.lateFrequency,
           totalLateMinutes: penaltySummary.totalLateMinutes,
           latePenaltyAmount: penaltySummary.latePenaltyAmount,

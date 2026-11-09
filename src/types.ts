@@ -27,7 +27,11 @@ export interface Employee {
   department: Department;
   employmentStatus: EmploymentStatus;
   joinDate: string;
-  baseSalary: number; // Gaji Pokok
+  baseSalary: number; // Gaji Pokok Bulanan (Acuan / Total)
+  hourlyRate?: number; // Tarif Gaji Per Jam (hourly_rate)
+  hourly_rate?: number; // Alias kolom Supabase hourly_rate
+  dailySalary?: number; // Gaji Per Hari (daily_salary = 9 jam × hourly_rate)
+  daily_salary?: number; // Alias kolom Supabase daily_salary
   allowances: {
     position: number; // Tunjangan Jabatan
     transport: number; // Tunjangan Transport
@@ -58,6 +62,59 @@ export interface Employee {
   };
   accessPin?: string; // PIN / Password khusus untuk login Portal Karyawan per akun
   shiftId?: string; // ID jadwal shift kerja yang diikuti karyawan (contoh: 'shift-pagi-reguler')
+  isLiveStreamHost?: boolean; // Penanda apakah karyawan adalah Host Live Streaming (TikTok Shop / Shopee Live)
+  is_host?: boolean; // Alias flag Host Live Stream (is_host)
+  salesCommissionPercentage?: number; // Persentase Komisi Penjualan Live Streaming (contoh: 2.5 untuk 2.5% dari omset)
+  host_commission_pct?: number; // Alias kolom SQL host_commission_pct DECIMAL(5,2)
+  salesCommissionPerPcs?: number; // Nominal Komisi Penjualan Host per Pcs Tas terjual (contoh: Rp 2.000 / pcs)
+  host_commission_per_pcs?: number; // Alias kolom SQL host_commission_per_pcs DECIMAL(10,2)
+  isCoHostLiveStream?: boolean; // Penanda apakah karyawan adalah Co-Host Live Streaming
+  is_co_host?: boolean; // Alias flag Co-Host Live Stream (is_co_host)
+  coHostCommissionPercentage?: number; // Persentase Komisi Co-Host Live Streaming (%) dari omset sesi live yang diikuti
+  co_host_commission_pct?: number; // Alias kolom SQL co_host_commission_pct DECIMAL(5,2)
+  coHostCommissionPerPcs?: number; // Nominal Komisi Co-Host per Pcs Tas terjual (contoh: Rp 1.000 / pcs)
+  co_host_commission_per_pcs?: number; // Alias kolom SQL co_host_commission_per_pcs DECIMAL(10,2)
+  liveStreamSalesLogs?: LiveStreamSalesRecord[]; // Riwayat pencatatan omset live streaming yang tersinkronisasi
+}
+
+export type LiveStreamPlatform =
+  | 'TikTok Shop Live'
+  | 'Shopee Live'
+  | 'Tokopedia Play'
+  | 'Instagram / FB Live'
+  | 'Semua Platform'
+  | 'Lainnya';
+
+export interface LiveStreamSalesRecord {
+  id: string;
+  employeeId: string;
+  employee_id?: string;
+  employeeName?: string;
+  employee_name?: string;
+  employeeNik?: string;
+  date: string; // YYYY-MM-DD
+  session_date?: string; // Alias kolom SQL session_date DATE
+  period: string; // Contoh: "Oktober 2026"
+  platform: LiveStreamPlatform;
+  sessionRole?: 'Host' | 'Co-Host'; // Peran pada sesi live: Host Utama atau Co-Host Pendamping
+  role_type?: 'host' | 'co_host'; // Alias kolom SQL role_type ('host' | 'co_host')
+  hostCompanionName?: string; // Opsional: Nama Host Utama yang didampingi saat bertugas sebagai Co-Host
+  sessionTitle: string; // Contoh: "Sesi Live Pagi - Promo Tas Selempang Import"
+  durationHours: number; // Durasi live dalam jam
+  omsetAmount: number; // Total Omset / GMV Penjualan Live (IDR)
+  omset?: number; // Alias kolom SQL omset DECIMAL(15,2)
+  pcsSold: number; // Jumlah Pcs Produk Terjual
+  pcs_sold?: number; // Alias kolom SQL pcs_sold INTEGER
+  commissionPercentageSnapshot: number; // % komisi saat sesi direkam
+  commission_pct_used?: number; // Alias kolom SQL commission_pct_used DECIMAL(5,2)
+  commissionPerPcsSnapshot: number; // Rp/pcs komisi saat sesi direkam
+  commission_per_pcs_used?: number; // Alias kolom SQL commission_per_pcs_used DECIMAL(10,2)
+  calculatedCommission: number; // Total komisi otomatis sesi ini (IDR)
+  total_commission?: number; // Alias kolom SQL total_commission DECIMAL(12,2)
+  notes?: string;
+  status: 'Terverifikasi' | 'Menunggu Verifikasi' | 'Ditolak';
+  createdAt: string;
+  created_at?: string;
 }
 
 export interface WorkShift {
@@ -88,12 +145,28 @@ export interface DecemberPPh21ReconciliationResult {
   decemberPph21Payable: number; // PPh 21 Masa Desember (Kurang / Lebih Bayar)
 }
 
+export interface DailyWorkWageItem {
+  date: string;
+  checkIn: string;
+  checkOut: string;
+  workHours: number;
+  dailyWage: number;
+  status: string;
+}
+
 export interface PayrollRecord {
   id: string;
   employeeId: string;
   period: string; // e.g. "Oktober 2026"
   createdAt: string;
-  baseSalary: number;
+  baseSalary: number; // Total Gaji Pokok Bulanan = Akumulasi Jam Kerja Riil × Tarif Gaji Per Jam
+  hourlyRate?: number; // Tarif Gaji Per Jam (hourly_rate)
+  totalActualWorkHours?: number; // Akumulasi jam kerja riil seluruh hari masuk
+  standardWorkHoursPerDay?: number; // Standar jam kerja per hari (9 jam)
+  dailyWorkBreakdown?: DailyWorkWageItem[]; // Rincian gaji harian = Jam Kerja Aktual Hari Tersebut × Tarif Per Jam
+  dailySalary?: number; // Tarif Gaji Per Hari (9 jam × hourly_rate)
+  presentDaysCount?: number; // Jumlah Hari Hadir Aktual pada periode ini
+  standardWorkingDays?: number; // Standar hari kerja (misal: 25 hari)
   allowancePosition: number;
   allowanceTransport: number;
   allowanceMeal: number;
@@ -106,6 +179,16 @@ export interface PayrollRecord {
   overtimeFirstHourPay?: number; // Nominal upah lembur jam pertama (1.5x)
   overtimeSubsequentPay?: number; // Nominal upah lembur jam ke-2 dst (2.0x)
   bonus: number;
+  salesCommission?: number; // Insentif / Komisi Penjualan Host & Co-Host Live Streaming (otomatis dari omset/% atau pcs)
+  totalLiveSalesOmset?: number; // Total akumulasi omset penjualan live streaming bulan ini
+  totalLiveSalesPcs?: number; // Total akumulasi pcs terjual bulan ini
+  liveSalesSessionsCount?: number; // Jumlah sesi live streaming bulan ini
+  salesCommissionPercentage?: number; // Persentase komisi penjualan Host (%)
+  coHostCommissionPercentage?: number; // Persentase komisi penjualan Co-Host (%)
+  coHostCommissionPerPcs?: number; // Tarif komisi Co-Host per Pcs Tas Terjual (IDR)
+  coHostCommissionAmount?: number; // Nominal komisi dari sesi Co-Host Live Streaming
+  salesCommissionPerPcs?: number; // Tarif komisi Host per Pcs Tas Terjual (IDR)
+  salesCommissionNotes?: string; // Ringkasan perhitungan komisi penjualan pada slip gaji
   totalGrossSalary: number;
   employerBpjsTaxableAllowance?: number; // Komponen Premi BPJS Kes (4%) + JKK (0.24%) + JKM (0.3%) penambah DPP PPh 21
   taxableGrossSalary?: number; // Penghasilan Bruto Pajak (DPP PPh 21 TER = totalGrossSalary + employerBpjsTaxableAllowance)

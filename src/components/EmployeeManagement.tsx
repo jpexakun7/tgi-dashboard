@@ -36,8 +36,18 @@ import {
   MessageCircle,
   ExternalLink,
   AlertTriangle,
+  Video,
 } from 'lucide-react';
-import { Employee, Department, EmploymentStatus, PTKPStatus, CompanyAsset, PerformanceReview } from '../types';
+import {
+  Employee,
+  Department,
+  EmploymentStatus,
+  PTKPStatus,
+  CompanyAsset,
+  PerformanceReview,
+  LiveStreamSalesRecord,
+  LiveStreamPlatform,
+} from '../types';
 import {
   formatRupiah,
   formatIndoDate,
@@ -45,6 +55,10 @@ import {
   getNpwpStatusInfo,
   getContractValidityInfo,
   evaluateBankAccountValidity,
+  getEmployeeDailySalary,
+  getEmployeeHourlyRate,
+  STANDARD_WORK_HOURS_PER_DAY,
+  calculateEmployeeLiveSalesCommission,
 } from '../utils/formatters';
 import {
   getContractReminderWhatsAppUrl,
@@ -53,6 +67,13 @@ import {
 } from '../utils/notificationHelper';
 import { validateImageFile, compressImage, compressVideoFrame } from '../utils/imageUtils';
 import { EmployeeDemographicsCharts } from './EmployeeDemographicsCharts';
+import { LiveStreamSessionModal } from './LiveStreamSessionModal';
+import {
+  syncEmployeeLiveColumnsToSupabase,
+  upsertLivestreamSessionToSupabase,
+  deleteLivestreamSessionFromSupabase,
+  generateSessionUuid,
+} from '../services/supabaseService';
 
 const SAMPLE_PHOTOS = [
   { label: 'Pria Formal 1', url: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=300&h=300&q=80' },
@@ -116,6 +137,21 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
     downloadFileName?: string;
   } | null>(null);
   const [isUploadingContract, setIsUploadingContract] = useState(false);
+
+  // Admin Live Streaming Omset & Commission State inside Detail Karyawan Modal
+  const [detailEditingLogId, setDetailEditingLogId] = useState<string | null>(null);
+  const [detailLiveRole, setDetailLiveRole] = useState<'Host' | 'Co-Host'>('Host');
+  const [detailLiveDate, setDetailLiveDate] = useState<string>(
+    () => new Date().toISOString().split('T')[0]
+  );
+  const [detailLivePlatform, setDetailLivePlatform] =
+    useState<LiveStreamPlatform>('TikTok Shop Live');
+  const [detailLiveTitle, setDetailLiveTitle] = useState<string>('');
+  const [detailLiveDuration, setDetailLiveDuration] = useState<number>(3);
+  const [detailLiveOmset, setDetailLiveOmset] = useState<number>(0);
+  const [detailLivePcs, setDetailLivePcs] = useState<number>(0);
+  const [isLiveSessionModalOpen, setIsLiveSessionModalOpen] = useState<boolean>(false);
+  const [liveSessionModalEmpId, setLiveSessionModalEmpId] = useState<string | null>(null);
 
   // Sync viewingEmployee automatically when employees list updates from Portal Karyawan
   useEffect(() => {
@@ -381,7 +417,17 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
     department: 'Teknologi & IT',
     employmentStatus: 'PKWTT (Tetap)',
     joinDate: new Date().toISOString().split('T')[0],
-    baseSalary: 8000000,
+    hourlyRate: 35000,
+    hourly_rate: 35000,
+    dailySalary: 315000,
+    daily_salary: 315000,
+    baseSalary: 7875000,
+    isLiveStreamHost: false,
+    salesCommissionPercentage: 0,
+    salesCommissionPerPcs: 0,
+    isCoHostLiveStream: false,
+    coHostCommissionPercentage: 0,
+    coHostCommissionPerPcs: 0,
     allowances: {
       position: 1000000,
       transport: 800000,
@@ -425,7 +471,17 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         contractDocumentNumber: `PKWT/TKB/${currentYear}/${String(nextNum).padStart(3, '0')}`,
         contractDocumentUrl: '',
         contractDocumentName: '',
-        baseSalary: 6500000,
+        hourlyRate: 25000,
+        hourly_rate: 25000,
+        dailySalary: 225000,
+        daily_salary: 225000,
+        baseSalary: 5625000,
+        isLiveStreamHost: false,
+        salesCommissionPercentage: 0,
+        salesCommissionPerPcs: 0,
+        isCoHostLiveStream: false,
+        coHostCommissionPercentage: 0,
+        coHostCommissionPerPcs: 0,
         allowances: {
           position: 500000,
           transport: 600000,
@@ -470,7 +526,17 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
       contractDocumentNumber: `PKWT/TKB/${currentYear}/${String(nextNum).padStart(3, '0')}`,
       contractDocumentUrl: '',
       contractDocumentName: '',
-      baseSalary: 6500000,
+      hourlyRate: 25000,
+      hourly_rate: 25000,
+      dailySalary: 225000,
+      daily_salary: 225000,
+      baseSalary: 5625000,
+      isLiveStreamHost: false,
+      salesCommissionPercentage: 0,
+      salesCommissionPerPcs: 0,
+      isCoHostLiveStream: false,
+      coHostCommissionPercentage: 0,
+      coHostCommissionPerPcs: 0,
       allowances: {
         position: 500000,
         transport: 600000,
@@ -495,8 +561,35 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
     setEditingEmployee(emp);
     setFormError(null);
     setFormPhotoError(null);
+    const resolvedHourly = getEmployeeHourlyRate(emp, STANDARD_WORK_HOURS_PER_DAY, 25);
+    const resolvedDaily = getEmployeeDailySalary(emp, 25, STANDARD_WORK_HOURS_PER_DAY);
+    const resolvedIsHost = Boolean(emp.is_host === true || emp.isLiveStreamHost === true);
+    const resolvedIsCoHost = Boolean(emp.is_co_host === true || emp.isCoHostLiveStream === true);
+    const resolvedHostPct = Number(emp.host_commission_pct ?? emp.salesCommissionPercentage) || 0;
+    const resolvedHostPcs = Number(emp.host_commission_per_pcs ?? emp.salesCommissionPerPcs) || 0;
+    const resolvedCoHostPct =
+      Number(emp.co_host_commission_pct ?? emp.coHostCommissionPercentage) || 0;
+    const resolvedCoHostPcs =
+      Number(emp.co_host_commission_per_pcs ?? emp.coHostCommissionPerPcs) || 0;
+
     setFormData({
       ...emp,
+      hourlyRate: resolvedHourly,
+      hourly_rate: resolvedHourly,
+      dailySalary: resolvedDaily,
+      daily_salary: resolvedDaily,
+      isLiveStreamHost: resolvedIsHost,
+      is_host: resolvedIsHost,
+      salesCommissionPercentage: resolvedHostPct,
+      host_commission_pct: resolvedHostPct,
+      salesCommissionPerPcs: resolvedHostPcs,
+      host_commission_per_pcs: resolvedHostPcs,
+      isCoHostLiveStream: resolvedIsCoHost,
+      is_co_host: resolvedIsCoHost,
+      coHostCommissionPercentage: resolvedCoHostPct,
+      co_host_commission_pct: resolvedCoHostPct,
+      coHostCommissionPerPcs: resolvedCoHostPcs,
+      co_host_commission_per_pcs: resolvedCoHostPcs,
       allowances: {
         position: emp.allowances?.position || 0,
         transport: emp.allowances?.transport || 0,
@@ -530,6 +623,48 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
 
     stopFormCamera();
 
+    const explicitHourly = Number(formData.hourlyRate ?? formData.hourly_rate) || 0;
+    const explicitDaily = Number(formData.dailySalary ?? formData.daily_salary) || 0;
+    const resolvedHourlyRate =
+      explicitHourly > 0
+        ? Math.round(explicitHourly)
+        : explicitDaily > 0
+        ? Math.round(explicitDaily / STANDARD_WORK_HOURS_PER_DAY)
+        : Math.round((Number(formData.baseSalary) || 5625000) / (25 * STANDARD_WORK_HOURS_PER_DAY));
+    const resolvedDailySalary =
+      explicitDaily > 0
+        ? Math.round(explicitDaily)
+        : Math.round(resolvedHourlyRate * STANDARD_WORK_HOURS_PER_DAY);
+    const resolvedBaseSalary =
+      Number(formData.baseSalary) || resolvedDailySalary * 25;
+
+    const resolvedIsHost = Boolean(formData.isLiveStreamHost ?? formData.is_host);
+    const resolvedCommPct = resolvedIsHost
+      ? Math.max(0, Number(formData.salesCommissionPercentage ?? formData.host_commission_pct) || 0)
+      : 0;
+    const resolvedCommPerPcs = resolvedIsHost
+      ? Math.max(
+          0,
+          Math.round(Number(formData.salesCommissionPerPcs ?? formData.host_commission_per_pcs) || 0)
+        )
+      : 0;
+
+    const resolvedIsCoHost = Boolean(formData.isCoHostLiveStream ?? formData.is_co_host);
+    const resolvedCoHostCommPct = resolvedIsCoHost
+      ? Math.max(
+          0,
+          Number(formData.coHostCommissionPercentage ?? formData.co_host_commission_pct) || 0
+        )
+      : 0;
+    const resolvedCoHostCommPerPcs = resolvedIsCoHost
+      ? Math.max(
+          0,
+          Math.round(
+            Number(formData.coHostCommissionPerPcs ?? formData.co_host_commission_per_pcs) || 0
+          )
+        )
+      : 0;
+
     if (editingEmployee) {
       const updated: Employee = {
         ...editingEmployee,
@@ -550,7 +685,25 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         contractDocumentName: formData.contractDocumentName || editingEmployee.contractDocumentName,
         contractUpdatedAt: formData.contractUpdatedAt || editingEmployee.contractUpdatedAt,
         birthDate: formData.birthDate || editingEmployee.birthDate,
-        baseSalary: Number(formData.baseSalary) || editingEmployee.baseSalary || 5000000,
+        hourlyRate: resolvedHourlyRate,
+        hourly_rate: resolvedHourlyRate,
+        dailySalary: resolvedDailySalary,
+        daily_salary: resolvedDailySalary,
+        baseSalary: resolvedBaseSalary,
+        isLiveStreamHost: resolvedIsHost,
+        is_host: resolvedIsHost,
+        salesCommissionPercentage: resolvedCommPct,
+        host_commission_pct: resolvedCommPct,
+        salesCommissionPerPcs: resolvedCommPerPcs,
+        host_commission_per_pcs: resolvedCommPerPcs,
+        isCoHostLiveStream: resolvedIsCoHost,
+        is_co_host: resolvedIsCoHost,
+        coHostCommissionPercentage: resolvedCoHostCommPct,
+        co_host_commission_pct: resolvedCoHostCommPct,
+        coHostCommissionPerPcs: resolvedCoHostCommPerPcs,
+        co_host_commission_per_pcs: resolvedCoHostCommPerPcs,
+        liveStreamSalesLogs:
+          formData.liveStreamSalesLogs || editingEmployee.liveStreamSalesLogs || [],
         allowances: {
           position: Number(formData.allowances?.position) || 0,
           transport: Number(formData.allowances?.transport) || 0,
@@ -561,7 +714,8 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         facePhotoUrl: formData.facePhotoUrl || formData.avatarUrl || editingEmployee.facePhotoUrl,
       };
       onUpdateEmployee(updated);
-      showToast(`Data karyawan ${updated.fullName} (Divisi: ${updated.department}) berhasil diperbarui & tersinkronisasi!`);
+      syncEmployeeLiveColumnsToSupabase(updated).catch(() => {});
+      showToast(`Data karyawan ${updated.fullName} (Tarif Per Jam: ${formatRupiah(resolvedHourlyRate)}/jam${resolvedIsHost ? ` • Host Live: ${resolvedCommPct}%` : ''}${resolvedIsCoHost ? ` • Co-Host Live: ${resolvedCoHostCommPct}%` : ''}) berhasil diperbarui!`);
     } else {
       const joinDt = formData.joinDate || new Date().toISOString().split('T')[0];
       const newEmp: Employee = {
@@ -588,7 +742,24 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         contractDocumentName: formData.contractDocumentName || undefined,
         contractUpdatedAt: formData.contractUpdatedAt || undefined,
         birthDate: formData.birthDate || undefined,
-        baseSalary: Number(formData.baseSalary) || 5000000,
+        hourlyRate: resolvedHourlyRate,
+        hourly_rate: resolvedHourlyRate,
+        dailySalary: resolvedDailySalary,
+        daily_salary: resolvedDailySalary,
+        baseSalary: resolvedBaseSalary,
+        isLiveStreamHost: resolvedIsHost,
+        is_host: resolvedIsHost,
+        salesCommissionPercentage: resolvedCommPct,
+        host_commission_pct: resolvedCommPct,
+        salesCommissionPerPcs: resolvedCommPerPcs,
+        host_commission_per_pcs: resolvedCommPerPcs,
+        isCoHostLiveStream: resolvedIsCoHost,
+        is_co_host: resolvedIsCoHost,
+        coHostCommissionPercentage: resolvedCoHostCommPct,
+        co_host_commission_pct: resolvedCoHostCommPct,
+        coHostCommissionPerPcs: resolvedCoHostCommPerPcs,
+        co_host_commission_per_pcs: resolvedCoHostCommPerPcs,
+        liveStreamSalesLogs: [],
         allowances: {
           position: Number(formData.allowances?.position) || 0,
           transport: Number(formData.allowances?.transport) || 0,
@@ -607,7 +778,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         approvalStatus: 'approved',
       };
       onAddEmployee(newEmp);
-      showToast(`Karyawan baru "${newEmp.fullName}" (NIK: ${newEmp.nik}) berhasil ditambahkan ke database!`);
+      showToast(`Karyawan baru "${newEmp.fullName}" (Tarif Per Jam: ${formatRupiah(resolvedHourlyRate)}/jam) berhasil ditambahkan ke database!`);
     }
 
     setEditingEmployee(null);
@@ -623,7 +794,9 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
       'Jabatan',
       'Departemen',
       'Status Kontrak',
-      'Gaji Pokok',
+      'Tarif Gaji Per Jam',
+      'Gaji Per Hari (9 Jam)',
+      'Gaji Pokok (25 Hari)',
       'Tunjangan Jabatan',
       'Tunjangan Transport',
       'Tunjangan Makan',
@@ -645,6 +818,8 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
       `"${e.role}"`,
       `"${e.department}"`,
       e.employmentStatus,
+      getEmployeeHourlyRate(e, STANDARD_WORK_HOURS_PER_DAY, 25),
+      getEmployeeDailySalary(e, 25, STANDARD_WORK_HOURS_PER_DAY),
       e.baseSalary,
       e.allowances.position,
       e.allowances.transport,
@@ -761,6 +936,21 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
             </span>
           </button>
           <button
+            type="button"
+            onClick={() => {
+              const defaultHost =
+                employees.find((e) => e.isLiveStreamHost || e.isCoHostLiveStream) ||
+                employees[0];
+              setLiveSessionModalEmpId(defaultHost ? defaultHost.id : null);
+              setIsLiveSessionModalOpen(true);
+            }}
+            className="px-3.5 py-2 bg-gradient-to-r from-pink-600 via-fuchsia-600 to-violet-600 hover:from-pink-700 hover:to-violet-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-md shadow-pink-600/20"
+            title="Form Input Manual Sesi Live Streaming (Omset, Tas Terjual & Tarif Komisi Fleksibel Host / Co-Host)"
+          >
+            <Video className="w-4 h-4 text-white" />
+            <span>Input Sesi Live &amp; Komisi (Host / Co-Host)</span>
+          </button>
+          <button
             onClick={handleExportCSV}
             className="px-3.5 py-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-300 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
           >
@@ -869,7 +1059,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                 <th className="py-3 px-4">Karyawan</th>
                 <th className="py-3 px-4">NIK &amp; NIK KTP</th>
                 <th className="py-3 px-4">Status &amp; Masa Kontrak</th>
-                <th className="py-3 px-4">Gaji Pokok (IDR)</th>
+                <th className="py-3 px-4">Tarif Per Jam &amp; Harian</th>
                 <th className="py-3 px-4">Rekening Bank</th>
                 <th className="py-3 px-4">PTKP / NPWP Pajak</th>
                 <th className="py-3 px-4 text-center">Aksi</th>
@@ -1039,8 +1229,54 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                     </span>
                   </td>
                   <td className="py-3 px-4">
-                    <span className="font-semibold text-slate-900">
-                      {formatRupiah(emp.baseSalary)}
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold text-[11px] mb-0.5">
+                      {formatRupiah(getEmployeeHourlyRate(emp, STANDARD_WORK_HOURS_PER_DAY, 25))} / jam
+                    </span>
+                    <span className="font-semibold text-slate-900 block text-[11px]">
+                      9 Jam/Hr: {formatRupiah(getEmployeeDailySalary(emp, 25, STANDARD_WORK_HOURS_PER_DAY))}
+                    </span>
+                    {(emp.isLiveStreamHost ||
+                      (emp.salesCommissionPercentage || 0) > 0 ||
+                      (emp.salesCommissionPerPcs || 0) > 0) && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 mt-0.5 rounded-md bg-fuchsia-50 text-fuchsia-800 border border-fuchsia-200 font-bold text-[10px]">
+                        <Sparkles className="w-2.5 h-2.5 text-fuchsia-600" />
+                        <span>
+                          Host Live:{' '}
+                          {(emp.salesCommissionPercentage || 0) > 0
+                            ? `${emp.salesCommissionPercentage}% Omset`
+                            : ''}
+                          {(emp.salesCommissionPercentage || 0) > 0 &&
+                          (emp.salesCommissionPerPcs || 0) > 0
+                            ? ' + '
+                            : ''}
+                          {(emp.salesCommissionPerPcs || 0) > 0
+                            ? `${formatRupiah(emp.salesCommissionPerPcs || 0)}/pcs`
+                            : ''}
+                        </span>
+                      </span>
+                    )}
+                    {(emp.isCoHostLiveStream ||
+                      (emp.coHostCommissionPercentage || 0) > 0 ||
+                      (emp.coHostCommissionPerPcs || 0) > 0) && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 mt-0.5 rounded-md bg-violet-50 text-violet-800 border border-violet-200 font-bold text-[10px]">
+                        <Sparkles className="w-2.5 h-2.5 text-violet-600" />
+                        <span>
+                          Co-Host Live:{' '}
+                          {(emp.coHostCommissionPercentage || 0) > 0
+                            ? `${emp.coHostCommissionPercentage}% Omset`
+                            : ''}
+                          {(emp.coHostCommissionPercentage || 0) > 0 &&
+                          (emp.coHostCommissionPerPcs || 0) > 0
+                            ? ' + '
+                            : ''}
+                          {(emp.coHostCommissionPerPcs || 0) > 0
+                            ? `${formatRupiah(emp.coHostCommissionPerPcs || 0)}/pcs`
+                            : ''}
+                        </span>
+                      </span>
+                    )}
+                    <span className="block text-[10px] text-slate-500 mt-0.5">
+                      Est. 25 Hr: {formatRupiah(emp.baseSalary)}
                     </span>
                     <span className="block text-[10px] text-slate-400">
                       Tunj: {formatRupiah(emp.allowances.position + emp.allowances.transport + emp.allowances.meal + emp.allowances.communication)}
@@ -1085,6 +1321,16 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                   </td>
                   <td className="py-3 px-4 text-center">
                     <div className="flex items-center justify-center gap-1.5">
+                      <button
+                        title="Input Manual Sesi Live Streaming & Komisi (Host / Co-Host)"
+                        onClick={() => {
+                          setLiveSessionModalEmpId(emp.id);
+                          setIsLiveSessionModalOpen(true);
+                        }}
+                        className="p-1.5 text-pink-600 hover:text-pink-800 hover:bg-pink-50 rounded-lg transition-colors cursor-pointer"
+                      >
+                        <Video className="w-4 h-4" />
+                      </button>
                       <button
                         title="Upload / Ganti Foto Real Karyawan"
                         onClick={() => openQuickPhotoModal(emp)}
@@ -1325,12 +1571,64 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
               </div>
 
               <div className="p-3.5 bg-emerald-50/60 rounded-xl space-y-2 border border-emerald-100">
-                <span className="font-semibold text-emerald-900 block border-b border-emerald-200 pb-1">Struktur Gaji &amp; Tunjangan</span>
-                <div className="flex justify-between"><span className="text-slate-600">Gaji Pokok:</span><span className="font-bold text-slate-900">{formatRupiah(viewingEmployee.baseSalary)}</span></div>
+                <span className="font-semibold text-emerald-900 block border-b border-emerald-200 pb-1">Struktur Gaji Per Jam &amp; Tunjangan</span>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-600 font-medium">Tarif Gaji Per Jam (hourly_rate):</span>
+                  <span className="font-extrabold text-emerald-700 bg-white px-2 py-0.5 rounded border border-emerald-200">
+                    {formatRupiah(getEmployeeHourlyRate(viewingEmployee, STANDARD_WORK_HOURS_PER_DAY, 25))} / jam
+                  </span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-600 font-medium">Gaji Harian (Standar 9 Jam):</span>
+                  <span className="font-bold text-slate-800">
+                    {formatRupiah(getEmployeeDailySalary(viewingEmployee, 25, STANDARD_WORK_HOURS_PER_DAY))} / hari
+                  </span>
+                </div>
+                <div className="flex justify-between"><span className="text-slate-600">Est. Bulanan (25 Hr / 225 Jam):</span><span className="font-bold text-slate-900">{formatRupiah(viewingEmployee.baseSalary)}</span></div>
                 <div className="flex justify-between"><span className="text-slate-600">Tunj. Jabatan:</span><span>{formatRupiah(viewingEmployee.allowances.position)}</span></div>
                 <div className="flex justify-between"><span className="text-slate-600">Tunj. Transport:</span><span>{formatRupiah(viewingEmployee.allowances.transport)}</span></div>
                 <div className="flex justify-between"><span className="text-slate-600">Tunj. Makan:</span><span>{formatRupiah(viewingEmployee.allowances.meal)}</span></div>
                 <div className="flex justify-between"><span className="text-slate-600">Tunj. Komunikasi:</span><span>{formatRupiah(viewingEmployee.allowances.communication)}</span></div>
+                {(viewingEmployee.isLiveStreamHost ||
+                  viewingEmployee.isCoHostLiveStream ||
+                  (viewingEmployee.salesCommissionPercentage || 0) > 0 ||
+                  (viewingEmployee.salesCommissionPerPcs || 0) > 0 ||
+                  (viewingEmployee.coHostCommissionPercentage || 0) > 0) && (
+                  <div className="pt-2 mt-1 border-t border-emerald-200 space-y-1">
+                    {viewingEmployee.isLiveStreamHost && (
+                      <div className="flex justify-between items-center">
+                        <span className="text-fuchsia-800 font-bold">Status Host Live Stream:</span>
+                        <span className="px-2 py-0.5 rounded bg-fuchsia-100 text-fuchsia-900 font-bold text-[10px] border border-fuchsia-300">
+                          Aktif ({viewingEmployee.salesCommissionPercentage || 0}% Omset
+                          {(viewingEmployee.salesCommissionPerPcs || 0) > 0
+                            ? ` + ${formatRupiah(viewingEmployee.salesCommissionPerPcs || 0)}/pcs`
+                            : ''}
+                          )
+                        </span>
+                      </div>
+                    )}
+                    {viewingEmployee.isCoHostLiveStream && (
+                      <div className="flex justify-between items-center">
+                        <span className="text-violet-800 font-bold">Status Co-Host Live:</span>
+                        <span className="px-2 py-0.5 rounded bg-violet-100 text-violet-900 font-bold text-[10px] border border-violet-300">
+                          Aktif ({viewingEmployee.coHostCommissionPercentage || 0}% Omset
+                          {(viewingEmployee.coHostCommissionPerPcs || 0) > 0
+                            ? ` + ${formatRupiah(viewingEmployee.coHostCommissionPerPcs || 0)}/pcs`
+                            : ''}
+                          )
+                        </span>
+                      </div>
+                    )}
+                    <div className="flex justify-between items-center">
+                      <span className="text-slate-600">Total Komisi Live Tercatat:</span>
+                      <span className="font-extrabold text-fuchsia-700">
+                        {formatRupiah(
+                          calculateEmployeeLiveSalesCommission(viewingEmployee).totalCommission
+                        )}
+                      </span>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="p-3.5 bg-purple-50/60 rounded-xl space-y-2 border border-purple-100">
@@ -1804,6 +2102,640 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                           </div>
                         </div>
                       ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* Seksi Khusus Admin di Detail Karyawan: Input & Edit Data Omset Live Streaming, Jumlah Tas Terjual (Pcs), dan Persentase Komisi (Host & Co-Host) */}
+            {(() => {
+              const liveSummary = calculateEmployeeLiveSalesCommission(viewingEmployee);
+              const hostPct = Math.max(0, Number(viewingEmployee.salesCommissionPercentage) || 0);
+              const hostPcsRate = Math.max(0, Number(viewingEmployee.salesCommissionPerPcs) || 0);
+              const coHostPct = Math.max(0, Number(viewingEmployee.coHostCommissionPercentage) || 0);
+              const coHostPcsRate = Math.max(0, Number(viewingEmployee.coHostCommissionPerPcs) || 0);
+              const activeRatePct = detailLiveRole === 'Co-Host' ? coHostPct : hostPct;
+              const activeRatePcs = detailLiveRole === 'Co-Host' ? coHostPcsRate : hostPcsRate;
+              const previewOmsetComm = Math.round(
+                (Math.max(0, Number(detailLiveOmset) || 0) * activeRatePct) / 100
+              );
+              const previewPcsComm = Math.round(
+                Math.max(0, Number(detailLivePcs) || 0) * activeRatePcs
+              );
+              const previewComm = previewOmsetComm + previewPcsComm;
+
+              const resetDetailLiveForm = () => {
+                setDetailEditingLogId(null);
+                setDetailLiveTitle('');
+                setDetailLiveOmset(0);
+                setDetailLivePcs(0);
+                setDetailLiveDuration(3);
+              };
+
+              const handleSaveDetailLiveLog = (e: React.FormEvent) => {
+                e.preventDefault();
+                if (detailLiveOmset <= 0 && detailLivePcs <= 0) {
+                  showToast('Masukkan Nilai Omset Penjualan Sesi Live (IDR) atau Jumlah Tas yang Terjual (Pcs) terlebih dahulu.');
+                  return;
+                }
+
+                if (detailEditingLogId) {
+                  let editedSessionObj: LiveStreamSalesRecord | null = null;
+                  const updatedLogs = (viewingEmployee.liveStreamSalesLogs || []).map((log) => {
+                    if (log.id !== detailEditingLogId) return log;
+                    const updatedItem: LiveStreamSalesRecord = {
+                      ...log,
+                      date: detailLiveDate || log.date,
+                      session_date: detailLiveDate || log.date,
+                      platform: detailLivePlatform,
+                      sessionRole: detailLiveRole,
+                      role_type: detailLiveRole === 'Co-Host' ? 'co_host' : 'host',
+                      sessionTitle:
+                        detailLiveTitle.trim() || `Sesi ${detailLiveRole} ${detailLivePlatform}`,
+                      durationHours: Math.max(0.5, Number(detailLiveDuration) || 1),
+                      omsetAmount: Math.max(0, Math.round(Number(detailLiveOmset) || 0)),
+                      omset: Math.max(0, Math.round(Number(detailLiveOmset) || 0)),
+                      pcsSold: Math.max(0, Math.round(Number(detailLivePcs) || 0)),
+                      pcs_sold: Math.max(0, Math.round(Number(detailLivePcs) || 0)),
+                      commissionPercentageSnapshot: activeRatePct,
+                      commission_pct_used: activeRatePct,
+                      commissionPerPcsSnapshot: activeRatePcs,
+                      commission_per_pcs_used: activeRatePcs,
+                      calculatedCommission: previewComm,
+                      total_commission: previewComm,
+                    };
+                    editedSessionObj = updatedItem;
+                    return updatedItem;
+                  });
+                  const updatedEmp: Employee = {
+                    ...viewingEmployee,
+                    isLiveStreamHost:
+                      detailLiveRole === 'Host' ? true : viewingEmployee.isLiveStreamHost,
+                    is_host:
+                      detailLiveRole === 'Host'
+                        ? true
+                        : Boolean(viewingEmployee.is_host ?? viewingEmployee.isLiveStreamHost),
+                    isCoHostLiveStream:
+                      detailLiveRole === 'Co-Host' ? true : viewingEmployee.isCoHostLiveStream,
+                    is_co_host:
+                      detailLiveRole === 'Co-Host'
+                        ? true
+                        : Boolean(viewingEmployee.is_co_host ?? viewingEmployee.isCoHostLiveStream),
+                    liveStreamSalesLogs: updatedLogs,
+                  };
+                  if (editedSessionObj) {
+                    upsertLivestreamSessionToSupabase(editedSessionObj).catch(() => {});
+                  }
+                  syncEmployeeLiveColumnsToSupabase(updatedEmp).catch(() => {});
+                  onUpdateEmployee(updatedEmp);
+                  setViewingEmployee(updatedEmp);
+                  resetDetailLiveForm();
+                  showToast(
+                    `Perubahan sesi ${detailLiveRole} untuk ${viewingEmployee.fullName} berhasil disimpan & disinkronkan ke Slip Gaji!`
+                  );
+                  return;
+                }
+
+                const resolvedDateStr = detailLiveDate || new Date().toISOString().split('T')[0];
+                const newLog: LiveStreamSalesRecord = {
+                  id: generateSessionUuid(),
+                  employeeId: viewingEmployee.id,
+                  employee_id: viewingEmployee.id,
+                  employeeName: viewingEmployee.fullName,
+                  employee_name: viewingEmployee.fullName,
+                  employeeNik: viewingEmployee.nik,
+                  date: resolvedDateStr,
+                  session_date: resolvedDateStr,
+                  period: 'Maret 2026',
+                  platform: detailLivePlatform,
+                  sessionRole: detailLiveRole,
+                  role_type: detailLiveRole === 'Co-Host' ? 'co_host' : 'host',
+                  sessionTitle:
+                    detailLiveTitle.trim() || `Sesi ${detailLiveRole} ${detailLivePlatform}`,
+                  durationHours: Math.max(0.5, Number(detailLiveDuration) || 1),
+                  omsetAmount: Math.max(0, Math.round(Number(detailLiveOmset) || 0)),
+                  omset: Math.max(0, Math.round(Number(detailLiveOmset) || 0)),
+                  pcsSold: Math.max(0, Math.round(Number(detailLivePcs) || 0)),
+                  pcs_sold: Math.max(0, Math.round(Number(detailLivePcs) || 0)),
+                  commissionPercentageSnapshot: activeRatePct,
+                  commission_pct_used: activeRatePct,
+                  commissionPerPcsSnapshot: activeRatePcs,
+                  commission_per_pcs_used: activeRatePcs,
+                  calculatedCommission: previewComm,
+                  total_commission: previewComm,
+                  status: 'Terverifikasi',
+                  createdAt: new Date().toISOString(),
+                };
+                const updatedLogs = [newLog, ...(viewingEmployee.liveStreamSalesLogs || [])];
+                const updatedEmp: Employee = {
+                  ...viewingEmployee,
+                  isLiveStreamHost:
+                    detailLiveRole === 'Host' ? true : viewingEmployee.isLiveStreamHost,
+                  is_host:
+                    detailLiveRole === 'Host'
+                      ? true
+                      : Boolean(viewingEmployee.is_host ?? viewingEmployee.isLiveStreamHost),
+                  isCoHostLiveStream:
+                    detailLiveRole === 'Co-Host' ? true : viewingEmployee.isCoHostLiveStream,
+                  is_co_host:
+                    detailLiveRole === 'Co-Host'
+                      ? true
+                      : Boolean(viewingEmployee.is_co_host ?? viewingEmployee.isCoHostLiveStream),
+                  liveStreamSalesLogs: updatedLogs,
+                };
+                upsertLivestreamSessionToSupabase(newLog).catch(() => {});
+                syncEmployeeLiveColumnsToSupabase(updatedEmp).catch(() => {});
+                onUpdateEmployee(updatedEmp);
+                setViewingEmployee(updatedEmp);
+                resetDetailLiveForm();
+                showToast(
+                  `Sesi ${detailLiveRole} (${detailLivePlatform}) — Omset ${formatRupiah(newLog.omsetAmount)} & ${newLog.pcsSold} Pcs Tas untuk ${viewingEmployee.fullName} berhasil disimpan & disinkronkan ke Slip Gaji!`
+                );
+              };
+
+              return (
+                <div className="mt-4 p-4 bg-gradient-to-br from-pink-50/70 via-white to-violet-50/60 rounded-xl border border-pink-200 space-y-3.5 text-xs">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-pink-200/80 pb-2.5">
+                    <div>
+                      <span className="font-bold text-slate-900 flex items-center gap-1.5 text-xs">
+                        <Video className="w-4 h-4 text-pink-600" />
+                        <span>
+                          Kendali Admin: Input Pencatatan Sesi Live Streaming (Omset &amp; Tas Terjual) — Host &amp; Co-Host
+                        </span>
+                      </span>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        Atur % Komisi Omset dan Tarif per Pcs Tas secara terpisah untuk Host maupun Co-Host. Di Portal Karyawan bersifat Read-Only.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5 shrink-0 self-start sm:self-center">
+                      <span className="px-2.5 py-1 rounded-full bg-slate-100 text-slate-800 border border-slate-200 font-bold text-[10px]">
+                        Tas Terjual: {liveSummary.totalPcs.toLocaleString('id-ID')} Pcs
+                      </span>
+                      <span className="px-2.5 py-1 rounded-full bg-pink-600 text-white font-bold text-[10px]">
+                        Total Komisi: {formatRupiah(liveSummary.totalCommission)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Pengaturan Terpisah & Fleksibel: % Komisi Omset & Tarif per Pcs (Rp/Pcs) untuk Host dan Co-Host */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+                    <div className="p-2.5 bg-white rounded-xl border border-pink-200">
+                      <label className="inline-flex items-center gap-1.5 font-bold text-pink-900 mb-1 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(viewingEmployee.isLiveStreamHost || viewingEmployee.is_host)}
+                          onChange={(e) => {
+                            const updatedEmp = {
+                              ...viewingEmployee,
+                              isLiveStreamHost: e.target.checked,
+                              is_host: e.target.checked,
+                            };
+                            syncEmployeeLiveColumnsToSupabase(updatedEmp).catch(() => {});
+                            onUpdateEmployee(updatedEmp);
+                            setViewingEmployee(updatedEmp);
+                          }}
+                          className="rounded text-pink-600"
+                        />
+                        <span>Komisi Host (% Omset)</span>
+                      </label>
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="number"
+                          step="0.1"
+                          min={0}
+                          max={100}
+                          value={viewingEmployee.salesCommissionPercentage || 0}
+                          onChange={(e) => {
+                            const nextPct = Math.max(0, Number(e.target.value) || 0);
+                            const updatedEmp = {
+                              ...viewingEmployee,
+                              isLiveStreamHost: true,
+                              is_host: true,
+                              salesCommissionPercentage: nextPct,
+                              host_commission_pct: nextPct,
+                            };
+                            syncEmployeeLiveColumnsToSupabase(updatedEmp).catch(() => {});
+                            onUpdateEmployee(updatedEmp);
+                            setViewingEmployee(updatedEmp);
+                          }}
+                          className="w-full px-2.5 py-1 bg-slate-50 border border-slate-300 rounded-lg font-mono font-bold text-pink-700"
+                        />
+                        <span className="font-bold text-slate-600">%</span>
+                      </div>
+                    </div>
+
+                    <div className="p-2.5 bg-white rounded-xl border border-pink-200">
+                      <label className="block font-bold text-pink-900 mb-1">
+                        Tarif Host per Pcs Tas (Rp/Pcs)
+                      </label>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-slate-500 font-bold">Rp</span>
+                        <input
+                          type="number"
+                          step={500}
+                          min={0}
+                          value={viewingEmployee.salesCommissionPerPcs || 0}
+                          onChange={(e) => {
+                            const nextPcs = Math.max(0, Math.round(Number(e.target.value) || 0));
+                            const updatedEmp = {
+                              ...viewingEmployee,
+                              isLiveStreamHost: true,
+                              is_host: true,
+                              salesCommissionPerPcs: nextPcs,
+                              host_commission_per_pcs: nextPcs,
+                            };
+                            syncEmployeeLiveColumnsToSupabase(updatedEmp).catch(() => {});
+                            onUpdateEmployee(updatedEmp);
+                            setViewingEmployee(updatedEmp);
+                          }}
+                          className="w-full px-2.5 py-1 bg-slate-50 border border-slate-300 rounded-lg font-mono font-bold text-pink-700"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="p-2.5 bg-white rounded-xl border border-violet-200">
+                      <label className="inline-flex items-center gap-1.5 font-bold text-violet-900 mb-1 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(viewingEmployee.isCoHostLiveStream || viewingEmployee.is_co_host)}
+                          onChange={(e) => {
+                            const updatedEmp = {
+                              ...viewingEmployee,
+                              isCoHostLiveStream: e.target.checked,
+                              is_co_host: e.target.checked,
+                            };
+                            syncEmployeeLiveColumnsToSupabase(updatedEmp).catch(() => {});
+                            onUpdateEmployee(updatedEmp);
+                            setViewingEmployee(updatedEmp);
+                          }}
+                          className="rounded text-violet-600"
+                        />
+                        <span>Komisi Co-Host (% Omset)</span>
+                      </label>
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="number"
+                          step="0.1"
+                          min={0}
+                          max={100}
+                          value={viewingEmployee.coHostCommissionPercentage || 0}
+                          onChange={(e) => {
+                            const nextPct = Math.max(0, Number(e.target.value) || 0);
+                            const updatedEmp = {
+                              ...viewingEmployee,
+                              isCoHostLiveStream: true,
+                              is_co_host: true,
+                              coHostCommissionPercentage: nextPct,
+                              co_host_commission_pct: nextPct,
+                            };
+                            syncEmployeeLiveColumnsToSupabase(updatedEmp).catch(() => {});
+                            onUpdateEmployee(updatedEmp);
+                            setViewingEmployee(updatedEmp);
+                          }}
+                          className="w-full px-2.5 py-1 bg-violet-50/50 border border-violet-300 rounded-lg font-mono font-bold text-violet-800"
+                        />
+                        <span className="font-bold text-violet-700">%</span>
+                      </div>
+                    </div>
+
+                    <div className="p-2.5 bg-white rounded-xl border border-violet-200">
+                      <label className="block font-bold text-violet-900 mb-1">
+                        Tarif Co-Host per Pcs Tas (Rp/Pcs)
+                      </label>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-violet-600 font-bold">Rp</span>
+                        <input
+                          type="number"
+                          step={500}
+                          min={0}
+                          value={viewingEmployee.coHostCommissionPerPcs || 0}
+                          onChange={(e) => {
+                            const nextPcs = Math.max(0, Math.round(Number(e.target.value) || 0));
+                            const updatedEmp = {
+                              ...viewingEmployee,
+                              isCoHostLiveStream: true,
+                              is_co_host: true,
+                              coHostCommissionPerPcs: nextPcs,
+                              co_host_commission_per_pcs: nextPcs,
+                            };
+                            syncEmployeeLiveColumnsToSupabase(updatedEmp).catch(() => {});
+                            onUpdateEmployee(updatedEmp);
+                            setViewingEmployee(updatedEmp);
+                          }}
+                          className="w-full px-2.5 py-1 bg-violet-50/50 border border-violet-300 rounded-lg font-mono font-bold text-violet-800"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Form Input / Edit Sesi Omset Live & Jumlah Tas Terjual di Detail Karyawan */}
+                  <form
+                    onSubmit={handleSaveDetailLiveLog}
+                    className="p-3.5 bg-white rounded-xl border border-slate-200 space-y-3"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-slate-800">
+                        {detailEditingLogId
+                          ? 'Edit Data Sesi Live Streaming (Omset & Jumlah Tas Terjual)'
+                          : 'Form Input Sesi Live Streaming Baru (Host / Co-Host)'}
+                      </span>
+                      {detailEditingLogId && (
+                        <button
+                          type="button"
+                          onClick={resetDetailLiveForm}
+                          className="text-[11px] font-bold text-slate-600 hover:text-slate-900 underline cursor-pointer"
+                        >
+                          Batal Edit
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-700 mb-0.5">
+                          Pilih Karyawan (Host / Co-Host)
+                        </label>
+                        <select
+                          value={viewingEmployee.id}
+                          onChange={(e) => {
+                            const targetEmp = employees.find((item) => item.id === e.target.value);
+                            if (targetEmp) {
+                              setViewingEmployee(targetEmp);
+                              resetDetailLiveForm();
+                              setDetailLiveRole(
+                                targetEmp.isCoHostLiveStream && !targetEmp.isLiveStreamHost
+                                  ? 'Co-Host'
+                                  : 'Host'
+                              );
+                            }
+                          }}
+                          className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-bold text-slate-900"
+                        >
+                          {employees.map((item) => (
+                            <option key={item.id} value={item.id}>
+                              {item.fullName} ({item.nik})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-700 mb-0.5">
+                          Peran Sesi (Host / Co-Host)
+                        </label>
+                        <select
+                          value={detailLiveRole}
+                          onChange={(e) =>
+                            setDetailLiveRole(e.target.value as 'Host' | 'Co-Host')
+                          }
+                          className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-bold text-slate-900"
+                        >
+                          <option value="Host">
+                            Host ({hostPct}%{hostPcsRate > 0 ? ` + ${formatRupiah(hostPcsRate)}/pcs` : ''})
+                          </option>
+                          <option value="Co-Host">
+                            Co-Host ({coHostPct}%{coHostPcsRate > 0 ? ` + ${formatRupiah(coHostPcsRate)}/pcs` : ''})
+                          </option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-700 mb-0.5">
+                          Platform (TikTok Shop / Shopee Live)
+                        </label>
+                        <select
+                          value={detailLivePlatform}
+                          onChange={(e) =>
+                            setDetailLivePlatform(e.target.value as LiveStreamPlatform)
+                          }
+                          className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-semibold text-slate-900"
+                        >
+                          <option value="TikTok Shop Live">TikTok Shop Live</option>
+                          <option value="Shopee Live">Shopee Live</option>
+                          <option value="Tokopedia Play">Tokopedia Play</option>
+                          <option value="Instagram / FB Live">Instagram / FB Live</option>
+                          <option value="Lainnya">Lainnya</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-700 mb-0.5">
+                          Tanggal Sesi Live
+                        </label>
+                        <input
+                          type="date"
+                          value={detailLiveDate}
+                          onChange={(e) => setDetailLiveDate(e.target.value)}
+                          className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg"
+                          required
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
+                      <div>
+                        <label className="block text-[10px] font-bold text-pink-800 mb-0.5">
+                          Nilai Omset Penjualan Sesi Live (IDR) *
+                        </label>
+                        <input
+                          type="number"
+                          step={50000}
+                          min={0}
+                          placeholder="Contoh: 15000000"
+                          value={detailLiveOmset || ''}
+                          onChange={(e) =>
+                            setDetailLiveOmset(Math.max(0, Number(e.target.value) || 0))
+                          }
+                          className="w-full px-2.5 py-1.5 bg-pink-50/40 border border-pink-300 rounded-lg font-mono font-bold text-slate-900"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-indigo-800 mb-0.5">
+                          Jumlah Tas yang Terjual (Pcs) *
+                        </label>
+                        <input
+                          type="number"
+                          step={1}
+                          min={0}
+                          placeholder="Contoh: 95"
+                          value={detailLivePcs || ''}
+                          onChange={(e) =>
+                            setDetailLivePcs(Math.max(0, Number(e.target.value) || 0))
+                          }
+                          className="w-full px-2.5 py-1.5 bg-indigo-50/40 border border-indigo-300 rounded-lg font-mono font-bold text-slate-900"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">
+                          Judul / Keterangan Sesi Live
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="Misal: Live Promo Tas Selempang"
+                          value={detailLiveTitle}
+                          onChange={(e) => setDetailLiveTitle(e.target.value)}
+                          className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">
+                          Durasi Sesi (Jam)
+                        </label>
+                        <input
+                          type="number"
+                          step="0.5"
+                          min="0.5"
+                          value={detailLiveDuration}
+                          onChange={(e) => setDetailLiveDuration(Number(e.target.value))}
+                          className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-2 border-t border-slate-100">
+                      <div className="text-[11px] text-slate-600">
+                        <span>
+                          Estimasi Komisi Sesi Ini ({detailLiveRole}):{' '}
+                          <strong className="text-pink-700 font-extrabold">
+                            +{formatRupiah(previewComm)}
+                          </strong>
+                        </span>
+                        <span className="block text-[10px] text-slate-500">
+                          Rincian: Omset × {activeRatePct}% ({formatRupiah(previewOmsetComm)}) +{' '}
+                          {detailLivePcs || 0} Pcs Tas × {formatRupiah(activeRatePcs)}/pcs (
+                          {formatRupiah(previewPcsComm)})
+                        </span>
+                      </div>
+                      <button
+                        type="submit"
+                        className="px-3.5 py-1.5 bg-pink-600 hover:bg-pink-700 text-white font-bold rounded-lg inline-flex items-center gap-1 cursor-pointer shrink-0"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>
+                          {detailEditingLogId
+                            ? 'Simpan Perubahan Sesi'
+                            : 'Simpan Sesi Live & Sinkron ke Slip Gaji'}
+                        </span>
+                      </button>
+                    </div>
+                  </form>
+
+                  {/* Daftar Sesi Live Tercatat di Detail Karyawan */}
+                  {liveSummary.filteredLogs.length > 0 && (
+                    <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
+                      <table className="w-full text-[11px] text-left">
+                        <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
+                          <tr>
+                            <th className="py-2 px-2.5">Tanggal &amp; Platform</th>
+                            <th className="py-2 px-2.5">Peran &amp; Sesi</th>
+                            <th className="py-2 px-2.5 text-right">Omset Sesi (IDR)</th>
+                            <th className="py-2 px-2.5 text-right">Tas Terjual (Pcs)</th>
+                            <th className="py-2 px-2.5 text-right">Komisi Otomatis</th>
+                            <th className="py-2 px-2.5 text-center">Edit/Hapus</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {liveSummary.filteredLogs.map((log) => {
+                            const isCoHostRow =
+                              log.sessionRole === 'Co-Host' ||
+                              (!log.sessionRole &&
+                                viewingEmployee.isCoHostLiveStream &&
+                                !viewingEmployee.isLiveStreamHost);
+                            const rowPct = isCoHostRow
+                              ? coHostPct > 0
+                                ? coHostPct
+                                : Number(log.commissionPercentageSnapshot) || 0
+                              : hostPct > 0
+                              ? hostPct
+                              : Number(log.commissionPercentageSnapshot) || 0;
+                            const rowPcsRate = isCoHostRow
+                              ? coHostPcsRate > 0
+                                ? coHostPcsRate
+                                : Number(log.commissionPerPcsSnapshot) || 0
+                              : hostPcsRate > 0
+                              ? hostPcsRate
+                              : Number(log.commissionPerPcsSnapshot) || 0;
+                            const rowComm = Math.round(
+                              ((Number(log.omsetAmount) || 0) * rowPct) / 100 +
+                                (Number(log.pcsSold) || 0) * rowPcsRate
+                            );
+                            return (
+                              <tr key={log.id} className="hover:bg-slate-50">
+                                <td className="py-1.5 px-2.5">
+                                  <span className="font-semibold text-slate-800 block">
+                                    {formatIndoDate(log.date)}
+                                  </span>
+                                  <span className="text-[9px] text-pink-700 font-bold">
+                                    {log.platform}
+                                  </span>
+                                </td>
+                                <td className="py-1.5 px-2.5">
+                                  <span
+                                    className={`inline-block mr-1 px-1.5 py-0.2 rounded text-[9px] font-bold ${
+                                      isCoHostRow
+                                        ? 'bg-violet-100 text-violet-800'
+                                        : 'bg-pink-100 text-pink-800'
+                                    }`}
+                                  >
+                                    {isCoHostRow ? 'Co-Host' : 'Host'}
+                                  </span>
+                                  <span className="font-medium text-slate-800">
+                                    {log.sessionTitle}
+                                  </span>
+                                </td>
+                                <td className="py-1.5 px-2.5 text-right font-mono font-semibold">
+                                  {formatRupiah(log.omsetAmount)}
+                                </td>
+                                <td className="py-1.5 px-2.5 text-right font-mono font-bold text-indigo-800">
+                                  {log.pcsSold.toLocaleString('id-ID')} Pcs
+                                </td>
+                                <td className="py-1.5 px-2.5 text-right font-mono font-bold text-pink-700">
+                                  +{formatRupiah(rowComm)}
+                                </td>
+                                <td className="py-1.5 px-2.5 text-center">
+                                  <div className="inline-flex items-center gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setDetailEditingLogId(log.id);
+                                        setDetailLiveRole(isCoHostRow ? 'Co-Host' : 'Host');
+                                        setDetailLiveDate(log.date);
+                                        setDetailLivePlatform(log.platform);
+                                        setDetailLiveTitle(log.sessionTitle);
+                                        setDetailLiveDuration(log.durationHours);
+                                        setDetailLiveOmset(log.omsetAmount);
+                                        setDetailLivePcs(log.pcsSold);
+                                      }}
+                                      className="p-1 text-indigo-600 hover:bg-indigo-50 rounded cursor-pointer"
+                                      title="Edit sesi live"
+                                    >
+                                      <Edit2 className="w-3 h-3" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const updatedLogs = (
+                                          viewingEmployee.liveStreamSalesLogs || []
+                                        ).filter((item) => item.id !== log.id);
+                                        const updatedEmp = {
+                                          ...viewingEmployee,
+                                          liveStreamSalesLogs: updatedLogs,
+                                        };
+                                        deleteLivestreamSessionFromSupabase(log.id).catch(() => {});
+                                        onUpdateEmployee(updatedEmp);
+                                        setViewingEmployee(updatedEmp);
+                                        showToast('Catatan sesi live dihapus.');
+                                      }}
+                                      className="p-1 text-rose-500 hover:bg-rose-50 rounded cursor-pointer"
+                                      title="Hapus sesi live"
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
                     </div>
                   )}
                 </div>
@@ -2402,25 +3334,118 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                 </div>
               </div>
 
-              {/* Seksi 2: Gaji Pokok & Tunjangan */}
+              {/* Seksi 2: Gaji Per Hari, Gaji Pokok & Tunjangan */}
               <div>
-                <h4 className="font-semibold text-slate-800 mb-2.5 pb-1 border-b border-slate-100">
-                  2. Struktur Gaji & Tunjangan Bulanan (IDR)
-                </h4>
-                <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
-                  <div>
-                    <label className="block text-slate-600 mb-1">Gaji Pokok</label>
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5 pb-1 border-b border-slate-100">
+                  <h4 className="font-semibold text-slate-800">
+                    2. Struktur Tarif Gaji Per Jam (Hourly Rate), Harian (9 Jam) &amp; Tunjangan (IDR)
+                  </h4>
+                  <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
+                    Payroll Real-Time = Jam Kerja Riil × Tarif Gaji Per Jam (Standar 9 Jam/Hari)
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-3">
+                  <div className="p-2.5 bg-emerald-50/90 border border-emerald-400 rounded-xl">
+                    <label className="block text-emerald-950 font-bold mb-1">
+                      Tarif Gaji Per Jam (<code className="font-mono text-[10px]">hourly_rate</code>) *
+                    </label>
+                    <input
+                      type="number"
+                      name="hourly_rate"
+                      required
+                      min={0}
+                      step={500}
+                      value={
+                        formData.hourlyRate ??
+                        formData.hourly_rate ??
+                        Math.round(
+                          (Number(formData.dailySalary ?? formData.daily_salary) ||
+                            Math.round((Number(formData.baseSalary) || 0) / 25)) /
+                            STANDARD_WORK_HOURS_PER_DAY
+                        )
+                      }
+                      onChange={(e) => {
+                        const nextHourly = Math.max(0, Number(e.target.value) || 0);
+                        const nextDaily = Math.round(nextHourly * STANDARD_WORK_HOURS_PER_DAY);
+                        setFormData({
+                          ...formData,
+                          hourlyRate: nextHourly,
+                          hourly_rate: nextHourly,
+                          dailySalary: nextDaily,
+                          daily_salary: nextDaily,
+                          baseSalary: Math.round(nextDaily * 25),
+                        });
+                      }}
+                      placeholder="Contoh: 15000"
+                      className="w-full p-2 bg-white border border-emerald-500 rounded-lg text-emerald-950 font-extrabold focus:outline-hidden focus:ring-2 focus:ring-emerald-500/30"
+                    />
+                    <span className="block text-[10px] text-emerald-700 mt-1 font-medium">
+                      Dikali akumulasi jam kerja riil bulanan
+                    </span>
+                  </div>
+                  <div className="p-2.5 bg-emerald-50/50 border border-emerald-200 rounded-xl">
+                    <label className="block text-emerald-900 font-bold mb-1">
+                      Gaji Harian Standar 9 Jam (<code className="font-mono text-[10px]">daily_salary</code>)
+                    </label>
+                    <input
+                      type="number"
+                      name="daily_salary"
+                      min={0}
+                      step={5000}
+                      value={
+                        formData.dailySalary ??
+                        formData.daily_salary ??
+                        Math.round((Number(formData.baseSalary) || 0) / 25)
+                      }
+                      onChange={(e) => {
+                        const nextDaily = Math.max(0, Number(e.target.value) || 0);
+                        const nextHourly = Math.round(nextDaily / STANDARD_WORK_HOURS_PER_DAY);
+                        setFormData({
+                          ...formData,
+                          hourlyRate: nextHourly,
+                          hourly_rate: nextHourly,
+                          dailySalary: nextDaily,
+                          daily_salary: nextDaily,
+                          baseSalary: Math.round(nextDaily * 25),
+                        });
+                      }}
+                      placeholder="Contoh: 135000"
+                      className="w-full p-2 bg-white border border-emerald-300 rounded-lg text-emerald-900 font-bold focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20"
+                    />
+                    <span className="block text-[10px] text-emerald-700 mt-1">
+                      9 jam × {formatRupiah(formData.hourlyRate ?? formData.hourly_rate ?? 0)} / jam
+                    </span>
+                  </div>
+                  <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl">
+                    <label className="block text-slate-600 font-semibold mb-1">
+                      Estimasi Bulanan (25 Hari / 225 Jam)
+                    </label>
                     <input
                       type="number"
                       step={50000}
                       value={formData.baseSalary}
-                      onChange={(e) =>
-                        setFormData({ ...formData, baseSalary: Number(e.target.value) })
-                      }
-                      className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 font-semibold"
+                      onChange={(e) => {
+                        const nextBase = Math.max(0, Number(e.target.value) || 0);
+                        const syncedDaily = Math.round(nextBase / 25);
+                        const syncedHourly = Math.round(syncedDaily / STANDARD_WORK_HOURS_PER_DAY);
+                        setFormData({
+                          ...formData,
+                          baseSalary: nextBase,
+                          dailySalary: syncedDaily,
+                          daily_salary: syncedDaily,
+                          hourlyRate: syncedHourly,
+                          hourly_rate: syncedHourly,
+                        });
+                      }}
+                      className="w-full p-2 bg-white border border-slate-200 rounded-lg text-slate-800 font-semibold"
                     />
+                    <span className="block text-[10px] text-slate-400 mt-1">
+                      Estimasi penuh 25 hari × 9 jam kerja
+                    </span>
                   </div>
-                  <div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl">
                     <label className="block text-slate-600 mb-1">Tunj. Jabatan</label>
                     <input
                       type="number"
@@ -2434,10 +3459,10 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                           },
                         })
                       }
-                      className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-800"
+                      className="w-full p-2 bg-white border border-slate-200 rounded-lg text-slate-800"
                     />
                   </div>
-                  <div>
+                  <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl">
                     <label className="block text-slate-600 mb-1">Tunj. Transport</label>
                     <input
                       type="number"
@@ -2451,10 +3476,10 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                           },
                         })
                       }
-                      className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-800"
+                      className="w-full p-2 bg-white border border-slate-200 rounded-lg text-slate-800"
                     />
                   </div>
-                  <div>
+                  <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl">
                     <label className="block text-slate-600 mb-1">Tunj. Uang Makan</label>
                     <input
                       type="number"
@@ -2468,10 +3493,10 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                           },
                         })
                       }
-                      className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-800"
+                      className="w-full p-2 bg-white border border-slate-200 rounded-lg text-slate-800"
                     />
                   </div>
-                  <div>
+                  <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl">
                     <label className="block text-slate-600 mb-1">Tunj. Komunikasi</label>
                     <input
                       type="number"
@@ -2485,8 +3510,286 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                           },
                         })
                       }
-                      className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-800"
+                      className="w-full p-2 bg-white border border-slate-200 rounded-lg text-slate-800"
                     />
+                  </div>
+                </div>
+
+                {/* Pengaturan Host Live Stream & Komisi Penjualan (TikTok Shop / Shopee Live) */}
+                <div className="mt-3 p-3.5 rounded-2xl border-2 border-fuchsia-200 bg-gradient-to-r from-fuchsia-50/80 via-purple-50/60 to-indigo-50/60 space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <label className="inline-flex items-center gap-2.5 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        name="is_live_stream_host"
+                        checked={Boolean(formData.isLiveStreamHost ?? formData.is_host)}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          const nextPct =
+                            checked && !formData.salesCommissionPercentage
+                              ? 2.5
+                              : formData.salesCommissionPercentage || 0;
+                          setFormData({
+                            ...formData,
+                            isLiveStreamHost: checked,
+                            is_host: checked,
+                            salesCommissionPercentage: nextPct,
+                            host_commission_pct: nextPct,
+                          });
+                        }}
+                        className="w-4 h-4 rounded text-fuchsia-600 focus:ring-fuchsia-500 cursor-pointer"
+                      />
+                      <div>
+                        <span className="font-extrabold text-fuchsia-950 text-xs sm:text-sm flex items-center gap-1.5">
+                          <Sparkles className="w-4 h-4 text-fuchsia-600" />
+                          <span>Host Live Stream (TikTok Shop / Shopee Live)</span>
+                        </span>
+                        <span className="block text-[10px] text-fuchsia-800">
+                          Centang jika karyawan bertugas sebagai Host Live Streaming agar mendapatkan Komisi Penjualan otomatis di Slip Gaji
+                        </span>
+                      </div>
+                    </label>
+                    {formData.isLiveStreamHost && (
+                      <span className="px-2.5 py-1 rounded-full bg-fuchsia-600 text-white text-[10px] font-extrabold uppercase tracking-wider shrink-0 self-start sm:self-center">
+                        Komisi Host Aktif
+                      </span>
+                    )}
+                  </div>
+
+                  {formData.isLiveStreamHost && (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-fuchsia-200/80 animate-in fade-in">
+                      <div className="p-2.5 bg-white rounded-xl border border-fuchsia-300 shadow-2xs">
+                        <label className="block text-fuchsia-950 font-bold mb-1 text-xs">
+                          Komisi Penjualan (%) dari Omset
+                        </label>
+                        <div className="relative">
+                          <input
+                            type="number"
+                            name="sales_commission_percentage"
+                            min={0}
+                            max={100}
+                            step={0.1}
+                            value={formData.salesCommissionPercentage ?? 0}
+                            onChange={(e) => {
+                              const nextPct = Math.max(0, Number(e.target.value) || 0);
+                              setFormData({
+                                ...formData,
+                                isLiveStreamHost: true,
+                                is_host: true,
+                                salesCommissionPercentage: nextPct,
+                                host_commission_pct: nextPct,
+                              });
+                            }}
+                            placeholder="Contoh: 2.5"
+                            className="w-full p-2 pr-8 bg-fuchsia-50/40 border border-fuchsia-400 rounded-lg text-fuchsia-950 font-extrabold focus:outline-hidden focus:ring-2 focus:ring-fuchsia-500/30"
+                          />
+                          <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-extrabold text-fuchsia-700">
+                            %
+                          </span>
+                        </div>
+                        <span className="block text-[10px] text-fuchsia-700 mt-1">
+                          Contoh: 2.5% × Omset Live Rp 50.000.000 ={' '}
+                          <strong>
+                            {formatRupiah(
+                              Math.round(
+                                (50000000 * (Number(formData.salesCommissionPercentage) || 0)) / 100
+                              )
+                            )}
+                          </strong>
+                        </span>
+                      </div>
+
+                      <div className="p-2.5 bg-white rounded-xl border border-purple-300 shadow-2xs">
+                        <label className="block text-purple-950 font-bold mb-1 text-xs">
+                          Komisi per Pcs Terjual (IDR / Pcs)
+                        </label>
+                        <input
+                          type="number"
+                          name="sales_commission_per_pcs"
+                          min={0}
+                          step={500}
+                          value={formData.salesCommissionPerPcs ?? 0}
+                          onChange={(e) => {
+                            const nextPcs = Math.max(0, Math.round(Number(e.target.value) || 0));
+                            setFormData({
+                              ...formData,
+                              isLiveStreamHost: true,
+                              is_host: true,
+                              salesCommissionPerPcs: nextPcs,
+                              host_commission_per_pcs: nextPcs,
+                            });
+                          }}
+                          placeholder="Contoh: 2000"
+                          className="w-full p-2 bg-purple-50/40 border border-purple-300 rounded-lg text-purple-950 font-bold focus:outline-hidden focus:ring-2 focus:ring-purple-500/30"
+                        />
+                        <span className="block text-[10px] text-purple-700 mt-1">
+                          Contoh: 300 Pcs ×{' '}
+                          {formatRupiah(Number(formData.salesCommissionPerPcs) || 0)} ={' '}
+                          <strong>
+                            {formatRupiah(
+                              300 * Math.round(Number(formData.salesCommissionPerPcs) || 0)
+                            )}
+                          </strong>
+                        </span>
+                      </div>
+
+                      <div className="p-2.5 bg-white/90 rounded-xl border border-indigo-200 flex flex-col justify-between text-[11px]">
+                        <div>
+                          <span className="font-bold text-indigo-950 block">
+                            Integrasi Otomatis ke Slip Gaji
+                          </span>
+                          <p className="text-[10px] text-slate-600 mt-0.5 leading-relaxed">
+                            Setiap omset sesi live (TikTok Shop / Shopee Live) yang dicatat di Portal Karyawan atau Admin akan otomatis dihitung ke komponen{' '}
+                            <strong className="text-fuchsia-800">
+                              &ldquo;Insentif / Komisi Penjualan&rdquo;
+                            </strong>{' '}
+                            pada Slip Gaji bulanan.
+                          </p>
+                        </div>
+                        <span className="text-[10px] font-bold text-emerald-700 mt-1">
+                          ✓ Real-Time masuk ke Gaji Bruto &amp; THP
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Pengaturan Co-Host Live Stream & Komisi Co-Host (%) */}
+                  <div className="pt-3 border-t border-fuchsia-200/80 space-y-2.5">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <label className="inline-flex items-center gap-2.5 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          name="is_co_host_live_stream"
+                          checked={Boolean(formData.isCoHostLiveStream ?? formData.is_co_host)}
+                          onChange={(e) => {
+                            const checked = e.target.checked;
+                            const nextPct =
+                              checked && !formData.coHostCommissionPercentage
+                                ? 1.0
+                                : formData.coHostCommissionPercentage || 0;
+                            setFormData({
+                              ...formData,
+                              isCoHostLiveStream: checked,
+                              is_co_host: checked,
+                              coHostCommissionPercentage: nextPct,
+                              co_host_commission_pct: nextPct,
+                            });
+                          }}
+                          className="w-4 h-4 rounded text-violet-600 focus:ring-violet-500 cursor-pointer"
+                        />
+                        <div>
+                          <span className="font-extrabold text-violet-950 text-xs sm:text-sm flex items-center gap-1.5">
+                            <Sparkles className="w-4 h-4 text-violet-600" />
+                            <span>Co-Host Live Stream (Pendamping Sesi Live)</span>
+                          </span>
+                          <span className="block text-[10px] text-violet-800">
+                            Centang jika karyawan bertugas sebagai Co-Host Live Streaming untuk mencatat sesi live di Portal Karyawan &amp; menerima Komisi Co-Host otomatis di Slip Gaji
+                          </span>
+                        </div>
+                      </label>
+                      {formData.isCoHostLiveStream && (
+                        <span className="px-2.5 py-1 rounded-full bg-violet-600 text-white text-[10px] font-extrabold uppercase tracking-wider shrink-0 self-start sm:self-center">
+                          Komisi Co-Host Aktif
+                        </span>
+                      )}
+                    </div>
+
+                    {formData.isCoHostLiveStream && (
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1 animate-in fade-in">
+                        <div className="p-2.5 bg-white rounded-xl border border-violet-300 shadow-2xs">
+                          <label className="block text-violet-950 font-bold mb-1 text-xs">
+                            Komisi Co-Host (% dari Omset)
+                          </label>
+                          <div className="relative">
+                            <input
+                              type="number"
+                              name="co_host_commission_percentage"
+                              min={0}
+                              max={100}
+                              step={0.1}
+                              value={formData.coHostCommissionPercentage ?? 0}
+                              onChange={(e) =>
+                                setFormData({
+                                  ...formData,
+                                  isCoHostLiveStream: true,
+                                  coHostCommissionPercentage: Math.max(
+                                    0,
+                                    Number(e.target.value) || 0
+                                  ),
+                                })
+                              }
+                              placeholder="Contoh: 1.0"
+                              className="w-full p-2 pr-8 bg-violet-50/40 border border-violet-400 rounded-lg text-violet-950 font-extrabold focus:outline-hidden focus:ring-2 focus:ring-violet-500/30"
+                            />
+                            <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-extrabold text-violet-700">
+                              %
+                            </span>
+                          </div>
+                          <span className="block text-[10px] text-violet-700 mt-1">
+                            Contoh: {Number(formData.coHostCommissionPercentage) || 0}% × Omset Sesi Live Rp 50.000.000 ={' '}
+                            <strong>
+                              {formatRupiah(
+                                Math.round(
+                                  (50000000 * (Number(formData.coHostCommissionPercentage) || 0)) / 100
+                                )
+                              )}
+                            </strong>
+                          </span>
+                        </div>
+
+                        <div className="p-2.5 bg-white rounded-xl border border-violet-300 shadow-2xs">
+                          <label className="block text-violet-950 font-bold mb-1 text-xs">
+                            Tarif Co-Host per Pcs Tas (IDR / Pcs)
+                          </label>
+                          <input
+                            type="number"
+                            name="co_host_commission_per_pcs"
+                            min={0}
+                            step={500}
+                            value={formData.coHostCommissionPerPcs ?? 0}
+                            onChange={(e) =>
+                              setFormData({
+                                ...formData,
+                                isCoHostLiveStream: true,
+                                coHostCommissionPerPcs: Math.max(
+                                  0,
+                                  Math.round(Number(e.target.value) || 0)
+                                ),
+                              })
+                            }
+                            placeholder="Contoh: 1000"
+                            className="w-full p-2 bg-violet-50/40 border border-violet-300 rounded-lg text-violet-950 font-bold focus:outline-hidden focus:ring-2 focus:ring-violet-500/30"
+                          />
+                          <span className="block text-[10px] text-violet-700 mt-1">
+                            Contoh: 300 Pcs Tas ×{' '}
+                            {formatRupiah(Number(formData.coHostCommissionPerPcs) || 0)} ={' '}
+                            <strong>
+                              {formatRupiah(
+                                300 * Math.round(Number(formData.coHostCommissionPerPcs) || 0)
+                              )}
+                            </strong>
+                          </span>
+                        </div>
+
+                        <div className="p-2.5 bg-white/90 rounded-xl border border-violet-200 flex flex-col justify-between text-[11px]">
+                          <div>
+                            <span className="font-bold text-violet-950 block">
+                              Transparansi Read-Only di Portal Karyawan
+                            </span>
+                            <p className="text-[10px] text-slate-600 mt-0.5 leading-relaxed">
+                              Admin menginput omset &amp; jumlah tas terjual (Pcs). Co-Host melihat rincian komisi secara Read-Only dan nilainya otomatis masuk ke{' '}
+                              <strong className="text-violet-800">
+                                &ldquo;Insentif / Komisi Penjualan&rdquo;
+                              </strong>{' '}
+                              pada Slip Gaji bulanan.
+                            </p>
+                          </div>
+                          <span className="text-[10px] font-bold text-emerald-700 mt-1">
+                            ✓ Sinkron Real-Time ke Slip Gaji &amp; THP
+                          </span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -2928,6 +4231,22 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
           </div>
         </div>
       )}
+
+      {/* Modal Input Interaktif Sesi Live Streaming & Komisi (Host / Co-Host) */}
+      <LiveStreamSessionModal
+        isOpen={isLiveSessionModalOpen}
+        onClose={() => setIsLiveSessionModalOpen(false)}
+        employees={employees}
+        initialEmployeeId={liveSessionModalEmpId}
+        currentPeriod="Maret 2026"
+        onUpdateEmployee={(updated) => {
+          onUpdateEmployee(updated);
+          if (viewingEmployee && viewingEmployee.id === updated.id) {
+            setViewingEmployee(updated);
+          }
+        }}
+        onNotify={(msg) => showToast(msg)}
+      />
     </div>
   );
 };

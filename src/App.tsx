@@ -148,6 +148,7 @@ import {
   removeDeletedEmployeeId,
   markEmployeesModified,
   isEmployeesModified,
+  dbToLivestreamSession,
 } from './services/supabaseService';
 import { supabase } from './lib/supabase';
 
@@ -1182,6 +1183,11 @@ export default function App() {
         existing?.cashAdvanceDeduction || 0,
         existing?.cashAdvanceNotes,
         {
+          hourlyRate: penaltySummary.hourlyRate,
+          totalActualWorkHours: penaltySummary.totalActualWorkHours,
+          standardWorkHoursPerDay: penaltySummary.standardWorkHoursPerDay,
+          dailyWorkBreakdown: penaltySummary.dailyWorkBreakdown,
+          presentDaysCount: penaltySummary.presentDaysCount,
           lateFrequency: penaltySummary.lateFrequency,
           totalLateMinutes: penaltySummary.totalLateMinutes,
           latePenaltyAmount: penaltySummary.latePenaltyAmount,
@@ -1293,33 +1299,77 @@ export default function App() {
           setAssets(cleanedAssets);
         }
 
-        // 3. Fetch payrolls & auto-generate missing payroll records only for active non-deleted employees
+        // 3. Fetch attendances (Presensi) first so real-time daily salary (Hari Hadir Aktual × Gaji Per Hari) is accurate
+        const cloudAtts = await fetchAttendancesFromSupabase();
+        const authoritativeAttendances =
+          cloudAtts !== null
+            ? cloudAtts.filter((a) => !deletedIds.has(a.employeeId) && validEmpIds.has(a.employeeId))
+            : attendances;
+        if (cloudAtts !== null) {
+          setAttendances(authoritativeAttendances);
+        }
+
+        // 4. Fetch payrolls & auto-generate missing payroll records only for active non-deleted employees
         const cloudPayrolls = await fetchPayrollsFromSupabase();
         const activeEmpsList = authoritativeEmployees.filter(
           (e) => e.isActive !== false && !deletedIds.has(e.id)
         );
         if (cloudPayrolls !== null) {
+          const isPeriodLocked = Boolean(
+            (companyConfig.lockedPayrollPeriods || []).includes(companyConfig.currentPayrollPeriod)
+          );
           const mergedPayrolls = activeEmpsList.map((emp) => {
             const found = cloudPayrolls.find((p) => p.employeeId === emp.id);
-            if (found && found.totalGrossSalary > 0 && found.takeHomePay > 0) {
+            if (found && isPeriodLocked) {
               return found;
             }
-            const generated = calculatePayroll(emp, companyConfig.currentPayrollPeriod, 0, 0, 0);
-            upsertPayrollToSupabase(generated);
-            return generated;
+            const penaltySummary = calculateEmployeeAttendancePenalty(
+              emp,
+              authoritativeAttendances,
+              companyConfig.workShifts,
+              companyConfig.attendancePenaltyPolicy
+            );
+            const generated = calculatePayroll(
+              emp,
+              companyConfig.currentPayrollPeriod,
+              found?.overtimeMinutes || 0,
+              found?.bonus || 0,
+              penaltySummary.totalLateMinutes,
+              found?.cashAdvanceDeduction || 0,
+              found?.cashAdvanceNotes,
+              {
+                hourlyRate: penaltySummary.hourlyRate,
+                totalActualWorkHours: penaltySummary.totalActualWorkHours,
+                standardWorkHoursPerDay: penaltySummary.standardWorkHoursPerDay,
+                dailyWorkBreakdown: penaltySummary.dailyWorkBreakdown,
+                presentDaysCount: penaltySummary.presentDaysCount,
+                lateFrequency: penaltySummary.lateFrequency,
+                totalLateMinutes: penaltySummary.totalLateMinutes,
+                latePenaltyAmount: penaltySummary.latePenaltyAmount,
+                alphaDaysCount: penaltySummary.alphaDaysCount,
+                alphaPenaltyAmount: penaltySummary.alphaPenaltyAmount,
+                attendanceDeductionNotes: penaltySummary.deductionNotes,
+                isLateFeeWaived: found?.isLateFeeWaived,
+                waiverReason: found?.waiverReason,
+                penaltyPolicy: companyConfig.attendancePenaltyPolicy,
+              }
+            );
+            const finalRec: PayrollRecord = found
+              ? {
+                  ...generated,
+                  id: found.id,
+                  referenceNumber: found.referenceNumber || generated.referenceNumber,
+                  paymentStatus: found.paymentStatus || generated.paymentStatus,
+                  paymentDate: found.paymentDate || generated.paymentDate,
+                }
+              : generated;
+            upsertPayrollToSupabase(finalRec);
+            return finalRec;
           });
           setPayrolls(mergedPayrolls);
         } else {
           setPayrolls((prev) =>
             prev.filter((p) => !deletedIds.has(p.employeeId) && validEmpIds.has(p.employeeId))
-          );
-        }
-
-        // 4. Fetch attendances (Presensi)
-        const cloudAtts = await fetchAttendancesFromSupabase();
-        if (cloudAtts !== null) {
-          setAttendances(
-            cloudAtts.filter((a) => !deletedIds.has(a.employeeId) && validEmpIds.has(a.employeeId))
           );
         }
 
@@ -1436,7 +1486,23 @@ export default function App() {
           } else if (payload.eventType === 'UPDATE') {
             const updatedEmp = dbToEmployee(payload.new);
             if (deletedIds.has(updatedEmp.id)) return;
-            setEmployees((prev) => prev.map((e) => (e.id === updatedEmp.id ? updatedEmp : e)));
+            setEmployees((prev) =>
+              prev.map((e) => {
+                if (e.id !== updatedEmp.id) return e;
+                const mergedLogsMap = new Map<string, any>();
+                for (const s of [
+                  ...(e.liveStreamSalesLogs || []),
+                  ...(updatedEmp.liveStreamSalesLogs || []),
+                ]) {
+                  if (s?.id) mergedLogsMap.set(s.id, s);
+                }
+                return {
+                  ...e,
+                  ...updatedEmp,
+                  liveStreamSalesLogs: Array.from(mergedLogsMap.values()),
+                };
+              })
+            );
           } else if (payload.eventType === 'DELETE') {
             const oldId = (payload.old as any)?.id;
             if (oldId) {
@@ -1448,6 +1514,74 @@ export default function App() {
               setOvertimeRequests((prev) => prev.filter((o) => o.employeeId !== oldId));
               setReimbursements((prev) => prev.filter((r) => r.employeeId !== oldId));
             }
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'tgi_employees' },
+        (payload: any) => {
+          const row = payload.new as any;
+          if (!row?.id) return;
+          const isHost = Boolean(row.is_host === true);
+          const isCoHost = Boolean(row.is_co_host === true);
+          const hostPct = Number(row.host_commission_pct) || 0;
+          const hostPcs = Number(row.host_commission_per_pcs) || 0;
+          const coHostPct = Number(row.co_host_commission_pct) || 0;
+          const coHostPcs = Number(row.co_host_commission_per_pcs) || 0;
+          setEmployees((prev) =>
+            prev.map((e) =>
+              e.id === row.id
+                ? {
+                    ...e,
+                    isLiveStreamHost: isHost,
+                    is_host: isHost,
+                    salesCommissionPercentage: hostPct,
+                    host_commission_pct: hostPct,
+                    salesCommissionPerPcs: hostPcs,
+                    host_commission_per_pcs: hostPcs,
+                    isCoHostLiveStream: isCoHost,
+                    is_co_host: isCoHost,
+                    coHostCommissionPercentage: coHostPct,
+                    co_host_commission_pct: coHostPct,
+                    coHostCommissionPerPcs: coHostPcs,
+                    co_host_commission_per_pcs: coHostPcs,
+                  }
+                : e
+            )
+          );
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'tgi_livestream_sessions' },
+        (payload: any) => {
+          if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+            const session = dbToLivestreamSession(payload.new);
+            if (!session.employeeId) return;
+            setEmployees((prev) =>
+              prev.map((e) => {
+                if (e.id !== session.employeeId) return e;
+                const existing = (e.liveStreamSalesLogs || []).filter(
+                  (s) => s.id !== session.id
+                );
+                return {
+                  ...e,
+                  liveStreamSalesLogs: [session, ...existing],
+                };
+              })
+            );
+          } else if (payload.eventType === 'DELETE') {
+            const oldId = (payload.old as any)?.id;
+            if (!oldId) return;
+            setEmployees((prev) =>
+              prev.map((e) => ({
+                ...e,
+                liveStreamSalesLogs: (e.liveStreamSalesLogs || []).filter(
+                  (s) => s.id !== oldId
+                ),
+              }))
+            );
           }
         }
       )
@@ -1612,8 +1746,36 @@ export default function App() {
       }
       return next;
     });
-    // Generate initial payroll record for new employee
-    const newPayroll = calculatePayroll(newEmp, companyConfig.currentPayrollPeriod, 0, 0, 0);
+    // Generate initial payroll record for new employee based on actual attendance days × daily salary
+    const initialPenaltySummary = calculateEmployeeAttendancePenalty(
+      newEmp,
+      attendances,
+      companyConfig.workShifts,
+      companyConfig.attendancePenaltyPolicy
+    );
+    const newPayroll = calculatePayroll(
+      newEmp,
+      companyConfig.currentPayrollPeriod,
+      0,
+      0,
+      initialPenaltySummary.totalLateMinutes,
+      0,
+      undefined,
+      {
+        hourlyRate: initialPenaltySummary.hourlyRate,
+        totalActualWorkHours: initialPenaltySummary.totalActualWorkHours,
+        standardWorkHoursPerDay: initialPenaltySummary.standardWorkHoursPerDay,
+        dailyWorkBreakdown: initialPenaltySummary.dailyWorkBreakdown,
+        presentDaysCount: initialPenaltySummary.presentDaysCount,
+        lateFrequency: initialPenaltySummary.lateFrequency,
+        totalLateMinutes: initialPenaltySummary.totalLateMinutes,
+        latePenaltyAmount: initialPenaltySummary.latePenaltyAmount,
+        alphaDaysCount: initialPenaltySummary.alphaDaysCount,
+        alphaPenaltyAmount: initialPenaltySummary.alphaPenaltyAmount,
+        attendanceDeductionNotes: initialPenaltySummary.deductionNotes,
+        penaltyPolicy: companyConfig.attendancePenaltyPolicy,
+      }
+    );
     setPayrolls((prev) => [newPayroll, ...prev]);
 
     // Persist to Supabase asynchronously with fallback
@@ -1627,7 +1789,7 @@ export default function App() {
       {
         targetId: newEmp.id,
         targetName: `${newEmp.fullName} (NIK: ${newEmp.nik})`,
-        newValue: `Gaji Pokok: Rp ${newEmp.baseSalary.toLocaleString('id-ID')}, Tunjangan: Rp ${(newEmp.allowances?.position || 0).toLocaleString('id-ID')}, Status: ${newEmp.employmentStatus}`,
+        newValue: `Tarif Per Jam: Rp ${(newEmp.hourlyRate || Math.round((newEmp.dailySalary || Math.round(newEmp.baseSalary / 25)) / 9)).toLocaleString('id-ID')}/jam, Gaji Harian (9 Jam): Rp ${(newEmp.dailySalary || Math.round(newEmp.baseSalary / 25)).toLocaleString('id-ID')}, Status: ${newEmp.employmentStatus}`,
         severity: 'success',
       }
     );
@@ -1649,7 +1811,13 @@ export default function App() {
     // Persist to Supabase asynchronously so Portal Admin & Portal Karyawan stay synced
     updateEmployeeInSupabase(updatedEmp);
 
-    // Update matching payroll calculation
+    // Update matching payroll calculation (real-time Hari Hadir Aktual × Gaji Per Hari)
+    const penaltySummary = calculateEmployeeAttendancePenalty(
+      updatedEmp,
+      attendances,
+      companyConfig.workShifts,
+      companyConfig.attendancePenaltyPolicy
+    );
     setPayrolls((prev) =>
       prev.map((p) => {
         if (p.employeeId === updatedEmp.id) {
@@ -1657,15 +1825,33 @@ export default function App() {
             p.overtimeMinutes !== undefined
               ? p.overtimeMinutes
               : Math.round(p.overtimePay / Math.max(100, getOvertimeRatePerMinute(updatedEmp, 1.5)));
-          return calculatePayroll(
+          const recalculated = calculatePayroll(
             updatedEmp,
             companyConfig.currentPayrollPeriod,
             otMins,
             p.bonus,
-            p.lateDeduction > 0 ? 30 : 0,
+            penaltySummary.totalLateMinutes,
             p.cashAdvanceDeduction,
-            p.cashAdvanceNotes
+            p.cashAdvanceNotes,
+            {
+              hourlyRate: penaltySummary.hourlyRate,
+              totalActualWorkHours: penaltySummary.totalActualWorkHours,
+              standardWorkHoursPerDay: penaltySummary.standardWorkHoursPerDay,
+              dailyWorkBreakdown: penaltySummary.dailyWorkBreakdown,
+              presentDaysCount: penaltySummary.presentDaysCount,
+              lateFrequency: penaltySummary.lateFrequency,
+              totalLateMinutes: penaltySummary.totalLateMinutes,
+              latePenaltyAmount: penaltySummary.latePenaltyAmount,
+              alphaDaysCount: penaltySummary.alphaDaysCount,
+              alphaPenaltyAmount: penaltySummary.alphaPenaltyAmount,
+              attendanceDeductionNotes: penaltySummary.deductionNotes,
+              isLateFeeWaived: p.isLateFeeWaived,
+              waiverReason: p.waiverReason,
+              penaltyPolicy: companyConfig.attendancePenaltyPolicy,
+            }
           );
+          upsertPayrollToSupabase(recalculated);
+          return recalculated;
         }
         return p;
       })
@@ -1911,6 +2097,11 @@ export default function App() {
         caDeduct,
         caNotes,
         {
+          hourlyRate: penaltySummary.hourlyRate,
+          totalActualWorkHours: penaltySummary.totalActualWorkHours,
+          standardWorkHoursPerDay: penaltySummary.standardWorkHoursPerDay,
+          dailyWorkBreakdown: penaltySummary.dailyWorkBreakdown,
+          presentDaysCount: penaltySummary.presentDaysCount,
           lateFrequency: penaltySummary.lateFrequency,
           totalLateMinutes: penaltySummary.totalLateMinutes,
           latePenaltyAmount: penaltySummary.latePenaltyAmount,
@@ -2077,6 +2268,11 @@ export default function App() {
         existingRec?.cashAdvanceDeduction || 0,
         existingRec?.cashAdvanceNotes,
         {
+          hourlyRate: penaltySummary.hourlyRate,
+          totalActualWorkHours: penaltySummary.totalActualWorkHours,
+          standardWorkHoursPerDay: penaltySummary.standardWorkHoursPerDay,
+          dailyWorkBreakdown: penaltySummary.dailyWorkBreakdown,
+          presentDaysCount: penaltySummary.presentDaysCount,
           lateFrequency: penaltySummary.lateFrequency,
           totalLateMinutes: penaltySummary.totalLateMinutes,
           latePenaltyAmount: penaltySummary.latePenaltyAmount,
@@ -3589,6 +3785,14 @@ export default function App() {
     setSelectedPayslip(payroll);
   };
 
+  const liveComputedPayslip = selectedPayslip
+    ? syncedPayrolls.find(
+        (p) => p.employeeId === selectedPayslip.employeeId && p.period === selectedPayslip.period
+      ) ||
+      syncedPayrolls.find((p) => p.employeeId === selectedPayslip.employeeId) ||
+      selectedPayslip
+    : null;
+
   const selectedEmployeeForPayslip = selectedPayslip
     ? employees.find((e) => e.id === selectedPayslip.employeeId) || null
     : null;
@@ -3823,7 +4027,7 @@ export default function App() {
 
         {/* Slip Gaji Modal (Printable/Downloadable) */}
         <PayslipModal
-          payroll={selectedPayslip}
+          payroll={liveComputedPayslip}
           employee={selectedEmployeeForPayslip}
           companyConfig={companyConfig}
           onClose={() => setSelectedPayslip(null)}
@@ -3970,6 +4174,7 @@ export default function App() {
                 onOpenPayslip={handleOpenPayslip}
                 onRecalculatePayroll={handleRecalculatePayroll}
                 onUpdatePayrollRecord={handleUpdatePayrollRecord}
+                onUpdateEmployee={handleUpdateEmployee}
                 onUpdatePenaltyPolicy={handleUpdatePenaltyPolicy}
                 onChangePayrollPeriod={handleChangePayrollPeriod}
                 onToggleLockPayrollPeriod={handleToggleLockPayrollPeriod}
@@ -4282,7 +4487,7 @@ export default function App() {
 
       {/* Slip Gaji Modal (Printable) */}
       <PayslipModal
-        payroll={selectedPayslip}
+        payroll={liveComputedPayslip}
         employee={selectedEmployeeForPayslip}
         companyConfig={companyConfig}
         employees={employees}

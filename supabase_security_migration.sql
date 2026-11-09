@@ -30,8 +30,10 @@ CREATE POLICY "No Direct Client Access to Credentials"
   USING (false)
   WITH CHECK (false);
 
--- Tambahkan kolom access_pin_hash pada tabel employees agar PIN tidak disimpan plaintext
+-- Tambahkan kolom access_pin_hash, daily_salary, dan hourly_rate pada tabel employees
 ALTER TABLE public.employees ADD COLUMN IF NOT EXISTS access_pin_hash TEXT;
+ALTER TABLE public.employees ADD COLUMN IF NOT EXISTS daily_salary NUMERIC NOT NULL DEFAULT 0;
+ALTER TABLE public.employees ADD COLUMN IF NOT EXISTS hourly_rate NUMERIC NOT NULL DEFAULT 0;
 
 -- Migrasikan PIN lama yang masih plaintext (jika ada) ke bentuk bcrypt hash lalu bersihkan plaintext
 UPDATE public.employees
@@ -471,3 +473,96 @@ GRANT EXECUTE ON FUNCTION public.verify_admin_login(TEXT, TEXT) TO anon, authent
 GRANT EXECUTE ON FUNCTION public.verify_employee_login(TEXT, TEXT) TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.set_admin_credential(TEXT, TEXT, TEXT) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.set_employee_pin(TEXT, TEXT) TO authenticated;
+
+-- =============================================================================
+-- 9. SKEMA LIVE STREAMING HOST & CO-HOST (tgi_employees & tgi_livestream_sessions)
+-- =============================================================================
+
+-- Pastikan tabel tgi_employees tersedia (atau jika menggunakan tabel employees utama)
+CREATE TABLE IF NOT EXISTS public.tgi_employees (
+    id TEXT PRIMARY KEY,
+    nik TEXT,
+    full_name TEXT,
+    is_host BOOLEAN DEFAULT FALSE,
+    is_co_host BOOLEAN DEFAULT FALSE,
+    host_commission_pct DECIMAL(5,2) DEFAULT 2.50,
+    host_commission_per_pcs DECIMAL(10,2) DEFAULT 2000.00,
+    co_host_commission_pct DECIMAL(5,2) DEFAULT 1.00,
+    co_host_commission_per_pcs DECIMAL(10,2) DEFAULT 1000.00,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Tambahan kolom role dan komisi pada tabel tgi_employees
+ALTER TABLE public.tgi_employees 
+ADD COLUMN IF NOT EXISTS is_host BOOLEAN DEFAULT FALSE,
+ADD COLUMN IF NOT EXISTS is_co_host BOOLEAN DEFAULT FALSE,
+ADD COLUMN IF NOT EXISTS host_commission_pct DECIMAL(5,2) DEFAULT 2.50,
+ADD COLUMN IF NOT EXISTS host_commission_per_pcs DECIMAL(10,2) DEFAULT 2000.00,
+ADD COLUMN IF NOT EXISTS co_host_commission_pct DECIMAL(5,2) DEFAULT 1.00,
+ADD COLUMN IF NOT EXISTS co_host_commission_per_pcs DECIMAL(10,2) DEFAULT 1000.00;
+
+-- Tambahan kolom yang sama pada tabel public.employees agar sinkron penuh
+ALTER TABLE public.employees 
+ADD COLUMN IF NOT EXISTS is_host BOOLEAN DEFAULT FALSE,
+ADD COLUMN IF NOT EXISTS is_co_host BOOLEAN DEFAULT FALSE,
+ADD COLUMN IF NOT EXISTS host_commission_pct DECIMAL(5,2) DEFAULT 2.50,
+ADD COLUMN IF NOT EXISTS host_commission_per_pcs DECIMAL(10,2) DEFAULT 2000.00,
+ADD COLUMN IF NOT EXISTS co_host_commission_pct DECIMAL(5,2) DEFAULT 1.00,
+ADD COLUMN IF NOT EXISTS co_host_commission_per_pcs DECIMAL(10,2) DEFAULT 1000.00;
+
+-- Tabel riwayat sesi live streaming per karyawan per periode
+CREATE TABLE IF NOT EXISTS public.tgi_livestream_sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    employee_id TEXT NOT NULL,
+    employee_name TEXT NOT NULL,
+    role_type TEXT CHECK (role_type IN ('host', 'co_host')) NOT NULL,
+    platform TEXT DEFAULT 'TikTok Shop Live',
+    session_date DATE NOT NULL,
+    omset DECIMAL(15,2) DEFAULT 0.00,
+    pcs_sold INTEGER DEFAULT 0,
+    commission_pct_used DECIMAL(5,2) DEFAULT 0.00,
+    commission_per_pcs_used DECIMAL(10,2) DEFAULT 0.00,
+    total_commission DECIMAL(12,2) DEFAULT 0.00,
+    period TEXT NOT NULL, -- Contoh: 'Oktober 2026'
+    notes TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Aktifkan RLS pada tgi_employees dan tgi_livestream_sessions
+ALTER TABLE public.tgi_employees ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.tgi_livestream_sessions ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Authenticated Select TGI Employees" ON public.tgi_employees;
+DROP POLICY IF EXISTS "Admin Write TGI Employees" ON public.tgi_employees;
+
+CREATE POLICY "Authenticated Select TGI Employees"
+  ON public.tgi_employees FOR SELECT
+  USING (public.is_app_authenticated());
+
+CREATE POLICY "Admin Write TGI Employees"
+  ON public.tgi_employees FOR ALL
+  USING (public.is_app_authenticated())
+  WITH CHECK (public.is_app_authenticated());
+
+DROP POLICY IF EXISTS "Authenticated Select Livestream Sessions" ON public.tgi_livestream_sessions;
+DROP POLICY IF EXISTS "Admin Insert Livestream Sessions" ON public.tgi_livestream_sessions;
+DROP POLICY IF EXISTS "Admin Update Livestream Sessions" ON public.tgi_livestream_sessions;
+DROP POLICY IF EXISTS "Admin Delete Livestream Sessions" ON public.tgi_livestream_sessions;
+
+CREATE POLICY "Authenticated Select Livestream Sessions"
+  ON public.tgi_livestream_sessions FOR SELECT
+  USING (public.is_app_authenticated());
+
+CREATE POLICY "Admin Insert Livestream Sessions"
+  ON public.tgi_livestream_sessions FOR INSERT
+  WITH CHECK (public.is_app_authenticated());
+
+CREATE POLICY "Admin Update Livestream Sessions"
+  ON public.tgi_livestream_sessions FOR UPDATE
+  USING (public.is_app_authenticated())
+  WITH CHECK (public.is_app_authenticated());
+
+CREATE POLICY "Admin Delete Livestream Sessions"
+  ON public.tgi_livestream_sessions FOR DELETE
+  USING (public.is_app_authenticated());
+
