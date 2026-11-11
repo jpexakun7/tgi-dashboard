@@ -566,3 +566,129 @@ CREATE POLICY "Admin Delete Livestream Sessions"
   ON public.tgi_livestream_sessions FOR DELETE
   USING (public.is_app_authenticated());
 
+-- ============================================================================
+-- 10. SKEMA PART-TIME WEEKLY PAYROLL & SUNDAY PAYOUT (GAJI MINGGUAN MINGGU)
+-- ============================================================================
+
+-- Tambahan kolom employment_type ('Full-Time' | 'Contract' | 'Part-Time'), hourly_rate & overtime_rate
+ALTER TABLE public.employees
+ADD COLUMN IF NOT EXISTS employment_type TEXT DEFAULT 'Full-Time',
+ADD COLUMN IF NOT EXISTS hourly_rate DECIMAL(12,2) DEFAULT 0.00,
+ADD COLUMN IF NOT EXISTS overtime_rate DECIMAL(12,2) DEFAULT 0.00;
+
+ALTER TABLE public.tgi_employees
+ADD COLUMN IF NOT EXISTS employment_type TEXT DEFAULT 'Full-Time',
+ADD COLUMN IF NOT EXISTS hourly_rate DECIMAL(12,2) DEFAULT 0.00,
+ADD COLUMN IF NOT EXISTS overtime_rate DECIMAL(12,2) DEFAULT 0.00;
+
+-- Tabel pencatatan jam kerja & absensi harian karyawan Part-Time (tgi_parttime_logs & tgi_part_time_logs)
+CREATE TABLE IF NOT EXISTS public.tgi_parttime_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    employee_id TEXT NOT NULL,
+    employee_name TEXT NOT NULL,
+    employee_nik TEXT,
+    department TEXT,
+    work_date DATE NOT NULL,
+    clock_in TEXT,
+    clock_out TEXT,
+    normal_hours DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+    overtime_hours DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+    hours_worked DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+    hourly_rate DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    overtime_rate DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    daily_wage DECIMAL(14,2) NOT NULL DEFAULT 0.00,
+    source TEXT DEFAULT 'portal',
+    notes TEXT,
+    status TEXT CHECK (status IN ('Unpaid', 'Paid')) DEFAULT 'Unpaid',
+    paid_at TIMESTAMP WITH TIME ZONE,
+    weekly_payout_id TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS public.tgi_part_time_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    employee_id TEXT NOT NULL,
+    employee_name TEXT NOT NULL,
+    employee_nik TEXT,
+    department TEXT,
+    work_date DATE NOT NULL,
+    clock_in TEXT,
+    clock_out TEXT,
+    normal_hours DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+    overtime_hours DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+    hours_worked DECIMAL(5,2) NOT NULL DEFAULT 0.00,
+    hourly_rate DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    overtime_rate DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    daily_wage DECIMAL(14,2) NOT NULL DEFAULT 0.00,
+    source TEXT DEFAULT 'portal',
+    notes TEXT,
+    status TEXT CHECK (status IN ('Unpaid', 'Paid')) DEFAULT 'Unpaid',
+    paid_at TIMESTAMP WITH TIME ZONE,
+    weekly_payout_id TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+ALTER TABLE public.tgi_part_time_logs
+ADD COLUMN IF NOT EXISTS clock_in TEXT,
+ADD COLUMN IF NOT EXISTS clock_out TEXT,
+ADD COLUMN IF NOT EXISTS normal_hours DECIMAL(5,2) DEFAULT 0.00,
+ADD COLUMN IF NOT EXISTS overtime_hours DECIMAL(5,2) DEFAULT 0.00,
+ADD COLUMN IF NOT EXISTS overtime_rate DECIMAL(12,2) DEFAULT 0.00,
+ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'portal';
+
+-- Tabel rekap pembayaran gaji mingguan Part-Time (Sunday Payout / Laporan Pengeluaran)
+CREATE TABLE IF NOT EXISTS public.tgi_part_time_weekly_payouts (
+    id TEXT PRIMARY KEY,
+    reference_number TEXT NOT NULL,
+    employee_id TEXT NOT NULL,
+    employee_name TEXT NOT NULL,
+    employee_nik TEXT,
+    department TEXT,
+    role TEXT,
+    bank_name TEXT,
+    bank_account_number TEXT,
+    bank_account_holder TEXT,
+    week_start_date DATE NOT NULL,
+    week_end_date DATE NOT NULL,
+    payout_date DATE NOT NULL,
+    total_days_worked INTEGER DEFAULT 0,
+    normal_hours_worked DECIMAL(6,2) DEFAULT 0.00,
+    overtime_hours_worked DECIMAL(6,2) DEFAULT 0.00,
+    total_hours_worked DECIMAL(6,2) DEFAULT 0.00,
+    hourly_rate DECIMAL(12,2) DEFAULT 0.00,
+    overtime_rate DECIMAL(12,2) DEFAULT 0.00,
+    gross_salary DECIMAL(14,2) DEFAULT 0.00,
+    net_payout DECIMAL(14,2) DEFAULT 0.00,
+    status TEXT CHECK (status IN ('Unpaid', 'Paid')) DEFAULT 'Paid',
+    paid_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    paid_by TEXT,
+    payment_method TEXT DEFAULT 'Transfer Bank',
+    notes TEXT,
+    log_ids JSONB DEFAULT '[]'::jsonb,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+ALTER TABLE public.tgi_parttime_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.tgi_part_time_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.tgi_part_time_weekly_payouts ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Authenticated Access PartTime Logs v2" ON public.tgi_parttime_logs;
+CREATE POLICY "Authenticated Access PartTime Logs v2"
+  ON public.tgi_parttime_logs FOR ALL
+  USING (public.is_app_authenticated())
+  WITH CHECK (public.is_app_authenticated());
+
+DROP POLICY IF EXISTS "Authenticated Access PartTime Logs" ON public.tgi_part_time_logs;
+CREATE POLICY "Authenticated Access PartTime Logs"
+  ON public.tgi_part_time_logs FOR ALL
+  USING (public.is_app_authenticated())
+  WITH CHECK (public.is_app_authenticated());
+
+DROP POLICY IF EXISTS "Authenticated Access PartTime Payouts" ON public.tgi_part_time_weekly_payouts;
+CREATE POLICY "Authenticated Access PartTime Payouts"
+  ON public.tgi_part_time_weekly_payouts FOR ALL
+  USING (public.is_app_authenticated())
+  WITH CHECK (public.is_app_authenticated());
+
+
+

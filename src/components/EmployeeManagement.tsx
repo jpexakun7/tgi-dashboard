@@ -37,11 +37,13 @@ import {
   ExternalLink,
   AlertTriangle,
   Video,
+  Clock,
 } from 'lucide-react';
 import {
   Employee,
   Department,
   EmploymentStatus,
+  EmploymentType,
   PTKPStatus,
   CompanyAsset,
   PerformanceReview,
@@ -59,6 +61,7 @@ import {
   getEmployeeHourlyRate,
   STANDARD_WORK_HOURS_PER_DAY,
   calculateEmployeeLiveSalesCommission,
+  normalizeEmploymentType,
 } from '../utils/formatters';
 import {
   getContractReminderWhatsAppUrl,
@@ -70,6 +73,7 @@ import { EmployeeDemographicsCharts } from './EmployeeDemographicsCharts';
 import { LiveStreamSessionModal } from './LiveStreamSessionModal';
 import {
   syncEmployeeLiveColumnsToSupabase,
+  saveEmployeeEmploymentMetaLocal,
   upsertLivestreamSessionToSupabase,
   deleteLivestreamSessionFromSupabase,
   generateSessionUuid,
@@ -416,9 +420,13 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
     role: '',
     department: 'Teknologi & IT',
     employmentStatus: 'PKWTT (Tetap)',
+    employmentType: 'Full-Time',
+    employment_type: 'Full-Time',
     joinDate: new Date().toISOString().split('T')[0],
     hourlyRate: 35000,
     hourly_rate: 35000,
+    overtimeRate: 52500,
+    overtime_rate: 52500,
     dailySalary: 315000,
     daily_salary: 315000,
     baseSalary: 7875000,
@@ -465,6 +473,8 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         gender: 'Laki-laki',
         department: 'Operasional',
         employmentStatus: 'PKWT (Kontrak)',
+        employmentType: 'Contract',
+        employment_type: 'Contract',
         joinDate: todayIso,
         contractStartDate: todayIso,
         contractEndDate: nextYearIso,
@@ -473,6 +483,8 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         contractDocumentName: '',
         hourlyRate: 25000,
         hourly_rate: 25000,
+        overtimeRate: 37500,
+        overtime_rate: 37500,
         dailySalary: 225000,
         daily_salary: 225000,
         baseSalary: 5625000,
@@ -520,6 +532,8 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
       gender: 'Laki-laki',
       department: 'Operasional',
       employmentStatus: 'PKWT (Kontrak)',
+      employmentType: 'Contract',
+      employment_type: 'Contract',
       joinDate: todayIso,
       contractStartDate: todayIso,
       contractEndDate: nextYearIso,
@@ -528,6 +542,8 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
       contractDocumentName: '',
       hourlyRate: 25000,
       hourly_rate: 25000,
+      overtimeRate: 37500,
+      overtime_rate: 37500,
       dailySalary: 225000,
       daily_salary: 225000,
       baseSalary: 5625000,
@@ -572,10 +588,33 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
     const resolvedCoHostPcs =
       Number(emp.co_host_commission_per_pcs ?? emp.coHostCommissionPerPcs) || 0;
 
+    const isPt =
+      normalizeEmploymentType(emp.employmentType) === 'Part-Time' ||
+      normalizeEmploymentType(emp.employment_type) === 'Part-Time' ||
+      normalizeEmploymentType(emp.employmentStatus) === 'Part-Time' ||
+      normalizeEmploymentType(emp.status) === 'Part-Time';
+
+    const resolvedEmploymentType: EmploymentType = isPt
+      ? 'Part-Time'
+      : normalizeEmploymentType(emp.employmentType || emp.employment_type) ||
+        (emp.employmentStatus === 'PKWTT (Tetap)' ? 'Full-Time' : 'Contract');
+    const resolvedEmploymentStatus: EmploymentStatus = isPt
+      ? 'Part-Time'
+      : emp.employmentStatus || 'PKWT (Kontrak)';
+
+    const resolvedOvertimeRate =
+      Number(emp.overtimeRate ?? emp.overtime_rate) || Math.round(resolvedHourly * 1.5);
+
     setFormData({
       ...emp,
+      employmentStatus: resolvedEmploymentStatus,
+      status: resolvedEmploymentStatus,
+      employmentType: resolvedEmploymentType,
+      employment_type: resolvedEmploymentType,
       hourlyRate: resolvedHourly,
       hourly_rate: resolvedHourly,
+      overtimeRate: resolvedOvertimeRate,
+      overtime_rate: resolvedOvertimeRate,
       dailySalary: resolvedDaily,
       daily_salary: resolvedDaily,
       isLiveStreamHost: resolvedIsHost,
@@ -637,6 +676,11 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         : Math.round(resolvedHourlyRate * STANDARD_WORK_HOURS_PER_DAY);
     const resolvedBaseSalary =
       Number(formData.baseSalary) || resolvedDailySalary * 25;
+    const explicitOvertimeRate = Number(formData.overtimeRate ?? formData.overtime_rate) || 0;
+    const resolvedOvertimeRate =
+      explicitOvertimeRate > 0
+        ? Math.round(explicitOvertimeRate)
+        : Math.round(resolvedHourlyRate * 1.5);
 
     const resolvedIsHost = Boolean(formData.isLiveStreamHost ?? formData.is_host);
     const resolvedCommPct = resolvedIsHost
@@ -665,6 +709,21 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         )
       : 0;
 
+    const isPt =
+      normalizeEmploymentType(formData.employmentType) === 'Part-Time' ||
+      normalizeEmploymentType(formData.employment_type) === 'Part-Time' ||
+      normalizeEmploymentType(formData.employmentStatus) === 'Part-Time' ||
+      normalizeEmploymentType((formData as any).status) === 'Part-Time';
+
+    const resolvedEmploymentType: EmploymentType = isPt
+      ? 'Part-Time'
+      : normalizeEmploymentType(formData.employmentType || formData.employment_type) ||
+        (formData.employmentStatus === 'PKWTT (Tetap)' ? 'Full-Time' : 'Contract');
+
+    const resolvedEmploymentStatus: EmploymentStatus = isPt
+      ? 'Part-Time'
+      : ((formData.employmentStatus as EmploymentStatus) || 'PKWT (Kontrak)');
+
     if (editingEmployee) {
       const updated: Employee = {
         ...editingEmployee,
@@ -673,11 +732,15 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         nik: nikTrimmed,
         email: emailTrimmed,
         department: departmentTrimmed,
+        employmentStatus: resolvedEmploymentStatus,
+        status: resolvedEmploymentStatus,
+        employmentType: resolvedEmploymentType,
+        employment_type: resolvedEmploymentType,
         ktpNumber: formData.ktpNumber?.replace(/\D/g, '').slice(0, 16) || editingEmployee.ktpNumber,
         npwp: formData.npwp?.trim() || editingEmployee.npwp,
         contractStartDate: formData.contractStartDate || formData.joinDate || editingEmployee.contractStartDate,
         contractEndDate:
-          formData.employmentStatus === 'PKWTT (Tetap)'
+          resolvedEmploymentStatus === 'PKWTT (Tetap)'
             ? undefined
             : formData.contractEndDate || editingEmployee.contractEndDate,
         contractDocumentNumber: formData.contractDocumentNumber?.trim() || editingEmployee.contractDocumentNumber,
@@ -687,6 +750,8 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         birthDate: formData.birthDate || editingEmployee.birthDate,
         hourlyRate: resolvedHourlyRate,
         hourly_rate: resolvedHourlyRate,
+        overtimeRate: resolvedOvertimeRate,
+        overtime_rate: resolvedOvertimeRate,
         dailySalary: resolvedDailySalary,
         daily_salary: resolvedDailySalary,
         baseSalary: resolvedBaseSalary,
@@ -713,9 +778,10 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         avatarUrl: formData.avatarUrl || editingEmployee.avatarUrl,
         facePhotoUrl: formData.facePhotoUrl || formData.avatarUrl || editingEmployee.facePhotoUrl,
       };
+      saveEmployeeEmploymentMetaLocal(updated);
       onUpdateEmployee(updated);
       syncEmployeeLiveColumnsToSupabase(updated).catch(() => {});
-      showToast(`Data karyawan ${updated.fullName} (Tarif Per Jam: ${formatRupiah(resolvedHourlyRate)}/jam${resolvedIsHost ? ` • Host Live: ${resolvedCommPct}%` : ''}${resolvedIsCoHost ? ` • Co-Host Live: ${resolvedCoHostCommPct}%` : ''}) berhasil diperbarui!`);
+      showToast(`Data karyawan ${updated.fullName} (${resolvedEmploymentType} • Tarif Per Jam: ${formatRupiah(resolvedHourlyRate)}/jam${resolvedIsHost ? ` • Host Live: ${resolvedCommPct}%` : ''}${resolvedIsCoHost ? ` • Co-Host Live: ${resolvedCoHostCommPct}%` : ''}) berhasil diperbarui!`);
     } else {
       const joinDt = formData.joinDate || new Date().toISOString().split('T')[0];
       const newEmp: Employee = {
@@ -732,7 +798,10 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         role: formData.role?.trim() || 'Staff Operasional',
         gender: formData.gender || 'Laki-laki',
         department: departmentTrimmed,
-        employmentStatus: (formData.employmentStatus as EmploymentStatus) || 'PKWT (Kontrak)',
+        employmentStatus: resolvedEmploymentStatus,
+        status: resolvedEmploymentStatus,
+        employmentType: resolvedEmploymentType,
+        employment_type: resolvedEmploymentType,
         joinDate: joinDt,
         contractStartDate: formData.contractStartDate || joinDt,
         contractEndDate:
@@ -744,6 +813,8 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         birthDate: formData.birthDate || undefined,
         hourlyRate: resolvedHourlyRate,
         hourly_rate: resolvedHourlyRate,
+        overtimeRate: resolvedOvertimeRate,
+        overtime_rate: resolvedOvertimeRate,
         dailySalary: resolvedDailySalary,
         daily_salary: resolvedDailySalary,
         baseSalary: resolvedBaseSalary,
@@ -777,8 +848,10 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         isActive: true,
         approvalStatus: 'approved',
       };
+      saveEmployeeEmploymentMetaLocal(newEmp);
       onAddEmployee(newEmp);
-      showToast(`Karyawan baru "${newEmp.fullName}" (Tarif Per Jam: ${formatRupiah(resolvedHourlyRate)}/jam) berhasil ditambahkan ke database!`);
+      syncEmployeeLiveColumnsToSupabase(newEmp).catch(() => {});
+      showToast(`Karyawan baru "${newEmp.fullName}" (${resolvedEmploymentType} • Tarif Per Jam: ${formatRupiah(resolvedHourlyRate)}/jam) berhasil ditambahkan ke database!`);
     }
 
     setEditingEmployee(null);
@@ -885,7 +958,12 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
       emp.department.toLowerCase().includes(search.toLowerCase());
 
     const matchDept = selectedDept === 'ALL' || emp.department === selectedDept;
-    const matchStatus = selectedStatus === 'ALL' || emp.employmentStatus === selectedStatus;
+    const empType =
+      emp.employmentType || emp.employment_type || (emp.employmentStatus === 'PKWTT (Tetap)' ? 'Full-Time' : 'Contract');
+    const matchStatus =
+      selectedStatus === 'ALL' ||
+      emp.employmentStatus === selectedStatus ||
+      empType === selectedStatus;
 
     return matchSearch && matchDept && matchStatus;
   });
@@ -1013,10 +1091,13 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
             onChange={(e) => setSelectedStatus(e.target.value)}
             className="px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-700 focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20 cursor-pointer"
           >
-            <option value="ALL">Semua Status</option>
-            <option value="PKWTT (Tetap)">PKWTT (Tetap)</option>
-            <option value="PKWT (Kontrak)">PKWT (Kontrak)</option>
-            <option value="Probation">Probation</option>
+            <option value="ALL">Semua Status &amp; Tipe</option>
+            <option value="Full-Time">Tipe: Full-Time</option>
+            <option value="Contract">Tipe: Contract</option>
+            <option value="Part-Time">Tipe: Part-Time (Mingguan)</option>
+            <option value="PKWTT (Tetap)">Status: PKWTT (Tetap)</option>
+            <option value="PKWT (Kontrak)">Status: PKWT (Kontrak)</option>
+            <option value="Probation">Status: Probation</option>
           </select>
         </div>
       </div>
@@ -1164,20 +1245,46 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                     <span className="text-[11px] font-medium text-slate-900 block mt-0.5">
                       {emp.role}
                     </span>
-                    <span className="text-[10px] text-slate-500">{emp.department}</span>
+                    {Boolean(
+                      (emp.department || '').trim().toLowerCase() !==
+                        (emp.role || '').trim().toLowerCase()
+                    ) && <span className="text-[10px] text-slate-500">{emp.department}</span>}
                   </td>
                   <td className="py-3 px-4">
                     <div className="flex flex-wrap items-center gap-1 mb-1">
                       <span
+                        className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold border ${
+                          (emp.employmentType || emp.employment_type) === 'Part-Time' ||
+                          emp.employmentStatus === 'Part-Time'
+                            ? 'bg-orange-100 text-orange-800 border-orange-300'
+                            : (emp.employmentType || emp.employment_type) === 'Full-Time' ||
+                              emp.employmentStatus === 'PKWTT (Tetap)'
+                            ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                            : 'bg-blue-100 text-blue-800 border-blue-200'
+                        }`}
+                      >
+                        {(emp.employmentType || emp.employment_type) === 'Part-Time' ||
+                        emp.employmentStatus === 'Part-Time'
+                          ? '⏱ Part-Time (Mingguan)'
+                          : emp.employmentType ||
+                            emp.employment_type ||
+                            (emp.employmentStatus === 'PKWTT (Tetap)' ? 'Full-Time' : 'Contract')}
+                      </span>
+                      <span
                         className={`inline-block px-2 py-0.5 rounded text-[10px] font-semibold ${
-                          emp.employmentStatus === 'PKWTT (Tetap)'
-                            ? 'bg-emerald-100 text-emerald-800'
+                          emp.employmentStatus === 'Part-Time' ||
+                          (emp.employmentType || emp.employment_type) === 'Part-Time'
+                            ? 'bg-orange-50 text-orange-700'
+                            : emp.employmentStatus === 'PKWTT (Tetap)'
+                            ? 'bg-emerald-50 text-emerald-700'
                             : emp.employmentStatus === 'PKWT (Kontrak)'
-                            ? 'bg-blue-100 text-blue-800'
+                            ? 'bg-blue-50 text-blue-700'
                             : 'bg-amber-100 text-amber-800'
                         }`}
                       >
-                        {emp.employmentStatus}
+                        {(emp.employmentType || emp.employment_type) === 'Part-Time'
+                          ? 'Part-Time'
+                          : emp.employmentStatus}
                       </span>
                       <span
                         className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold ${
@@ -1429,7 +1536,12 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                     )}
                   </h3>
                   <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                    <span className="text-xs text-slate-500">{viewingEmployee.role} • {viewingEmployee.department}</span>
+                    <span className="text-xs text-slate-500">
+                      {(viewingEmployee.role || '').trim().toLowerCase() ===
+                      (viewingEmployee.department || '').trim().toLowerCase()
+                        ? viewingEmployee.role
+                        : `${viewingEmployee.role} • ${viewingEmployee.department}`}
+                    </span>
                     {viewingEmployee.gender && (
                       <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
                         viewingEmployee.gender === 'Laki-laki'
@@ -3161,23 +3273,273 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                     </select>
                   </div>
                   <div>
-                    <label className="block text-slate-600 mb-1">Status Kepegawaian</label>
+                    <label className="block text-slate-600 mb-1">Status Kepegawaian / Kontrak</label>
                     <select
-                      value={formData.employmentStatus}
-                      onChange={(e) =>
-                        setFormData({
-                          ...formData,
-                          employmentStatus: e.target.value as EmploymentStatus,
-                        })
+                      value={
+                        (formData.employmentType || formData.employment_type) === 'Part-Time'
+                          ? 'Part-Time'
+                          : formData.employmentStatus
                       }
+                      onChange={(e) => {
+                        const nextStatus = e.target.value as EmploymentStatus;
+                        if (nextStatus === 'Part-Time') {
+                          setFormData({
+                            ...formData,
+                            employmentStatus: 'Part-Time',
+                            status: 'Part-Time',
+                            employmentType: 'Part-Time',
+                            employment_type: 'Part-Time',
+                          });
+                        } else {
+                          const suggestedType: EmploymentType =
+                            nextStatus === 'PKWTT (Tetap)' ? 'Full-Time' : 'Contract';
+                          setFormData({
+                            ...formData,
+                            employmentStatus: nextStatus,
+                            status: nextStatus,
+                            employmentType: suggestedType,
+                            employment_type: suggestedType,
+                          });
+                        }
+                      }}
                       className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-800"
                     >
                       <option value="PKWTT (Tetap)">PKWTT (Tetap)</option>
                       <option value="PKWT (Kontrak)">PKWT (Kontrak)</option>
+                      <option value="Part-Time">Part-Time (Gaji Mingguan)</option>
                       <option value="Probation">Probation</option>
                       <option value="Internship">Internship</option>
                     </select>
                   </div>
+                  <div>
+                    <label className="block text-slate-800 font-bold mb-1">
+                      Tipe Karyawan (<code className="font-mono text-[10px]">employment_type</code>) *
+                    </label>
+                    <select
+                      value={
+                        formData.employmentStatus === 'Part-Time'
+                          ? 'Part-Time'
+                          : formData.employmentType ||
+                            formData.employment_type ||
+                            (formData.employmentStatus === 'PKWTT (Tetap)' ? 'Full-Time' : 'Contract')
+                      }
+                      onChange={(e) => {
+                        const nextType = e.target.value as EmploymentType;
+                        const nextStatus: EmploymentStatus =
+                          nextType === 'Part-Time'
+                            ? 'Part-Time'
+                            : nextType === 'Full-Time'
+                            ? 'PKWTT (Tetap)'
+                            : formData.employmentStatus === 'Part-Time' ||
+                              formData.employmentStatus === 'PKWTT (Tetap)'
+                            ? 'PKWT (Kontrak)'
+                            : formData.employmentStatus || 'PKWT (Kontrak)';
+                        setFormData({
+                          ...formData,
+                          employmentStatus: nextStatus,
+                          status: nextStatus,
+                          employmentType: nextType,
+                          employment_type: nextType,
+                        });
+                      }}
+                      className={`w-full p-2 border rounded-lg font-bold ${
+                        (formData.employmentType || formData.employment_type) === 'Part-Time' ||
+                        formData.employmentStatus === 'Part-Time'
+                          ? 'bg-orange-50 border-orange-400 text-orange-950'
+                          : 'bg-slate-50 border-slate-200 text-slate-800'
+                      }`}
+                    >
+                      <option value="Full-Time">Full-Time (Karyawan Penuh Waktu)</option>
+                      <option value="Contract">Contract (Karyawan Kontrak)</option>
+                      <option value="Part-Time">Part-Time (Gaji Mingguan / Sunday Payout)</option>
+                    </select>
+                  </div>
+                  {(formData.employmentType === 'Part-Time' ||
+                    formData.employment_type === 'Part-Time') && (
+                    <div className="sm:col-span-2 lg:col-span-3 p-3.5 bg-gradient-to-r from-orange-50 via-amber-50 to-yellow-50 border-2 border-orange-300 rounded-xl shadow-xs">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2">
+                        <div className="flex items-center gap-2">
+                          <span className="p-1.5 rounded-lg bg-orange-600 text-white">
+                            <Clock className="w-4 h-4" />
+                          </span>
+                          <div>
+                            <h5 className="text-xs font-extrabold text-orange-950">
+                              Pengaturan Tarif Normal &amp; Lembur Karyawan Part-Time (Weekly Payroll &amp; Sunday Payout)
+                            </h5>
+                            <p className="text-[10px] text-orange-800">
+                              Rumus Gaji Mingguan: <strong>(Jam Normal × hourly_rate) + (Jam Lembur × overtime_rate)</strong>. Tersinkron otomatis dengan Absensi Portal Karyawan Part-Time.
+                            </p>
+                          </div>
+                        </div>
+                        <span className="px-2.5 py-1 rounded-full bg-orange-600 text-white text-[10px] font-bold shrink-0">
+                          Simpan ke hourly_rate &amp; overtime_rate
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-start mt-2">
+                        {/* Input 1: Tarif Normal per Jam (Hourly Rate) */}
+                        <div>
+                          <label className="block text-orange-950 font-bold text-xs mb-1">
+                            Tarif Normal per Jam (Hourly Rate) (<code className="font-mono text-[10px]">hourly_rate</code>) *
+                          </label>
+                          <div className="relative">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-orange-700">
+                              Rp
+                            </span>
+                            <input
+                              type="number"
+                              min={0}
+                              step={500}
+                              value={formData.hourlyRate ?? formData.hourly_rate ?? 0}
+                              onChange={(e) => {
+                                const hRate = Math.max(0, Number(e.target.value) || 0);
+                                const dRate = Math.round(hRate * STANDARD_WORK_HOURS_PER_DAY);
+                                const currentOt = Number(formData.overtimeRate ?? formData.overtime_rate) || 0;
+                                const nextOt = currentOt > 0 ? currentOt : Math.round(hRate * 1.5);
+                                setFormData({
+                                  ...formData,
+                                  hourlyRate: hRate,
+                                  hourly_rate: hRate,
+                                  overtimeRate: nextOt,
+                                  overtime_rate: nextOt,
+                                  dailySalary: dRate,
+                                  daily_salary: dRate,
+                                  baseSalary: dRate * 25,
+                                });
+                              }}
+                              placeholder="Contoh: 25000"
+                              className="w-full pl-9 pr-3 py-2 bg-white border-2 border-orange-400 rounded-xl font-bold text-orange-950 text-sm focus:outline-hidden focus:ring-2 focus:ring-orange-500/30"
+                            />
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1 mt-1.5">
+                            <span className="text-[10px] text-orange-800 font-semibold">Preset:</span>
+                            {[15000, 20000, 25000, 30000, 35000].map((preset) => (
+                              <button
+                                key={preset}
+                                type="button"
+                                onClick={() => {
+                                  const dRate = Math.round(preset * STANDARD_WORK_HOURS_PER_DAY);
+                                  const otPreset = Math.round(preset * 1.5);
+                                  setFormData({
+                                    ...formData,
+                                    hourlyRate: preset,
+                                    hourly_rate: preset,
+                                    overtimeRate: otPreset,
+                                    overtime_rate: otPreset,
+                                    dailySalary: dRate,
+                                    daily_salary: dRate,
+                                    baseSalary: dRate * 25,
+                                  });
+                                }}
+                                className={`px-2 py-0.5 rounded-md text-[10px] font-bold border cursor-pointer transition-colors ${
+                                  (formData.hourlyRate ?? formData.hourly_rate) === preset
+                                    ? 'bg-orange-600 text-white border-orange-600'
+                                    : 'bg-white text-orange-800 border-orange-200 hover:bg-orange-100'
+                                }`}
+                              >
+                                {formatRupiah(preset)}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Input 2: Tarif Lembur per Jam (Overtime Rate) */}
+                        <div>
+                          <label className="block text-indigo-950 font-bold text-xs mb-1">
+                            Tarif Lembur per Jam (Overtime Rate) (<code className="font-mono text-[10px]">overtime_rate</code>) *
+                          </label>
+                          <div className="relative">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-indigo-700">
+                              Rp
+                            </span>
+                            <input
+                              type="number"
+                              min={0}
+                              step={500}
+                              value={
+                                formData.overtimeRate ??
+                                formData.overtime_rate ??
+                                Math.round((Number(formData.hourlyRate ?? formData.hourly_rate) || 0) * 1.5)
+                              }
+                              onChange={(e) => {
+                                const otRate = Math.max(0, Number(e.target.value) || 0);
+                                setFormData({
+                                  ...formData,
+                                  overtimeRate: otRate,
+                                  overtime_rate: otRate,
+                                });
+                              }}
+                              placeholder="Contoh: 37500"
+                              className="w-full pl-9 pr-3 py-2 bg-white border-2 border-indigo-400 rounded-xl font-bold text-indigo-950 text-sm focus:outline-hidden focus:ring-2 focus:ring-indigo-500/30"
+                            />
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1 mt-1.5">
+                            <span className="text-[10px] text-indigo-800 font-semibold">Otomatis:</span>
+                            {[
+                              { label: '1.5× Normal', mult: 1.5 },
+                              { label: '2× Normal', mult: 2 },
+                            ].map((opt) => {
+                              const calcOt = Math.round(
+                                (Number(formData.hourlyRate ?? formData.hourly_rate) || 0) * opt.mult
+                              );
+                              return (
+                                <button
+                                  key={opt.label}
+                                  type="button"
+                                  onClick={() =>
+                                    setFormData({
+                                      ...formData,
+                                      overtimeRate: calcOt,
+                                      overtime_rate: calcOt,
+                                    })
+                                  }
+                                  className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 cursor-pointer"
+                                >
+                                  {opt.label} ({formatRupiah(calcOt)})
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        {/* Simulasi Gaji Kotor Mingguan Part-Time */}
+                        <div className="bg-white/95 border border-orange-200 rounded-xl p-3 space-y-1 text-[11px]">
+                          <div className="flex items-center justify-between text-slate-600">
+                            <span>Tarif Normal (<code className="font-mono">hourly_rate</code>):</span>
+                            <span className="font-bold text-orange-700">
+                              {formatRupiah(Number(formData.hourlyRate ?? formData.hourly_rate) || 0)}/jam
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between text-slate-600">
+                            <span>Tarif Lembur (<code className="font-mono">overtime_rate</code>):</span>
+                            <span className="font-bold text-indigo-700">
+                              {formatRupiah(
+                                Number(
+                                  formData.overtimeRate ??
+                                    formData.overtime_rate ??
+                                    Math.round((Number(formData.hourlyRate ?? formData.hourly_rate) || 0) * 1.5)
+                                ) || 0
+                              )}
+                              /jam
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between text-orange-950 font-bold pt-1 border-t border-orange-100">
+                            <span>Simulasi 48j Normal + 4j Lembur:</span>
+                            <span className="text-emerald-700">
+                              {formatRupiah(
+                                (Number(formData.hourlyRate ?? formData.hourly_rate) || 0) * 48 +
+                                  (Number(
+                                    formData.overtimeRate ??
+                                      formData.overtime_rate ??
+                                      Math.round((Number(formData.hourlyRate ?? formData.hourly_rate) || 0) * 1.5)
+                                  ) || 0) *
+                                    4
+                              )}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   <div>
                     <label className="block text-slate-600 mb-1">Tanggal Bergabung</label>
                     <input

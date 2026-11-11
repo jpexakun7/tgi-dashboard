@@ -27,6 +27,7 @@ export type ActiveTab =
   | 'overview'
   | 'employees'
   | 'payroll'
+  | 'part_time_payroll'
   | 'attendance'
   | 'work_shifts'
   | 'leave'
@@ -90,6 +91,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: WalletCards,
       badge: 'Aktif',
       badgeColor: 'bg-emerald-100 text-emerald-800',
+    },
+    {
+      id: 'part_time_payroll' as ActiveTab,
+      label: 'Payroll Part-Time (Minggu)',
+      icon: Clock,
+      badge: 'Mingguan',
+      badgeColor: 'bg-orange-100 text-orange-800',
     },
     {
       id: 'attendance' as ActiveTab,

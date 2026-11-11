@@ -1,5 +1,6 @@
 import {
   Employee,
+  EmploymentType,
   PayrollRecord,
   PTKPStatus,
   WorkShift,
@@ -793,6 +794,77 @@ export function calculateMinutesBetweenTimes(startTime?: string, endTime?: strin
   return Math.max(0, endMins - startMins);
 }
 
+// Normalisasi Tipe Karyawan ('Full-Time' | 'Contract' | 'Part-Time') secara case-insensitive & trim
+export function normalizeEmploymentType(val?: string | null): EmploymentType | undefined {
+  if (!val || typeof val !== 'string') return undefined;
+  const cleaned = val.trim().toLowerCase().replace(/[\s_]+/g, '-');
+  if (cleaned === 'part-time' || cleaned === 'parttime' || cleaned.includes('part-time')) {
+    return 'Part-Time';
+  }
+  // Periksa PKWTT / Tetap / Full-Time terlebih dahulu sebelum PKWT (karena string 'pkwtt' mengandung 'pkwt')
+  if (
+    cleaned === 'full-time' ||
+    cleaned === 'fulltime' ||
+    cleaned.includes('pkwtt') ||
+    cleaned.includes('tetap')
+  ) {
+    return 'Full-Time';
+  }
+  if (cleaned === 'contract' || cleaned.includes('kontrak') || cleaned.includes('pkwt')) {
+    return 'Contract';
+  }
+  return undefined;
+}
+
+// Cek apakah karyawan berstatus Part-Time secara akurat (case-insensitive & trim) dan BUKAN PKWTT (Tetap)
+export function isEmployeePartTime(emp?: Partial<Employee> | null): boolean {
+  if (!emp) return false;
+  const typeNorm = normalizeEmploymentType(emp.employmentType || emp.employment_type);
+  const statusNorm = normalizeEmploymentType(emp.employmentStatus || (emp as any).status);
+  return typeNorm === 'Part-Time' || statusNorm === 'Part-Time';
+}
+
+// Hitung durasi kerja REAL dan PRESISI berdasarkan selisih clock_out dikurangi clock_in:
+// const diffInMinutes = (clockOutTime - clockInTime) / (1000 * 60);
+// const actualHours = Number((diffInMinutes / 60).toFixed(2));
+export function calculateActualWorkHoursFromClock(
+  clockIn?: string | null,
+  clockOut?: string | null
+): number {
+  if (!clockIn || !clockOut) return 0;
+  const cleanIn = clockIn.trim();
+  const cleanOut = clockOut.trim();
+  if (!cleanIn || !cleanOut || cleanIn === '-' || cleanOut === '-') return 0;
+
+  const inParts = cleanIn.split(':').map(Number);
+  const outParts = cleanOut.split(':').map(Number);
+  if (
+    inParts.length < 2 ||
+    outParts.length < 2 ||
+    isNaN(inParts[0]) ||
+    isNaN(inParts[1]) ||
+    isNaN(outParts[0]) ||
+    isNaN(outParts[1])
+  ) {
+    return 0;
+  }
+
+  const refDate = new Date(2026, 0, 1);
+  const clockInTime = new Date(refDate);
+  clockInTime.setHours(inParts[0], inParts[1], inParts[2] || 0, 0);
+
+  const clockOutTime = new Date(refDate);
+  clockOutTime.setHours(outParts[0], outParts[1], outParts[2] || 0, 0);
+
+  if (clockOutTime.getTime() < clockInTime.getTime()) {
+    clockOutTime.setDate(clockOutTime.getDate() + 1);
+  }
+
+  const diffInMinutes = (clockOutTime.getTime() - clockInTime.getTime()) / (1000 * 60);
+  const actualHours = Number((diffInMinutes / 60).toFixed(2));
+  return Math.max(0, actualHours);
+}
+
 // Daftar Shift Default apabila belum dikonfigurasi
 export const DEFAULT_WORK_SHIFTS: WorkShift[] = [
   {
@@ -976,20 +1048,21 @@ export function evaluateAttendanceAgainstShift(
     }
   }
 
-  // Parse actual checkOut
-  const [outH, outM] = (checkOut || '').split(':').map(Number);
+  // Parse actual checkOut — Hitung durasi kerja REAL dan PRESISI dari clockOut - clockIn (tanpa fallback 8/9 jam jika belum Clock-Out)
+  const cleanCheckOut = (checkOut || '').trim();
+  const [outH, outM] = cleanCheckOut.split(':').map(Number);
   let earlyLeaveMinutes = 0;
   let workHours = 0;
-  const breakMins = Math.max(0, Number(shift.breakDurationMinutes) || 0);
 
-  if (!isNaN(ch) && !isNaN(cm) && !isNaN(outH) && !isNaN(outM)) {
-    let actualStart = ch * 60 + cm;
-    let actualEnd = outH * 60 + outM;
-    if (actualEnd < actualStart) {
-      actualEnd += 24 * 60;
-    }
-    const rawDurationMins = Math.max(0, actualEnd - actualStart);
-    workHours = Number((rawDurationMins / 60).toFixed(2));
+  if (
+    cleanCheckOut !== '' &&
+    cleanCheckOut !== '-' &&
+    !isNaN(ch) &&
+    !isNaN(cm) &&
+    !isNaN(outH) &&
+    !isNaN(outM)
+  ) {
+    workHours = calculateActualWorkHoursFromClock(checkIn, cleanCheckOut);
 
     // Check early leave against scheduledEnd
     let normalizedOut = outH * 60 + outM;
@@ -1000,8 +1073,8 @@ export function evaluateAttendanceAgainstShift(
       earlyLeaveMinutes = Math.max(0, scheduledEnd - normalizedOut);
     }
   } else {
-    // Default scheduled work hours if checkOut not yet filled (Standar 9 Jam Kerja / Hari)
-    workHours = STANDARD_WORK_HOURS_PER_DAY;
+    // Jika clock_out belum diisi (baru Clock-In), actualHours = 0 sampai karyawan melakukan Clock-Out
+    workHours = 0;
   }
 
   const status: 'Hadir Tepat Waktu' | 'Terlambat' =
@@ -1252,8 +1325,14 @@ export function calculateEmployeeAttendancePenalty(
       presentDaysCount += 1;
       lateFrequency += 1;
       totalLateMinutes += Math.max(0, Math.round(rec.lateMinutes || 0));
+      const hasClockIn = Boolean(rec.checkIn && rec.checkIn.trim() !== '' && rec.checkIn !== '-');
+      const hasClockOut = Boolean(rec.checkOut && rec.checkOut.trim() !== '' && rec.checkOut !== '-');
       const actualHours =
-        rec.workHours && rec.workHours > 0 ? Number(rec.workHours) : standardWorkHoursPerDay;
+        hasClockIn && hasClockOut
+          ? calculateActualWorkHoursFromClock(rec.checkIn, rec.checkOut)
+          : hasClockIn && !hasClockOut
+          ? 0
+          : Math.max(0, Number(rec.workHours) || 0);
       totalActualWorkHours = Number((totalActualWorkHours + actualHours).toFixed(2));
       dailyWorkBreakdown.push({
         date: rec.date,
@@ -1266,8 +1345,14 @@ export function calculateEmployeeAttendancePenalty(
     } else if (rec.status === 'Hadir Tepat Waktu') {
       presentDaysCount += 1;
       onTimeDaysCount += 1;
+      const hasClockIn = Boolean(rec.checkIn && rec.checkIn.trim() !== '' && rec.checkIn !== '-');
+      const hasClockOut = Boolean(rec.checkOut && rec.checkOut.trim() !== '' && rec.checkOut !== '-');
       const actualHours =
-        rec.workHours && rec.workHours > 0 ? Number(rec.workHours) : standardWorkHoursPerDay;
+        hasClockIn && hasClockOut
+          ? calculateActualWorkHoursFromClock(rec.checkIn, rec.checkOut)
+          : hasClockIn && !hasClockOut
+          ? 0
+          : Math.max(0, Number(rec.workHours) || 0);
       totalActualWorkHours = Number((totalActualWorkHours + actualHours).toFixed(2));
       dailyWorkBreakdown.push({
         date: rec.date,

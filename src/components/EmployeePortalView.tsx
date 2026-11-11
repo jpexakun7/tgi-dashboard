@@ -72,6 +72,7 @@ import {
   CashAdvanceTenorMonths,
   CashAdvanceInstallment,
   AttendanceRecord,
+  PartTimeWorkLog,
 } from '../types';
 import {
   formatCurrency,
@@ -101,11 +102,15 @@ import {
   getEmployeeEffectivePin,
   fetchEmployeeByIdFromSupabase,
   fetchLivestreamSessionsFromSupabase,
+  generateSessionUuid,
+  upsertPartTimeLogToSupabase,
+  fetchPartTimeLogsFromSupabase,
 } from '../services/supabaseService';
 import { supabase } from '../lib/supabase';
 import { validateImageFile, compressImage, compressVideoFrame } from '../utils/imageUtils';
 import { LiveFaceGpsAttendanceScanner } from './LiveFaceGpsAttendanceScanner';
 import { LiveStreamSalesRecord } from '../types';
+import { computeHoursFromClockInOut, getOperationalSixDayRange } from './PartTimeLogs';
 
 interface EmployeePortalViewProps {
   currentEmployee: Employee;
@@ -134,6 +139,8 @@ interface EmployeePortalViewProps {
   onLockAdmin?: () => void;
   attendances?: AttendanceRecord[];
   onAddAttendance?: (att: AttendanceRecord) => void;
+  partTimeLogs?: PartTimeWorkLog[];
+  onSavePartTimeLog?: (log: PartTimeWorkLog) => void;
   cashAdvances?: CashAdvance[];
   onApplyCashAdvance?: (
     advanceData: Omit<
@@ -190,6 +197,8 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
   onLockAdmin,
   attendances = [],
   onAddAttendance,
+  partTimeLogs = [],
+  onSavePartTimeLog,
   cashAdvances = [],
   onApplyCashAdvance,
 }) => {
@@ -203,6 +212,9 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
   const [clockInNotes, setClockInNotes] = useState('');
   const [attendanceNotice, setAttendanceNotice] = useState<string | null>(null);
   const [previewAttendanceRecord, setPreviewAttendanceRecord] = useState<AttendanceRecord | null>(null);
+  const [partTimePortalNotice, setPartTimePortalNotice] = useState<string | null>(null);
+  const [isSavingPartTimeClock, setIsSavingPartTimeClock] = useState<boolean>(false);
+  const [syncedDbPartTimeLogs, setSyncedDbPartTimeLogs] = useState<PartTimeWorkLog[]>([]);
 
   // Kasbon (Cash Advance) Form State
   const [isCashAdvanceModalOpen, setIsCashAdvanceModalOpen] = useState(false);
@@ -441,6 +453,257 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
   const todayAttendance = useMemo(() => {
     return myAttendances.find((a) => a.date === todayDateStr);
   }, [myAttendances, todayDateStr]);
+
+  // Deteksi Karyawan Part-Time (`employment_type === 'Part-Time'`) & Pengaturan Tarif Normal + Lembur
+  const isPartTimeEmployee = Boolean(
+    effectivePortalEmployee.employmentType === 'Part-Time' ||
+      effectivePortalEmployee.employment_type === 'Part-Time'
+  );
+
+  const myPartTimeHourlyRate = useMemo(() => {
+    return (
+      Number(effectivePortalEmployee.hourlyRate ?? effectivePortalEmployee.hourly_rate) ||
+      getEmployeeHourlyRate(effectivePortalEmployee, STANDARD_WORK_HOURS_PER_DAY, 25)
+    );
+  }, [effectivePortalEmployee]);
+
+  const myPartTimeOvertimeRate = useMemo(() => {
+    return (
+      Number(effectivePortalEmployee.overtimeRate ?? effectivePortalEmployee.overtime_rate) ||
+      Math.round(myPartTimeHourlyRate * 1.5)
+    );
+  }, [effectivePortalEmployee, myPartTimeHourlyRate]);
+
+  // Fetch & sync `tgi_parttime_logs` from Supabase for this employee
+  React.useEffect(() => {
+    if (!currentEmployee?.id || !isPartTimeEmployee) return;
+    let mounted = true;
+    const loadPtLogs = async () => {
+      const dbLogs = await fetchPartTimeLogsFromSupabase();
+      if (mounted && Array.isArray(dbLogs)) {
+        setSyncedDbPartTimeLogs(dbLogs.filter((l) => l.employeeId === currentEmployee.id));
+      }
+    };
+    loadPtLogs();
+    const handlePtUpdated = () => {
+      loadPtLogs();
+    };
+    window.addEventListener('tgi_part_time_logs_updated', handlePtUpdated);
+    return () => {
+      mounted = false;
+      window.removeEventListener('tgi_part_time_logs_updated', handlePtUpdated);
+    };
+  }, [currentEmployee.id, isPartTimeEmployee]);
+
+  const myPartTimeLogs = useMemo<PartTimeWorkLog[]>(() => {
+    const map = new Map<string, PartTimeWorkLog>();
+    const propList = Array.isArray(partTimeLogs)
+      ? partTimeLogs.filter((l) => l && l.employeeId === currentEmployee.id)
+      : [];
+    for (const l of [...syncedDbPartTimeLogs, ...propList]) {
+      if (l?.date) {
+        map.set(`${l.employeeId}_${l.date}`, l);
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => b.date.localeCompare(a.date));
+  }, [partTimeLogs, syncedDbPartTimeLogs, currentEmployee.id]);
+
+  const todayPartTimeLog = useMemo(() => {
+    return myPartTimeLogs.find((l) => l.date === todayDateStr) || null;
+  }, [myPartTimeLogs, todayDateStr]);
+
+  const currentWeekRange = useMemo(() => getOperationalSixDayRange(new Date()), []);
+
+  const myPartTimeWeekSummary = useMemo(() => {
+    const weekLogs = myPartTimeLogs.filter(
+      (l) =>
+        l.date >= currentWeekRange.startDate && l.date <= currentWeekRange.endDate
+    );
+    let normalHours = 0;
+    let overtimeHours = 0;
+    weekLogs.forEach((l) => {
+      const totalH = Math.max(0, Number(l.hoursWorked ?? l.hours_worked) || 0);
+      const normH =
+        l.normalHours !== undefined || l.normal_hours !== undefined
+          ? Math.max(0, Number(l.normalHours ?? l.normal_hours) || 0)
+          : Math.min(8, totalH);
+      const otH =
+        l.overtimeHours !== undefined || l.overtime_hours !== undefined
+          ? Math.max(0, Number(l.overtimeHours ?? l.overtime_hours) || 0)
+          : Math.max(0, Math.round((totalH - normH) * 100) / 100);
+      normalHours += normH;
+      overtimeHours += otH;
+    });
+    normalHours = Math.round(normalHours * 100) / 100;
+    overtimeHours = Math.round(overtimeHours * 100) / 100;
+    const totalHours = Math.round((normalHours + overtimeHours) * 100) / 100;
+    const normalPay = Math.round(normalHours * myPartTimeHourlyRate);
+    const overtimePay = Math.round(overtimeHours * myPartTimeOvertimeRate);
+    const grossPay = normalPay + overtimePay;
+    return {
+      weekLogs,
+      normalHours,
+      overtimeHours,
+      totalHours,
+      normalPay,
+      overtimePay,
+      grossPay,
+    };
+  }, [myPartTimeLogs, currentWeekRange, myPartTimeHourlyRate, myPartTimeOvertimeRate]);
+
+  // Helper: Catat atau perbarui baris `tgi_parttime_logs` secara otomatis saat karyawan Part-Time Clock-In / Clock-Out
+  const syncPartTimeAttendanceRecord = async (params: {
+    date: string;
+    clockIn: string;
+    clockOut?: string;
+    notes?: string;
+  }) => {
+    const cleanIn = params.clockIn || todayPartTimeLog?.clockIn || todayAttendance?.checkIn || '09:00';
+    const cleanOut = params.clockOut !== undefined ? params.clockOut : todayPartTimeLog?.clockOut || '';
+    const computed = cleanOut
+      ? computeHoursFromClockInOut(cleanIn, cleanOut, 8)
+      : {
+          totalHours: Number(todayPartTimeLog?.hoursWorked) || 0,
+          normalHours: Number(todayPartTimeLog?.normalHours) || 0,
+          overtimeHours: Number(todayPartTimeLog?.overtimeHours) || 0,
+        };
+
+    const dailyWage = Math.round(
+      computed.normalHours * myPartTimeHourlyRate +
+        computed.overtimeHours * myPartTimeOvertimeRate
+    );
+
+    const logEntry: PartTimeWorkLog = {
+      id: todayPartTimeLog?.id || generateSessionUuid(),
+      employeeId: currentEmployee.id,
+      employee_id: currentEmployee.id,
+      employeeName: currentEmployee.fullName,
+      employee_name: currentEmployee.fullName,
+      date: params.date,
+      clockIn: cleanIn,
+      clock_in: cleanIn,
+      clockOut: cleanOut,
+      clock_out: cleanOut,
+      normalHours: computed.normalHours,
+      normal_hours: computed.normalHours,
+      overtimeHours: computed.overtimeHours,
+      overtime_hours: computed.overtimeHours,
+      hoursWorked: computed.totalHours,
+      hours_worked: computed.totalHours,
+      hourlyRateSnapshot: myPartTimeHourlyRate,
+      hourlyRate: myPartTimeHourlyRate,
+      hourly_rate: myPartTimeHourlyRate,
+      overtimeRate: myPartTimeOvertimeRate,
+      overtime_rate: myPartTimeOvertimeRate,
+      dailyWage,
+      daily_wage: dailyWage,
+      notes:
+        params.notes ||
+        todayPartTimeLog?.notes ||
+        `Absensi Mandiri Portal Karyawan Part-Time (${cleanIn}${cleanOut ? ` - ${cleanOut}` : ''})`,
+      source: 'portal',
+      status: todayPartTimeLog?.status === 'Paid' ? 'Paid' : 'Unpaid',
+    };
+
+    onSavePartTimeLog?.(logEntry);
+    setSyncedDbPartTimeLogs((prev) => [
+      logEntry,
+      ...prev.filter((l) => l.id !== logEntry.id && l.date !== logEntry.date),
+    ]);
+    await upsertPartTimeLogToSupabase(logEntry);
+    return logEntry;
+  };
+
+  // Tombol Khusus Absensi Harian (Clock-In & Clock-Out) di Portal Mandiri Part-Time
+  const handlePartTimeQuickClock = async (mode: 'clock_in' | 'clock_out') => {
+    setIsSavingPartTimeClock(true);
+    try {
+      const now = new Date();
+      const nowTime = `${String(now.getHours()).padStart(2, '0')}:${String(
+        now.getMinutes()
+      ).padStart(2, '0')}`;
+      const fullTimestamp = `${now.toLocaleDateString('id-ID', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+      })} • ${nowTime} WIB`;
+
+      if (mode === 'clock_in') {
+        const targetClockIn = isAdminSimulationActive ? customClockInTime : nowTime;
+        const savedLog = await syncPartTimeAttendanceRecord({
+          date: todayDateStr,
+          clockIn: targetClockIn,
+          clockOut: todayPartTimeLog?.clockOut || '',
+          notes: clockInNotes.trim() || `Clock-In Mandiri Part-Time (${targetClockIn} WIB)`,
+        });
+
+        const attRecord: AttendanceRecord = {
+          id: todayAttendance?.id || `att-pt-${Date.now().toString().slice(-6)}`,
+          employeeId: currentEmployee.id,
+          date: todayDateStr,
+          checkIn: targetClockIn,
+          checkOut: todayAttendance?.checkOut || '',
+          checkInFullTimestamp: fullTimestamp,
+          status: 'Hadir Tepat Waktu',
+          lateMinutes: 0,
+          workHours: savedLog.hoursWorked,
+          shiftId: myShift.id,
+          shiftName: myShift.name,
+          scheduledCheckIn: myShift.checkInTime,
+          scheduledCheckOut: myShift.checkOutTime,
+          locationAddress: myShift.location || companyConfig.address,
+          notes: `Absensi Part-Time Clock-In (${targetClockIn} WIB)`,
+        };
+        onAddAttendance?.(attRecord);
+        setPartTimePortalNotice(
+          `Clock-In Part-Time berhasil dicatat pukul ${targetClockIn} WIB ke tabel tgi_parttime_logs Supabase!`
+        );
+      } else {
+        const existingIn =
+          todayPartTimeLog?.clockIn ||
+          todayAttendance?.checkIn ||
+          myShift.checkInTime ||
+          '09:00';
+        const targetClockOut = isAdminSimulationActive ? customClockOutTime : nowTime;
+        const savedLog = await syncPartTimeAttendanceRecord({
+          date: todayDateStr,
+          clockIn: existingIn,
+          clockOut: targetClockOut,
+          notes:
+            clockInNotes.trim() ||
+            `Clock-In ${existingIn} - Clock-Out ${targetClockOut} WIB (Part-Time)`,
+        });
+
+        const attRecord: AttendanceRecord = {
+          id: todayAttendance?.id || `att-pt-${Date.now().toString().slice(-6)}`,
+          employeeId: currentEmployee.id,
+          date: todayDateStr,
+          checkIn: existingIn,
+          checkOut: targetClockOut,
+          checkInFullTimestamp: todayAttendance?.checkInFullTimestamp || fullTimestamp,
+          checkOutFullTimestamp: fullTimestamp,
+          status: todayAttendance?.status || 'Hadir Tepat Waktu',
+          lateMinutes: todayAttendance?.lateMinutes || 0,
+          workHours: savedLog.hoursWorked,
+          shiftId: myShift.id,
+          shiftName: myShift.name,
+          scheduledCheckIn: myShift.checkInTime,
+          scheduledCheckOut: myShift.checkOutTime,
+          locationAddress: myShift.location || companyConfig.address,
+          notes: `Absensi Part-Time (${existingIn} - ${targetClockOut} WIB • ${savedLog.normalHours}j Normal + ${savedLog.overtimeHours}j Lembur)`,
+        };
+        onAddAttendance?.(attRecord);
+        setPartTimePortalNotice(
+          `Clock-Out Part-Time berhasil (${existingIn} – ${targetClockOut} WIB)! Tercatat ${savedLog.normalHours} Jam Normal + ${savedLog.overtimeHours} Jam Lembur = ${formatRupiah(
+            savedLog.dailyWage
+          )} ke tgi_parttime_logs.`
+        );
+      }
+      setTimeout(() => setPartTimePortalNotice(null), 6500);
+    } finally {
+      setIsSavingPartTimeClock(false);
+    }
+  };
 
   const shiftEvalPreview = useMemo(() => {
     const now = new Date();
@@ -1281,7 +1544,11 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                     • NIK KTP: <span className="font-mono font-bold">{currentEmployee.ktpNumber}</span>
                   </>
                 ) : null}{' '}
-                • {currentEmployee.role} ({currentEmployee.department})
+                •{' '}
+                {(currentEmployee.role || '').trim().toLowerCase() ===
+                (currentEmployee.department || '').trim().toLowerCase()
+                  ? currentEmployee.role
+                  : `${currentEmployee.role} (${currentEmployee.department})`}
               </p>
               <div className="mt-2.5 flex flex-wrap items-center gap-2">
                 <button
@@ -1777,6 +2044,101 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
               </div>
             </div>
           </div>
+
+          {/* PANEL KHUSUS ABSENSI HARIAN (CLOCK-IN & CLOCK-OUT) KARYAWAN PART-TIME */}
+          {isPartTimeEmployee && (
+            <div className="bg-gradient-to-r from-orange-950 via-slate-900 to-amber-950 rounded-2xl p-4 sm:p-5 text-white border border-orange-500/40 shadow-lg space-y-4">
+              {partTimePortalNotice && (
+                <div className="p-3 rounded-xl bg-emerald-500/20 border border-emerald-400/40 text-emerald-200 text-xs font-bold flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>{partTimePortalNotice}</span>
+                </div>
+              )}
+
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-orange-500/25 border border-orange-400/40 text-orange-300 text-[10px] font-extrabold uppercase tracking-wider">
+                    <Clock className="w-3.5 h-3.5" />
+                    <span>Menu Khusus Karyawan Part-Time • Auto-Sync tgi_parttime_logs</span>
+                  </div>
+                  <h3 className="text-base sm:text-lg font-extrabold text-white">
+                    Absensi Harian Part-Time (Clock-In &amp; Clock-Out) &amp; Estimasi Sunday Payout
+                  </h3>
+                  <p className="text-xs text-slate-300">
+                    Tarif Normal: <strong className="text-orange-300">{formatRupiah(myPartTimeHourlyRate)}/jam</strong> • Tarif Lembur:{' '}
+                    <strong className="text-indigo-300">{formatRupiah(myPartTimeOvertimeRate)}/jam</strong> • Hari Ini ({todayDateStr}):{' '}
+                    {todayPartTimeLog ? (
+                      <strong className="text-emerald-300">
+                        Masuk {todayPartTimeLog.clockIn || '-'} WIB
+                        {todayPartTimeLog.clockOut
+                          ? ` • Keluar ${todayPartTimeLog.clockOut} WIB (${todayPartTimeLog.hoursWorked} Jam = ${formatRupiah(todayPartTimeLog.dailyWage)})`
+                          : ' (Sedang Bekerja - Belum Clock-Out)'}
+                      </strong>
+                    ) : (
+                      <span className="text-amber-300 font-semibold">Belum Clock-In Hari Ini</span>
+                    )}
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    disabled={isSavingPartTimeClock || Boolean(todayPartTimeLog?.clockIn)}
+                    onClick={() => handlePartTimeQuickClock('clock_in')}
+                    className="min-h-[42px] px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:bg-slate-700 disabled:text-slate-400 text-white text-xs font-extrabold flex items-center gap-1.5 shadow-md cursor-pointer transition-all"
+                  >
+                    <Clock className="w-4 h-4" />
+                    <span>
+                      {todayPartTimeLog?.clockIn
+                        ? `Sudah Clock-In (${todayPartTimeLog.clockIn})`
+                        : 'Clock-In (Absen Masuk Part-Time)'}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={isSavingPartTimeClock || Boolean(todayPartTimeLog?.clockOut)}
+                    onClick={() => handlePartTimeQuickClock('clock_out')}
+                    className="min-h-[42px] px-4 py-2.5 rounded-xl bg-orange-500 hover:bg-orange-600 disabled:bg-slate-700 disabled:text-slate-400 text-white text-xs font-extrabold flex items-center gap-1.5 shadow-md cursor-pointer transition-all"
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>
+                      {todayPartTimeLog?.clockOut
+                        ? `Sudah Clock-Out (${todayPartTimeLog.clockOut})`
+                        : 'Clock-Out (Absen Keluar & Hitung Jam)'}
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-white/10 text-xs">
+                <div className="p-3 rounded-xl bg-white/5 border border-white/10">
+                  <span className="text-[10px] text-slate-400 uppercase font-bold block">
+                    Akumulasi Jam Minggu Ini ({currentWeekRange.startDate} s/d {currentWeekRange.endDate})
+                  </span>
+                  <span className="text-sm font-extrabold text-white mt-0.5 block">
+                    {myPartTimeWeekSummary.totalHours} Jam Total ({myPartTimeWeekSummary.normalHours}j Normal + {myPartTimeWeekSummary.overtimeHours}j Lembur)
+                  </span>
+                </div>
+                <div className="p-3 rounded-xl bg-white/5 border border-white/10">
+                  <span className="text-[10px] text-slate-400 uppercase font-bold block">
+                    Rincian Upah Normal + Lembur
+                  </span>
+                  <span className="text-sm font-extrabold text-orange-300 mt-0.5 block">
+                    Normal {formatRupiah(myPartTimeWeekSummary.normalPay)} + Lembur {formatRupiah(myPartTimeWeekSummary.overtimePay)}
+                  </span>
+                </div>
+                <div className="p-3 rounded-xl bg-orange-500/20 border border-orange-400/40">
+                  <span className="text-[10px] text-orange-200 uppercase font-bold block">
+                    Estimasi Gaji Kotor Minggu (Sunday Payout)
+                  </span>
+                  <span className="text-base font-extrabold text-white font-mono mt-0.5 block">
+                    {formatRupiah(myPartTimeWeekSummary.grossPay)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* 3-Card Summary Row: Slip Gaji, Sisa Cuti, & Klaim Lembur Per Menit */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -2448,6 +2810,182 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
             </div>
           )}
 
+          {partTimePortalNotice && (
+            <div className="p-4 bg-orange-50 border border-orange-300 rounded-2xl text-orange-950 text-xs font-bold flex items-center gap-2.5 animate-in fade-in">
+              <CheckCircle2 className="w-5 h-5 text-orange-600 shrink-0" />
+              <span>{partTimePortalNotice}</span>
+            </div>
+          )}
+
+          {/* PANEL KHUSUS ABSENSI HARIAN (CLOCK-IN & CLOCK-OUT) KARYAWAN PART-TIME */}
+          {isPartTimeEmployee && (
+            <div className="bg-gradient-to-br from-orange-950 via-slate-900 to-amber-950 rounded-2xl p-5 sm:p-6 text-white border border-orange-500/40 shadow-lg space-y-4">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-white/10 pb-4">
+                <div className="space-y-1">
+                  <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-orange-500/25 border border-orange-400/40 text-orange-300 text-[10px] font-extrabold uppercase tracking-wider">
+                    <Clock className="w-3.5 h-3.5" />
+                    <span>Portal Absensi Mandiri Part-Time • Tabel Supabase tgi_parttime_logs</span>
+                  </div>
+                  <h3 className="text-base sm:text-lg font-extrabold text-white">
+                    Tombol Clock-In &amp; Clock-Out Harian Part-Time ({formatIndoDate(todayDateStr)})
+                  </h3>
+                  <p className="text-xs text-slate-300">
+                    Mencatat tanggal, jam masuk (<code>clock_in</code>), jam keluar (<code>clock_out</code>), jam normal, jam lembur, dan total jam kerja harian ke tabel <code>tgi_parttime_logs</code> secara otomatis.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+                  <button
+                    type="button"
+                    disabled={isSavingPartTimeClock || Boolean(todayPartTimeLog?.clockIn)}
+                    onClick={() => handlePartTimeQuickClock('clock_in')}
+                    className="min-h-[44px] px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 disabled:bg-slate-700 disabled:text-slate-400 text-white text-xs font-extrabold flex items-center gap-2 shadow-lg cursor-pointer transition-all"
+                  >
+                    <Clock className="w-4 h-4" />
+                    <span>
+                      {todayPartTimeLog?.clockIn
+                        ? `Sudah Clock-In (${todayPartTimeLog.clockIn} WIB)`
+                        : 'Clock-In (Absen Masuk Part-Time)'}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={isSavingPartTimeClock || Boolean(todayPartTimeLog?.clockOut)}
+                    onClick={() => handlePartTimeQuickClock('clock_out')}
+                    className="min-h-[44px] px-4 py-2.5 rounded-xl bg-orange-500 hover:bg-orange-600 disabled:bg-slate-700 disabled:text-slate-400 text-white text-xs font-extrabold flex items-center gap-2 shadow-lg cursor-pointer transition-all"
+                  >
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>
+                      {todayPartTimeLog?.clockOut
+                        ? `Sudah Clock-Out (${todayPartTimeLog.clockOut} WIB)`
+                        : 'Clock-Out (Absen Keluar & Hitung Jam)'}
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Ringkasan Tarif & Akumulasi Minggu Ini */}
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs">
+                <div className="p-3 rounded-xl bg-white/5 border border-white/10">
+                  <span className="text-[10px] text-slate-400 uppercase font-bold block">
+                    Tarif Normal (hourly_rate)
+                  </span>
+                  <span className="text-sm font-extrabold text-emerald-300 font-mono mt-0.5 block">
+                    {formatRupiah(myPartTimeHourlyRate)} / jam
+                  </span>
+                </div>
+                <div className="p-3 rounded-xl bg-white/5 border border-white/10">
+                  <span className="text-[10px] text-slate-400 uppercase font-bold block">
+                    Tarif Lembur (overtime_rate)
+                  </span>
+                  <span className="text-sm font-extrabold text-indigo-300 font-mono mt-0.5 block">
+                    {formatRupiah(myPartTimeOvertimeRate)} / jam
+                  </span>
+                </div>
+                <div className="p-3 rounded-xl bg-white/5 border border-white/10">
+                  <span className="text-[10px] text-slate-400 uppercase font-bold block">
+                    Total Jam Siklus Minggu Ini
+                  </span>
+                  <span className="text-sm font-extrabold text-white mt-0.5 block">
+                    {myPartTimeWeekSummary.totalHours} Jam ({myPartTimeWeekSummary.normalHours}j Normal + {myPartTimeWeekSummary.overtimeHours}j Lembur)
+                  </span>
+                </div>
+                <div className="p-3 rounded-xl bg-orange-500/20 border border-orange-400/40">
+                  <span className="text-[10px] text-orange-200 uppercase font-bold block">
+                    Total Gaji Kotor Minggu Ini
+                  </span>
+                  <span className="text-base font-extrabold text-white font-mono mt-0.5 block">
+                    {formatRupiah(myPartTimeWeekSummary.grossPay)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Tabel Rekap Harian Part-Time (`tgi_parttime_logs`) di Portal Karyawan */}
+              <div className="bg-slate-950/60 rounded-xl border border-white/10 overflow-hidden">
+                <div className="px-4 py-2.5 border-b border-white/10 flex items-center justify-between text-xs">
+                  <span className="font-bold text-orange-200">
+                    Riwayat Log Jam Kerja Part-Time Saya (tgi_parttime_logs)
+                  </span>
+                  <span className="text-[11px] text-slate-400">
+                    Siklus Minggu: {currentWeekRange.startDate} s/d {currentWeekRange.endDate}
+                  </span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-white/5 text-slate-300 border-b border-white/10 text-[10px] uppercase font-bold">
+                        <th className="py-2.5 px-3">Tanggal</th>
+                        <th className="py-2.5 px-3 text-center">Clock-In / Out</th>
+                        <th className="py-2.5 px-3 text-center">Jam Normal</th>
+                        <th className="py-2.5 px-3 text-center">Jam Lembur</th>
+                        <th className="py-2.5 px-3 text-center">Total Jam</th>
+                        <th className="py-2.5 px-3 text-right">Gaji Kotor Harian</th>
+                        <th className="py-2.5 px-3 text-center">Status Payout</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/10">
+                      {myPartTimeLogs.slice(0, 10).map((ptLog) => {
+                        const totalH = Math.max(0, Number(ptLog.hoursWorked ?? ptLog.hours_worked) || 0);
+                        const normH =
+                          ptLog.normalHours !== undefined || ptLog.normal_hours !== undefined
+                            ? Math.max(0, Number(ptLog.normalHours ?? ptLog.normal_hours) || 0)
+                            : Math.min(8, totalH);
+                        const otH =
+                          ptLog.overtimeHours !== undefined || ptLog.overtime_hours !== undefined
+                            ? Math.max(0, Number(ptLog.overtimeHours ?? ptLog.overtime_hours) || 0)
+                            : Math.max(0, Math.round((totalH - normH) * 100) / 100);
+                        const rowWage =
+                          Math.round(normH * myPartTimeHourlyRate) +
+                          Math.round(otH * myPartTimeOvertimeRate);
+                        return (
+                          <tr key={ptLog.id} className="hover:bg-white/5">
+                            <td className="py-2.5 px-3 font-mono text-white">
+                              {ptLog.date}
+                            </td>
+                            <td className="py-2.5 px-3 text-center font-mono text-orange-200">
+                              {ptLog.clockIn || ptLog.clock_in || '-'} – {ptLog.clockOut || ptLog.clock_out || '-'}
+                            </td>
+                            <td className="py-2.5 px-3 text-center font-bold text-emerald-300">
+                              {normH}j
+                            </td>
+                            <td className="py-2.5 px-3 text-center font-bold text-indigo-300">
+                              {otH}j
+                            </td>
+                            <td className="py-2.5 px-3 text-center font-bold text-white">
+                              {totalH} Jam
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono font-bold text-orange-300">
+                              {formatRupiah(Number(ptLog.dailyWage) || rowWage)}
+                            </td>
+                            <td className="py-2.5 px-3 text-center">
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                  ptLog.status === 'Paid'
+                                    ? 'bg-emerald-500/25 text-emerald-300 border border-emerald-400/40'
+                                    : 'bg-amber-500/25 text-amber-300 border border-amber-400/40'
+                                }`}
+                              >
+                                {ptLog.status === 'Paid' ? 'Paid (Sunday)' : 'Unpaid'}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {myPartTimeLogs.length === 0 && (
+                        <tr>
+                          <td colSpan={7} className="py-4 text-center text-slate-400">
+                            Belum ada log jam kerja Part-Time. Klik tombol Clock-In di atas untuk memulai absensi harian.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Active Shift Schedule Banner for Employee */}
           <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -2650,19 +3188,37 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 onChangeNotes={setClockInNotes}
                 onSubmitAttendance={(record, mode) => {
                   onAddAttendance?.(record);
+                  // Jika karyawan berstatus Part-Time, otomatis catat juga ke tabel tgi_parttime_logs di Supabase
+                  if (isPartTimeEmployee) {
+                    syncPartTimeAttendanceRecord({
+                      date: record.date || todayDateStr,
+                      clockIn: record.checkIn || todayPartTimeLog?.clockIn || '09:00',
+                      clockOut:
+                        mode === 'check_out'
+                          ? record.checkOut || ''
+                          : todayPartTimeLog?.clockOut || '',
+                      notes:
+                        record.notes ||
+                        `Absen Kamera Wajah & GPS Part-Time (${record.checkIn}${
+                          record.checkOut ? ` - ${record.checkOut}` : ''
+                        })`,
+                    });
+                  }
                   if (mode === 'check_in') {
                     setAttendanceNotice(
                       `Berhasil Absen Masuk dengan Foto Wajah & GPS HP pukul ${record.checkIn} WIB (${
                         record.checkInFullTimestamp || ''
                       }) di ${record.locationAddress || myShift.location} → Status: ${record.status}${
                         record.lateMinutes > 0 ? ` (Terlambat ${record.lateMinutes} menit)` : ''
-                      }!`
+                      }${isPartTimeEmployee ? ' • Tersinkron ke tgi_parttime_logs!' : '!'}`
                     );
                   } else {
                     setAttendanceNotice(
                       `Berhasil Absen Pulang dengan Foto Wajah & GPS HP pukul ${record.checkOut} WIB (${
                         record.checkOutFullTimestamp || ''
-                      }) • Durasi Kerja: ${record.workHours} Jam!`
+                      }) • Durasi Kerja: ${record.workHours} Jam${
+                        isPartTimeEmployee ? ' • Tersinkron ke tgi_parttime_logs!' : '!'
+                      }`
                     );
                   }
                   setTimeout(() => setAttendanceNotice(null), 7000);
@@ -6237,7 +6793,11 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                         <div>
                           <div className="text-xs font-bold text-slate-900">{emp.fullName}</div>
                           <div className="text-[11px] text-slate-500">
-                            {emp.nik} • {emp.role} ({emp.department})
+                            {emp.nik} •{' '}
+                            {(emp.role || '').trim().toLowerCase() ===
+                            (emp.department || '').trim().toLowerCase()
+                              ? emp.role
+                              : `${emp.role} (${emp.department})`}
                           </div>
                         </div>
                         {emp.id === currentEmployee.id ? (

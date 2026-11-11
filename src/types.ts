@@ -1,6 +1,8 @@
 export type Department = string;
 
-export type EmploymentStatus = 'PKWTT (Tetap)' | 'PKWT (Kontrak)' | 'Probation' | 'Internship';
+export type EmploymentStatus = 'PKWTT (Tetap)' | 'PKWT (Kontrak)' | 'Part-Time' | 'Probation' | 'Internship';
+
+export type EmploymentType = 'Full-Time' | 'Contract' | 'Part-Time';
 
 export type PTKPStatus = 'TK/0' | 'TK/1' | 'TK/2' | 'TK/3' | 'K/0' | 'K/1' | 'K/2' | 'K/3';
 
@@ -26,10 +28,15 @@ export interface Employee {
   role: string;
   department: Department;
   employmentStatus: EmploymentStatus;
+  status?: string; // Alias status kontrak / kepegawaian
+  employmentType?: EmploymentType; // Tipe Karyawan: Full-Time | Contract | Part-Time
+  employment_type?: EmploymentType; // Alias kolom Supabase employment_type
   joinDate: string;
   baseSalary: number; // Gaji Pokok Bulanan (Acuan / Total)
   hourlyRate?: number; // Tarif Gaji Per Jam (hourly_rate)
   hourly_rate?: number; // Alias kolom Supabase hourly_rate
+  overtimeRate?: number; // Tarif Lembur Per Jam Part-Time (overtime_rate)
+  overtime_rate?: number; // Alias kolom Supabase overtime_rate
   dailySalary?: number; // Gaji Per Hari (daily_salary = 9 jam × hourly_rate)
   daily_salary?: number; // Alias kolom Supabase daily_salary
   allowances: {
@@ -339,6 +346,7 @@ export type DashboardModule =
   | 'overview'
   | 'employees'
   | 'payroll'
+  | 'part_time_payroll'
   | 'attendance'
   | 'work_shifts'
   | 'leave'
@@ -819,5 +827,103 @@ export interface CashAdvance {
   notes?: string;
   installments: CashAdvanceInstallment[];
 }
+
+// ==========================================
+// PART-TIME WEEKLY PAYROLL & SUNDAY PAYOUT
+// ==========================================
+export type PartTimeLogStatus = 'Unpaid' | 'Paid';
+
+export interface PartTimeWorkLog {
+  id: string;
+  employeeId: string;
+  employee_id?: string;
+  employeeName: string;
+  employee_name?: string;
+  employeeNik?: string;
+  department?: string;
+  role?: string;
+  date: string; // YYYY-MM-DD
+  work_date?: string;
+  clockIn?: string; // HH:mm (Jam Masuk Absensi Portal Part-Time)
+  clock_in?: string;
+  clockOut?: string; // HH:mm (Jam Keluar Absensi Portal Part-Time)
+  clock_out?: string;
+  normalHours?: number; // Jam Kerja Normal
+  normal_hours?: number;
+  overtimeHours?: number; // Jam Kerja Lembur
+  overtime_hours?: number;
+  hoursWorked: number; // Total Jam Kerja Harian (normalHours + overtimeHours)
+  hours_worked?: number;
+  hourlyRate?: number; // Tarif Normal per Jam (Rp)
+  hourlyRateSnapshot?: number; // Tarif per Jam (Rp) saat dicatat
+  hourly_rate?: number;
+  overtimeRate?: number; // Tarif Lembur per Jam (Rp)
+  overtime_rate?: number;
+  dailyWage: number; // (normalHours × hourlyRate) + (overtimeHours × overtimeRate)
+  daily_wage?: number;
+  source?: 'portal' | 'admin' | 'attendance_sync';
+  notes?: string;
+  status: PartTimeLogStatus; // 'Unpaid' | 'Paid'
+  paidAt?: string;
+  paid_at?: string;
+  payoutPeriod?: string;
+  payout_period?: string;
+  weeklyPayoutId?: string;
+  weekly_payout_id?: string;
+  createdAt?: string;
+  created_at?: string;
+}
+
+export interface PartTimeWeeklyPayout {
+  id: string;
+  referenceNumber?: string; // Contoh: "PT-SUN-20261108-001"
+  employeeId: string;
+  employee_id?: string;
+  employeeName: string;
+  employee_name?: string;
+  employeeNik?: string;
+  department?: string;
+  role?: string;
+  bankName?: string;
+  bankAccountNumber?: string;
+  bankAccountHolder?: string;
+  weekStartDate: string; // YYYY-MM-DD (Awal Siklus 6 Hari Kerja)
+  week_start_date?: string;
+  weekEndDate: string; // YYYY-MM-DD (Akhir Siklus 6 Hari Kerja)
+  week_end_date?: string;
+  sundayPayoutDate?: string; // YYYY-MM-DD (Minggu / Sunday Payout)
+  sunday_payout_date?: string;
+  payoutDate?: string; // YYYY-MM-DD (Minggu / Sunday Payout)
+  totalDaysWorked: number;
+  total_days_worked?: number;
+  normalHoursWorked?: number;
+  normal_hours_worked?: number;
+  overtimeHoursWorked?: number;
+  overtime_hours_worked?: number;
+  totalHoursWorked: number;
+  total_hours_worked?: number;
+  hourlyRate: number;
+  hourly_rate?: number;
+  overtimeRate?: number;
+  overtime_rate?: number;
+  normalPay?: number;
+  normal_pay?: number;
+  overtimePay?: number;
+  overtime_pay?: number;
+  grossPay?: number; // (Jam Normal × hourly_rate) + (Jam Lembur × overtime_rate)
+  gross_pay?: number;
+  grossSalary?: number;
+  netPayout?: number;
+  status: 'Unpaid' | 'Paid';
+  paidAt?: string;
+  paid_at?: string;
+  paidBy?: string;
+  paymentMethod?: 'Transfer Bank' | 'Tunai / Kas Operasional';
+  notes?: string;
+  logIds: string[];
+  createdAt?: string;
+}
+
+
 
 

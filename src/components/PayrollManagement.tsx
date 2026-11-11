@@ -58,6 +58,7 @@ import {
   getEmployeeHourlyRate,
   STANDARD_WORK_HOURS_PER_DAY,
   calculateEmployeeLiveSalesCommission,
+  isEmployeePartTime,
 } from '../utils/formatters';
 import {
   getPayslipWhatsAppUrl,
@@ -90,6 +91,7 @@ interface PayrollManagementProps {
   onNavigateToPerformanceReview?: () => void;
   onApplyBonusToPayroll?: (review: PerformanceReview) => void;
   onBatchApplyBonusesToPayroll?: (reviewsToApply: PerformanceReview[]) => void;
+  onOpenPartTimePayroll?: () => void;
 }
 
 export const PayrollManagement: React.FC<PayrollManagementProps> = ({
@@ -109,6 +111,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
   onNavigateToPerformanceReview,
   onApplyBonusToPayroll,
   onBatchApplyBonusesToPayroll,
+  onOpenPartTimePayroll,
 }) => {
   const [search, setSearch] = useState('');
   const [selectedDept, setSelectedDept] = useState('ALL');
@@ -232,9 +235,11 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
     showToast(`Berhasil menarik ${updatedCount} bonus kinerja (Total: ${formatRupiah(totalBonusAdded)}) ke payroll!`);
   };
 
-  // Only aggregate payrolls for employees that currently exist in the active directory
+  // Only aggregate monthly payrolls for Full-Time / Contract employees (Part-Time is separated into Payroll Part-Time Minggu)
   const validPayrolls = payrolls.filter((p) =>
-    employees.some((e) => e.id === p.employeeId && e.isActive !== false)
+    employees.some(
+      (e) => e.id === p.employeeId && e.isActive !== false && !isEmployeePartTime(e)
+    )
   );
 
   // Aggregates
@@ -526,7 +531,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
 
   const filteredPayrolls = payrolls.filter((p) => {
     const emp = employees.find((e) => e.id === p.employeeId);
-    if (!emp) return false;
+    if (!emp || isEmployeePartTime(emp)) return false;
 
     const matchSearch =
       emp.fullName.toLowerCase().includes(search.toLowerCase()) ||
@@ -647,6 +652,18 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
             <MessageCircle className="w-4 h-4 text-white" />
             <span>Broadcast WA Slip Gaji Terbit</span>
           </button>
+
+          {onOpenPartTimePayroll && (
+            <button
+              type="button"
+              onClick={onOpenPartTimePayroll}
+              className="px-3.5 py-2 bg-gradient-to-r from-orange-600 to-amber-600 hover:from-orange-700 hover:to-amber-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
+              title="Buka Panel Payroll Part-Time (Minggu) & Sunday Payout"
+            >
+              <Clock className="w-4 h-4 text-white" />
+              <span>Payroll Part-Time (Minggu)</span>
+            </button>
+          )}
 
           {/* Kelola Omset & Komisi Live Streaming (Host & Co-Host) — Terpusat di Admin */}
           <button

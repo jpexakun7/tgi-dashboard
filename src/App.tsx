@@ -40,6 +40,8 @@ import {
   CashAdvanceInstallment,
   WorkShift,
   AttendancePenaltyPolicy,
+  PartTimeWorkLog,
+  PartTimeWeeklyPayout,
 } from './types';
 import {
   calculatePayroll,
@@ -52,7 +54,12 @@ import {
   calculateEmployeeAttendancePenalty,
   getEmployeeShift,
   evaluateAttendanceAgainstShift,
+  getEmployeeHourlyRate,
+  STANDARD_WORK_HOURS_PER_DAY,
+  isEmployeePartTime,
+  normalizeEmploymentType,
 } from './utils/formatters';
+import { computeHoursFromClockInOut } from './components/PartTimeLogs';
 import { Sidebar, ActiveTab } from './components/Sidebar';
 import { Header } from './components/Header';
 import { PayslipModal } from './components/PayslipModal';
@@ -110,6 +117,9 @@ const EmployeePortalView = lazy(() =>
 const RoleManagementView = lazy(() =>
   import('./components/RoleManagementView').then((m) => ({ default: m.RoleManagementView }))
 );
+const PartTimePayrollSummary = lazy(() =>
+  import('./components/PartTimePayrollSummary').then((m) => ({ default: m.PartTimePayrollSummary }))
+);
 
 import {
   checkSupabaseStatus,
@@ -149,6 +159,17 @@ import {
   markEmployeesModified,
   isEmployeesModified,
   dbToLivestreamSession,
+  getSavedPartTimeLogs,
+  savePartTimeLogsLocal,
+  getSavedPartTimePayouts,
+  savePartTimePayoutsLocal,
+  fetchPartTimeLogsFromSupabase,
+  fetchPartTimeWeeklyPayoutsFromSupabase,
+  upsertPartTimeLogToSupabase,
+  generateSessionUuid,
+  getEmployeeEmploymentMetaLocal,
+  saveEmployeeEmploymentMetaLocal,
+  applyPartTimeOverridesToEmployees,
 } from './services/supabaseService';
 import { supabase } from './lib/supabase';
 
@@ -648,6 +669,15 @@ export default function App() {
               ) {
                 roleConf.allowedModules.push('work_shifts');
               }
+              if (
+                (key === 'Super Admin' ||
+                  key === 'HR & Payroll Admin' ||
+                  key === 'Finance & Reimbursement' ||
+                  key === 'Operations Manager') &&
+                !roleConf.allowedModules.includes('part_time_payroll')
+              ) {
+                roleConf.allowedModules.push('part_time_payroll');
+              }
             }
           });
         }
@@ -692,10 +722,452 @@ export default function App() {
       console.error('Failed to save company config', e);
     }
   }, [companyConfig]);
-  // 100% Real-Time Supabase Data State (tanpa fallback ke array data dummy)
-  const [employees, setEmployees] = useState<Employee[]>([]);
+  // Helper untuk mengunci status Part-Time dari localStorage ('tgi_parttime_overrides' & 'tgi_employees_data') & state lokal
+  const mergePreservingPartTimeStatus = (
+    incomingList: Employee[],
+    prevLocalList: Employee[] = []
+  ): Employee[] => {
+    const localMap = new Map<string, Employee>();
+    for (const loc of prevLocalList) {
+      if (loc?.id) localMap.set(loc.id, loc);
+    }
+    const baseMerged = incomingList.map((emp) => {
+      const prevEmp = localMap.get(emp.id);
+      const savedMeta = getEmployeeEmploymentMetaLocal(emp.id, emp.nik);
+      const isPt =
+        savedMeta?.employmentType === 'Part-Time' ||
+        savedMeta?.status === 'Part-Time' ||
+        isEmployeePartTime(prevEmp) ||
+        isEmployeePartTime(emp);
+      const resolvedType = isPt
+        ? 'Part-Time'
+        : savedMeta?.employmentType ||
+          normalizeEmploymentType(emp.employmentType || emp.employment_type) ||
+          normalizeEmploymentType(prevEmp?.employmentType || prevEmp?.employment_type) ||
+          (emp.employmentStatus === 'PKWTT (Tetap)' ? 'Full-Time' : 'Contract');
+      const resolvedStatus = isPt
+        ? 'Part-Time'
+        : emp.employmentStatus || prevEmp?.employmentStatus || 'PKWT (Kontrak)';
+      const resolvedHourly =
+        (isPt && (savedMeta?.hourlyRate || prevEmp?.hourlyRate || prevEmp?.hourly_rate)) ||
+        Number(emp.hourlyRate ?? emp.hourly_rate) ||
+        Number(savedMeta?.hourlyRate) ||
+        Number(prevEmp?.hourlyRate ?? prevEmp?.hourly_rate) ||
+        0;
+      const resolvedOvertime =
+        (isPt && (savedMeta?.overtimeRate || prevEmp?.overtimeRate || prevEmp?.overtime_rate)) ||
+        Number(emp.overtimeRate ?? emp.overtime_rate) ||
+        Number(savedMeta?.overtimeRate) ||
+        Number(prevEmp?.overtimeRate ?? prevEmp?.overtime_rate) ||
+        Math.round(resolvedHourly * 1.5);
+      const mergedEmp: Employee = {
+        ...emp,
+        employmentStatus: resolvedStatus as any,
+        status: resolvedStatus,
+        employmentType: resolvedType,
+        employment_type: resolvedType,
+        hourlyRate: resolvedHourly > 0 ? resolvedHourly : emp.hourlyRate,
+        hourly_rate: resolvedHourly > 0 ? resolvedHourly : emp.hourly_rate,
+        overtimeRate: resolvedOvertime > 0 ? resolvedOvertime : emp.overtimeRate,
+        overtime_rate: resolvedOvertime > 0 ? resolvedOvertime : emp.overtime_rate,
+      };
+      if (isPt) {
+        saveEmployeeEmploymentMetaLocal(mergedEmp);
+      }
+      return mergedEmp;
+    });
+    const finalMerged = applyPartTimeOverridesToEmployees(baseMerged);
+    try {
+      if (finalMerged.length > 0) {
+        localStorage.setItem('tgi_employees_data', JSON.stringify(finalMerged));
+      }
+    } catch {
+      // ignore storage errors
+    }
+    return finalMerged;
+  };
+
+  // 100% Real-Time Supabase Data State (dengan backup localStorage agar status Part-Time tidak pernah ter-reset)
+  const [employees, setEmployees] = useState<Employee[]>(() => {
+    const deletedIds = new Set(getDeletedEmployeeIds());
+    try {
+      const saved = localStorage.getItem('tgi_employees_data');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          const valid = parsed.filter(
+            (e: Employee) => e && !deletedIds.has(e.id) && !isLegacyDummyRecord(e)
+          );
+          return mergePreservingPartTimeStatus(valid, valid);
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return [];
+  });
   const [payrolls, setPayrolls] = useState<PayrollRecord[]>([]);
   const [attendances, setAttendances] = useState<AttendanceRecord[]>([]);
+  const [partTimeLogs, setPartTimeLogs] = useState<PartTimeWorkLog[]>(() => getSavedPartTimeLogs());
+  const [partTimePayouts, setPartTimePayouts] = useState<PartTimeWeeklyPayout[]>(() =>
+    getSavedPartTimePayouts()
+  );
+
+  const handleSavePartTimeLog = (log: PartTimeWorkLog) => {
+    if (log?.employeeId || log?.employeeNik) {
+      saveEmployeeEmploymentMetaLocal({
+        id: log.employeeId || log.employee_id,
+        nik: log.employeeNik,
+        employmentType: 'Part-Time',
+        employment_type: 'Part-Time',
+        employmentStatus: 'Part-Time',
+        status: 'Part-Time',
+        hourlyRate: Number(log.hourlyRate ?? log.hourlyRateSnapshot ?? log.hourly_rate) || undefined,
+        hourly_rate: Number(log.hourlyRate ?? log.hourlyRateSnapshot ?? log.hourly_rate) || undefined,
+        overtimeRate: Number(log.overtimeRate ?? log.overtime_rate) || undefined,
+        overtime_rate: Number(log.overtimeRate ?? log.overtime_rate) || undefined,
+      });
+    }
+    setPartTimeLogs((prev) => {
+      const next = [
+        log,
+        ...prev.filter(
+          (l) => l.id !== log.id && !(l.employeeId === log.employeeId && l.date === log.date)
+        ),
+      ];
+      savePartTimeLogsLocal(next);
+      return next;
+    });
+  };
+
+  // Otomatis sinkronkan absensi karyawan Part-Time ke tabel `tgi_parttime_logs`
+  const syncAttendanceToPartTimeLogs = async (att: AttendanceRecord) => {
+    const emp = employees.find((e) => e.id === att.employeeId);
+    if (!emp) return;
+    if (!isEmployeePartTime(emp)) return;
+    if (['Sakit', 'Izin', 'Cuti', 'Alpa'].includes(att.status)) return;
+
+    const existing = partTimeLogs.find(
+      (l) => l.employeeId === emp.id && l.date === att.date
+    );
+    const clockIn =
+      att.checkIn && att.checkIn !== '-' ? att.checkIn : existing?.clockIn || '';
+    const clockOut =
+      att.checkOut && att.checkOut !== '-' ? att.checkOut : existing?.clockOut || '';
+    // Hanya hitung durasi jika clockIn DAN clockOut terisi (jangan pernah default ke 8 jam)
+    const computed =
+      clockIn && clockOut
+        ? computeHoursFromClockInOut(clockIn, clockOut, 8)
+        : {
+            totalHours: 0,
+            normalHours: 0,
+            overtimeHours: 0,
+          };
+    const hrRate =
+      Number(emp.hourlyRate ?? emp.hourly_rate) ||
+      getEmployeeHourlyRate(emp, STANDARD_WORK_HOURS_PER_DAY, 25);
+    const otRate =
+      Number(emp.overtimeRate ?? emp.overtime_rate) || Math.round(hrRate * 1.5);
+    const wage = Math.round(computed.normalHours * hrRate + computed.overtimeHours * otRate);
+
+    const logItem: PartTimeWorkLog = {
+      id: existing?.id || generateSessionUuid(),
+      employeeId: emp.id,
+      employee_id: emp.id,
+      employeeName: emp.fullName,
+      employee_name: emp.fullName,
+      date: att.date,
+      clockIn,
+      clock_in: clockIn,
+      clockOut,
+      clock_out: clockOut,
+      normalHours: computed.normalHours,
+      normal_hours: computed.normalHours,
+      overtimeHours: computed.overtimeHours,
+      overtime_hours: computed.overtimeHours,
+      hoursWorked: computed.totalHours,
+      hours_worked: computed.totalHours,
+      hourlyRateSnapshot: hrRate,
+      hourlyRate: hrRate,
+      hourly_rate: hrRate,
+      overtimeRate: otRate,
+      overtime_rate: otRate,
+      dailyWage: wage,
+      daily_wage: wage,
+      notes: att.notes || existing?.notes || 'Sinkronisasi otomatis absensi Portal Part-Time',
+      source: 'portal',
+      status: existing?.status === 'Paid' ? 'Paid' : 'Unpaid',
+    };
+    handleSavePartTimeLog(logItem);
+    await upsertPartTimeLogToSupabase(logItem);
+  };
+
+  // Tombol "Tarik Data Absensi Minggu Ini" pada modul Payroll Part-Time
+  const handlePullWeeklyPartTimeAttendance = async () => {
+    const deletedIds = new Set(getDeletedEmployeeIds());
+    const [freshPtLogs, freshAtts, freshEmps] = await Promise.all([
+      fetchPartTimeLogsFromSupabase(),
+      fetchAttendancesFromSupabase(),
+      fetchEmployeesFromSupabase(),
+    ]);
+
+    const rawEmps =
+      freshEmps && freshEmps.length > 0
+        ? freshEmps.filter((e) => !deletedIds.has(e.id))
+        : employees.filter((e) => !deletedIds.has(e.id));
+    const currentEmps = mergePreservingPartTimeStatus(rawEmps, employees);
+    if (currentEmps.length > 0) {
+      setEmployees(currentEmps);
+      try {
+        localStorage.setItem('tgi_employees_data', JSON.stringify(currentEmps));
+      } catch {
+        // ignore
+      }
+    }
+
+    const currentAtts =
+      freshAtts && freshAtts.length > 0
+        ? freshAtts.filter((a) => !deletedIds.has(a.employeeId))
+        : attendances.filter((a) => !deletedIds.has(a.employeeId));
+    if (freshAtts && freshAtts.length > 0) {
+      setAttendances(currentAtts);
+    }
+
+    const attByKey = new Map<string, AttendanceRecord>();
+    for (const att of currentAtts) {
+      if (att?.employeeId && att?.date && !['Sakit', 'Izin', 'Cuti', 'Alpa'].includes(att.status)) {
+        attByKey.set(`${att.employeeId}_${att.date}`, att);
+      }
+    }
+
+    const mergedMap = new Map<string, PartTimeWorkLog>();
+    const baseLogs =
+      freshPtLogs && freshPtLogs.length > 0 ? freshPtLogs : partTimeLogs;
+    for (const l of baseLogs) {
+      if (!l || deletedIds.has(l.employeeId)) continue;
+      const emp = currentEmps.find((e) => e.id === l.employeeId);
+      // Strictly exclude PKWTT (Karyawan Tetap) and non-Part-Time employees from Part-Time logs
+      if (!emp || !isEmployeePartTime(emp)) continue;
+      const key = `${l.employeeId}_${l.date}`;
+      const matchedAtt = attByKey.get(key);
+      const hrRate =
+        Number(l.hourlyRate ?? l.hourlyRateSnapshot ?? l.hourly_rate) ||
+        (emp
+          ? Number(emp.hourlyRate ?? emp.hourly_rate) ||
+            getEmployeeHourlyRate(emp, STANDARD_WORK_HOURS_PER_DAY, 25)
+          : 0);
+      const otRate =
+        Number(l.overtimeRate ?? l.overtime_rate) ||
+        (emp ? Number(emp.overtimeRate ?? emp.overtime_rate) : 0) ||
+        Math.round(hrRate * 1.5);
+
+      const clockIn =
+        l.clockIn && l.clockIn !== '-'
+          ? l.clockIn
+          : matchedAtt?.checkIn && matchedAtt.checkIn !== '-'
+          ? matchedAtt.checkIn
+          : '';
+      const clockOut =
+        l.clockOut && l.clockOut !== '-'
+          ? l.clockOut
+          : matchedAtt?.checkOut && matchedAtt.checkOut !== '-'
+          ? matchedAtt.checkOut
+          : '';
+
+      if (l.status !== 'Paid' && clockIn && clockOut) {
+        const computed = computeHoursFromClockInOut(clockIn, clockOut, 8);
+        const wage = Math.round(computed.normalHours * hrRate + computed.overtimeHours * otRate);
+        const correctedLog: PartTimeWorkLog = {
+          ...l,
+          clockIn,
+          clock_in: clockIn,
+          clockOut,
+          clock_out: clockOut,
+          normalHours: computed.normalHours,
+          normal_hours: computed.normalHours,
+          overtimeHours: computed.overtimeHours,
+          overtime_hours: computed.overtimeHours,
+          hoursWorked: computed.totalHours,
+          hours_worked: computed.totalHours,
+          hourlyRateSnapshot: hrRate,
+          hourlyRate: hrRate,
+          hourly_rate: hrRate,
+          overtimeRate: otRate,
+          overtime_rate: otRate,
+          dailyWage: wage,
+          daily_wage: wage,
+        };
+        mergedMap.set(key, correctedLog);
+        await upsertPartTimeLogToSupabase(correctedLog);
+      } else {
+        mergedMap.set(key, l);
+      }
+    }
+
+    for (const att of currentAtts) {
+      const emp = currentEmps.find((e) => e.id === att.employeeId);
+      if (!emp) continue;
+      if (!isEmployeePartTime(emp)) continue;
+      if (['Sakit', 'Izin', 'Cuti', 'Alpa'].includes(att.status)) continue;
+
+      const key = `${emp.id}_${att.date}`;
+      const existing = mergedMap.get(key);
+      if (existing?.status === 'Paid') continue;
+
+      const clockIn =
+        att.checkIn && att.checkIn !== '-' ? att.checkIn : existing?.clockIn || '';
+      const clockOut =
+        att.checkOut && att.checkOut !== '-' ? att.checkOut : existing?.clockOut || '';
+      // Hitung durasi kerja REAL dari clock_out - clock_in (0 jam jika belum clock-out)
+      const computed =
+        clockIn && clockOut
+          ? computeHoursFromClockInOut(clockIn, clockOut, 8)
+          : {
+              totalHours: 0,
+              normalHours: 0,
+              overtimeHours: 0,
+            };
+      const hrRate =
+        Number(emp.hourlyRate ?? emp.hourly_rate) ||
+        getEmployeeHourlyRate(emp, STANDARD_WORK_HOURS_PER_DAY, 25);
+      const otRate =
+        Number(emp.overtimeRate ?? emp.overtime_rate) || Math.round(hrRate * 1.5);
+      const wage = Math.round(computed.normalHours * hrRate + computed.overtimeHours * otRate);
+
+      const syncedLog: PartTimeWorkLog = {
+        id: existing?.id || generateSessionUuid(),
+        employeeId: emp.id,
+        employee_id: emp.id,
+        employeeName: emp.fullName,
+        employee_name: emp.fullName,
+        date: att.date,
+        clockIn,
+        clock_in: clockIn,
+        clockOut,
+        clock_out: clockOut,
+        normalHours: computed.normalHours,
+        normal_hours: computed.normalHours,
+        overtimeHours: computed.overtimeHours,
+        overtime_hours: computed.overtimeHours,
+        hoursWorked: computed.totalHours,
+        hours_worked: computed.totalHours,
+        hourlyRateSnapshot: hrRate,
+        hourlyRate: hrRate,
+        hourly_rate: hrRate,
+        overtimeRate: otRate,
+        overtime_rate: otRate,
+        dailyWage: wage,
+        daily_wage: wage,
+        notes: existing?.notes || att.notes || 'Tarik Data Absensi Portal Part-Time',
+        source: existing?.source || 'attendance_sync',
+        status: 'Unpaid',
+      };
+      mergedMap.set(key, syncedLog);
+      await upsertPartTimeLogToSupabase(syncedLog);
+    }
+
+    const finalLogs = Array.from(mergedMap.values()).sort((a, b) =>
+      b.date.localeCompare(a.date)
+    );
+    setPartTimeLogs(finalLogs);
+    savePartTimeLogsLocal(finalLogs);
+  };
+
+  const handleDeletePartTimeLog = (id: string) => {
+    setPartTimeLogs((prev) => {
+      const next = prev.filter((l) => l.id !== id);
+      savePartTimeLogsLocal(next);
+      return next;
+    });
+  };
+
+  const handleMarkPartTimeLogsPaid = (logIds: string[], payout: PartTimeWeeklyPayout) => {
+    const idSet = new Set(logIds);
+    const paidAtIso = payout.paidAt || new Date().toISOString();
+    const payoutPeriodStr = `${payout.weekStartDate} s/d ${payout.weekEndDate}`;
+    setPartTimeLogs((prev) => {
+      const next = prev.map((l) =>
+        idSet.has(l.id)
+          ? {
+              ...l,
+              status: 'Paid' as const,
+              paidAt: paidAtIso,
+              paid_at: paidAtIso,
+              payoutPeriod: payoutPeriodStr,
+              payout_period: payoutPeriodStr,
+            }
+          : l
+      );
+      savePartTimeLogsLocal(next);
+      return next;
+    });
+    setPartTimePayouts((prev) => {
+      const next = [payout, ...prev.filter((p) => p.id !== payout.id)];
+      savePartTimePayoutsLocal(next);
+      return next;
+    });
+  };
+
+  const handleResetPartTimeLogsPaid = (
+    logIds: string[],
+    employeeId: string,
+    weekStartDate: string,
+    weekEndDate: string
+  ) => {
+    const idSet = new Set(logIds);
+    setPartTimeLogs((prev) => {
+      const next = prev.map((l) => {
+        const inWeek =
+          l.employeeId === employeeId && l.date >= weekStartDate && l.date <= weekEndDate;
+        if (!idSet.has(l.id) && !inWeek) return l;
+        const hasIn = Boolean(l.clockIn && l.clockIn.trim() !== '' && l.clockIn !== '-');
+        const hasOut = Boolean(l.clockOut && l.clockOut.trim() !== '' && l.clockOut !== '-');
+        const computed =
+          hasIn && hasOut
+            ? computeHoursFromClockInOut(l.clockIn, l.clockOut, 8)
+            : hasIn && !hasOut
+            ? { totalHours: 0, normalHours: 0, overtimeHours: 0 }
+            : {
+                totalHours: Number(l.hoursWorked ?? l.hours_worked) || 0,
+                normalHours: Number(l.normalHours ?? l.normal_hours) || 0,
+                overtimeHours: Number(l.overtimeHours ?? l.overtime_hours) || 0,
+              };
+        const hrRate = Number(l.hourlyRate ?? l.hourlyRateSnapshot ?? l.hourly_rate) || 0;
+        const otRate = Number(l.overtimeRate ?? l.overtime_rate) || Math.round(hrRate * 1.5);
+        const wage = Math.round(computed.normalHours * hrRate + computed.overtimeHours * otRate);
+        return {
+          ...l,
+          normalHours: computed.normalHours,
+          normal_hours: computed.normalHours,
+          overtimeHours: computed.overtimeHours,
+          overtime_hours: computed.overtimeHours,
+          hoursWorked: computed.totalHours,
+          hours_worked: computed.totalHours,
+          dailyWage: wage,
+          daily_wage: wage,
+          status: 'Unpaid' as const,
+          paidAt: undefined,
+          paid_at: undefined,
+          payoutPeriod: undefined,
+          payout_period: undefined,
+        };
+      });
+      savePartTimeLogsLocal(next);
+      return next;
+    });
+    setPartTimePayouts((prev) => {
+      const next = prev.filter(
+        (p) =>
+          !(
+            (p.employeeId === employeeId || p.employee_id === employeeId) &&
+            (p.weekStartDate === weekStartDate || p.week_start_date === weekStartDate) &&
+            (p.weekEndDate === weekEndDate || p.week_end_date === weekEndDate)
+          )
+      );
+      savePartTimePayoutsLocal(next);
+      return next;
+    });
+  };
 
   const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>(() => {
     const deletedIds = new Set(getDeletedEmployeeIds());
@@ -1129,7 +1601,9 @@ export default function App() {
   // Auto-sync Payrolls so every active employee always has a calculated PayrollRecord (THP, PPh 21 TER 2026, BPJS, & Potongan Terlambat/Absen)
   const syncedPayrolls = useMemo(() => {
     const deletedIds = new Set(getDeletedEmployeeIds());
-    const validEmployees = employees.filter((e) => !deletedIds.has(e.id));
+    const validEmployees = employees.filter(
+      (e) => !deletedIds.has(e.id) && !isEmployeePartTime(e)
+    );
     const activeEmps = validEmployees.filter((e) => e.isActive !== false);
     const currentPeriod = companyConfig.currentPayrollPeriod;
     const isPeriodLocked = Boolean(
@@ -1259,13 +1733,15 @@ export default function App() {
         if (!isAdminUnlocked && dashboardMode === 'employee' && lockedEmpId) {
           const singleEmp = await fetchEmployeeByIdFromSupabase(lockedEmpId);
           if (singleEmp && !deletedIds.has(singleEmp.id)) {
-            authoritativeEmployees = [singleEmp];
-            setEmployees([singleEmp]);
+            const preservedSingle = mergePreservingPartTimeStatus([singleEmp], employees);
+            authoritativeEmployees = preservedSingle;
+            setEmployees(preservedSingle);
           } else {
             const cloudEmps = await fetchEmployeesFromSupabase();
             if (cloudEmps !== null) {
-              const filteredOwn = cloudEmps.filter(
-                (e) => e.id === lockedEmpId && !deletedIds.has(e.id)
+              const filteredOwn = mergePreservingPartTimeStatus(
+                cloudEmps.filter((e) => e.id === lockedEmpId && !deletedIds.has(e.id)),
+                employees
               );
               authoritativeEmployees = filteredOwn;
               setEmployees(filteredOwn);
@@ -1273,11 +1749,22 @@ export default function App() {
           }
         } else {
           const cloudEmps = await fetchEmployeesFromSupabase();
-          authoritativeEmployees = employees.filter((e) => !deletedIds.has(e.id));
+          authoritativeEmployees = mergePreservingPartTimeStatus(
+            employees.filter((e) => !deletedIds.has(e.id)),
+            employees
+          );
           if (cloudEmps !== null) {
-            const cleanCloudEmps = cloudEmps.filter((e) => !deletedIds.has(e.id));
+            const cleanCloudEmps = mergePreservingPartTimeStatus(
+              cloudEmps.filter((e) => !deletedIds.has(e.id)),
+              employees
+            );
             authoritativeEmployees = cleanCloudEmps;
             setEmployees(cleanCloudEmps);
+            try {
+              localStorage.setItem('tgi_employees_data', JSON.stringify(cleanCloudEmps));
+            } catch {
+              // ignore
+            }
           }
         }
         const validEmpIds = new Set(authoritativeEmployees.map((e) => e.id));
@@ -1309,10 +1796,10 @@ export default function App() {
           setAttendances(authoritativeAttendances);
         }
 
-        // 4. Fetch payrolls & auto-generate missing payroll records only for active non-deleted employees
+        // 4. Fetch payrolls & auto-generate missing payroll records only for active non-deleted regular employees
         const cloudPayrolls = await fetchPayrollsFromSupabase();
         const activeEmpsList = authoritativeEmployees.filter(
-          (e) => e.isActive !== false && !deletedIds.has(e.id)
+          (e) => e.isActive !== false && !deletedIds.has(e.id) && !isEmployeePartTime(e)
         );
         if (cloudPayrolls !== null) {
           const isPeriodLocked = Boolean(
@@ -1401,6 +1888,16 @@ export default function App() {
           );
         }
 
+        // 7b. Fetch Part-Time Weekly Logs & Sunday Payouts
+        const cloudPtLogs = await fetchPartTimeLogsFromSupabase();
+        if (cloudPtLogs !== null) {
+          setPartTimeLogs(cloudPtLogs.filter((l) => !deletedIds.has(l.employeeId)));
+        }
+        const cloudPtPayouts = await fetchPartTimeWeeklyPayoutsFromSupabase();
+        if (cloudPtPayouts !== null) {
+          setPartTimePayouts(cloudPtPayouts.filter((p) => !deletedIds.has(p.employeeId)));
+        }
+
         // 8. Clean up local states (reviews, cashAdvances, assetLogs, notifications) so they only reference valid real employees
         setReviews((prev) =>
           prev.filter((r) => !isLegacyDummyRecord(r) && validEmpIds.has(r.employeeId))
@@ -1487,21 +1984,24 @@ export default function App() {
             const updatedEmp = dbToEmployee(payload.new);
             if (deletedIds.has(updatedEmp.id)) return;
             setEmployees((prev) =>
-              prev.map((e) => {
-                if (e.id !== updatedEmp.id) return e;
-                const mergedLogsMap = new Map<string, any>();
-                for (const s of [
-                  ...(e.liveStreamSalesLogs || []),
-                  ...(updatedEmp.liveStreamSalesLogs || []),
-                ]) {
-                  if (s?.id) mergedLogsMap.set(s.id, s);
-                }
-                return {
-                  ...e,
-                  ...updatedEmp,
-                  liveStreamSalesLogs: Array.from(mergedLogsMap.values()),
-                };
-              })
+              mergePreservingPartTimeStatus(
+                prev.map((e) => {
+                  if (e.id !== updatedEmp.id) return e;
+                  const mergedLogsMap = new Map<string, any>();
+                  for (const s of [
+                    ...(e.liveStreamSalesLogs || []),
+                    ...(updatedEmp.liveStreamSalesLogs || []),
+                  ]) {
+                    if (s?.id) mergedLogsMap.set(s.id, s);
+                  }
+                  return {
+                    ...e,
+                    ...updatedEmp,
+                    liveStreamSalesLogs: Array.from(mergedLogsMap.values()),
+                  };
+                }),
+                prev
+              )
             );
           } else if (payload.eventType === 'DELETE') {
             const oldId = (payload.old as any)?.id;
@@ -1529,25 +2029,40 @@ export default function App() {
           const hostPcs = Number(row.host_commission_per_pcs) || 0;
           const coHostPct = Number(row.co_host_commission_pct) || 0;
           const coHostPcs = Number(row.co_host_commission_per_pcs) || 0;
+          const rowEmpType = normalizeEmploymentType(row.employment_type || row.status);
+          const rowHourly = Number(row.hourly_rate) || 0;
+          const rowOvertime = Number(row.overtime_rate) || 0;
           setEmployees((prev) =>
-            prev.map((e) =>
-              e.id === row.id
-                ? {
-                    ...e,
-                    isLiveStreamHost: isHost,
-                    is_host: isHost,
-                    salesCommissionPercentage: hostPct,
-                    host_commission_pct: hostPct,
-                    salesCommissionPerPcs: hostPcs,
-                    host_commission_per_pcs: hostPcs,
-                    isCoHostLiveStream: isCoHost,
-                    is_co_host: isCoHost,
-                    coHostCommissionPercentage: coHostPct,
-                    co_host_commission_pct: coHostPct,
-                    coHostCommissionPerPcs: coHostPcs,
-                    co_host_commission_per_pcs: coHostPcs,
-                  }
-                : e
+            mergePreservingPartTimeStatus(
+              prev.map((e) =>
+                e.id === row.id
+                  ? {
+                      ...e,
+                      employmentStatus:
+                        rowEmpType === 'Part-Time' ? 'Part-Time' : e.employmentStatus,
+                      status: rowEmpType === 'Part-Time' ? 'Part-Time' : e.status,
+                      employmentType: rowEmpType || e.employmentType,
+                      employment_type: rowEmpType || e.employment_type,
+                      hourlyRate: rowHourly > 0 ? rowHourly : e.hourlyRate,
+                      hourly_rate: rowHourly > 0 ? rowHourly : e.hourly_rate,
+                      overtimeRate: rowOvertime > 0 ? rowOvertime : e.overtimeRate,
+                      overtime_rate: rowOvertime > 0 ? rowOvertime : e.overtime_rate,
+                      isLiveStreamHost: isHost,
+                      is_host: isHost,
+                      salesCommissionPercentage: hostPct,
+                      host_commission_pct: hostPct,
+                      salesCommissionPerPcs: hostPcs,
+                      host_commission_per_pcs: hostPcs,
+                      isCoHostLiveStream: isCoHost,
+                      is_co_host: isCoHost,
+                      coHostCommissionPercentage: coHostPct,
+                      co_host_commission_pct: coHostPct,
+                      coHostCommissionPerPcs: coHostPcs,
+                      co_host_commission_per_pcs: coHostPcs,
+                    }
+                  : e
+              ),
+              prev
             )
           );
         }
@@ -1737,6 +2252,7 @@ export default function App() {
   const handleAddEmployee = (newEmp: Employee) => {
     removeDeletedEmployeeId(newEmp.id);
     markEmployeesModified();
+    saveEmployeeEmploymentMetaLocal(newEmp);
     setEmployees((prev) => {
       const next = [newEmp, ...prev.filter((e) => e.id !== newEmp.id)];
       try {
@@ -1746,41 +2262,44 @@ export default function App() {
       }
       return next;
     });
-    // Generate initial payroll record for new employee based on actual attendance days × daily salary
-    const initialPenaltySummary = calculateEmployeeAttendancePenalty(
-      newEmp,
-      attendances,
-      companyConfig.workShifts,
-      companyConfig.attendancePenaltyPolicy
-    );
-    const newPayroll = calculatePayroll(
-      newEmp,
-      companyConfig.currentPayrollPeriod,
-      0,
-      0,
-      initialPenaltySummary.totalLateMinutes,
-      0,
-      undefined,
-      {
-        hourlyRate: initialPenaltySummary.hourlyRate,
-        totalActualWorkHours: initialPenaltySummary.totalActualWorkHours,
-        standardWorkHoursPerDay: initialPenaltySummary.standardWorkHoursPerDay,
-        dailyWorkBreakdown: initialPenaltySummary.dailyWorkBreakdown,
-        presentDaysCount: initialPenaltySummary.presentDaysCount,
-        lateFrequency: initialPenaltySummary.lateFrequency,
-        totalLateMinutes: initialPenaltySummary.totalLateMinutes,
-        latePenaltyAmount: initialPenaltySummary.latePenaltyAmount,
-        alphaDaysCount: initialPenaltySummary.alphaDaysCount,
-        alphaPenaltyAmount: initialPenaltySummary.alphaPenaltyAmount,
-        attendanceDeductionNotes: initialPenaltySummary.deductionNotes,
-        penaltyPolicy: companyConfig.attendancePenaltyPolicy,
-      }
-    );
-    setPayrolls((prev) => [newPayroll, ...prev]);
 
     // Persist to Supabase asynchronously with fallback
     insertEmployeeToSupabase(newEmp);
-    upsertPayrollToSupabase(newPayroll);
+
+    if (!isEmployeePartTime(newEmp)) {
+      // Generate initial payroll record for new regular employee based on actual attendance days × daily salary
+      const initialPenaltySummary = calculateEmployeeAttendancePenalty(
+        newEmp,
+        attendances,
+        companyConfig.workShifts,
+        companyConfig.attendancePenaltyPolicy
+      );
+      const newPayroll = calculatePayroll(
+        newEmp,
+        companyConfig.currentPayrollPeriod,
+        0,
+        0,
+        initialPenaltySummary.totalLateMinutes,
+        0,
+        undefined,
+        {
+          hourlyRate: initialPenaltySummary.hourlyRate,
+          totalActualWorkHours: initialPenaltySummary.totalActualWorkHours,
+          standardWorkHoursPerDay: initialPenaltySummary.standardWorkHoursPerDay,
+          dailyWorkBreakdown: initialPenaltySummary.dailyWorkBreakdown,
+          presentDaysCount: initialPenaltySummary.presentDaysCount,
+          lateFrequency: initialPenaltySummary.lateFrequency,
+          totalLateMinutes: initialPenaltySummary.totalLateMinutes,
+          latePenaltyAmount: initialPenaltySummary.latePenaltyAmount,
+          alphaDaysCount: initialPenaltySummary.alphaDaysCount,
+          alphaPenaltyAmount: initialPenaltySummary.alphaPenaltyAmount,
+          attendanceDeductionNotes: initialPenaltySummary.deductionNotes,
+          penaltyPolicy: companyConfig.attendancePenaltyPolicy,
+        }
+      );
+      setPayrolls((prev) => [newPayroll, ...prev]);
+      upsertPayrollToSupabase(newPayroll);
+    }
 
     logActivity(
       'EMPLOYEE_CREATE',
@@ -1797,6 +2316,7 @@ export default function App() {
 
   const handleUpdateEmployee = (updatedEmp: Employee) => {
     markEmployeesModified();
+    saveEmployeeEmploymentMetaLocal(updatedEmp);
     const oldEmp = employees.find((e) => e.id === updatedEmp.id);
     setEmployees((prev) => {
       const next = prev.map((e) => (e.id === updatedEmp.id ? updatedEmp : e));
@@ -1811,13 +2331,17 @@ export default function App() {
     // Persist to Supabase asynchronously so Portal Admin & Portal Karyawan stay synced
     updateEmployeeInSupabase(updatedEmp);
 
-    // Update matching payroll calculation (real-time Hari Hadir Aktual × Gaji Per Hari)
-    const penaltySummary = calculateEmployeeAttendancePenalty(
-      updatedEmp,
-      attendances,
-      companyConfig.workShifts,
-      companyConfig.attendancePenaltyPolicy
-    );
+    if (isEmployeePartTime(updatedEmp)) {
+      // Part-Time employees are managed in Weekly Part-Time Payroll, remove from monthly payroll list
+      setPayrolls((prev) => prev.filter((p) => p.employeeId !== updatedEmp.id));
+    } else {
+      // Update matching payroll calculation (real-time Hari Hadir Aktual × Gaji Per Hari)
+      const penaltySummary = calculateEmployeeAttendancePenalty(
+        updatedEmp,
+        attendances,
+        companyConfig.workShifts,
+        companyConfig.attendancePenaltyPolicy
+      );
     setPayrolls((prev) =>
       prev.map((p) => {
         if (p.employeeId === updatedEmp.id) {
@@ -1856,6 +2380,7 @@ export default function App() {
         return p;
       })
     );
+    }
 
     if (
       oldEmp &&
@@ -2059,7 +2584,8 @@ export default function App() {
 
     const waivedIdsForPeriod = companyConfig.waivedLateEmployeeIds?.[currentPeriod] || [];
 
-    const updated = employees.map((emp) => {
+    const regularEmployees = employees.filter((e) => !isEmployeePartTime(e));
+    const updated = regularEmployees.map((emp) => {
       // Find approved overtimes for this employee (in minutes)
       const employeeOts = overtimeRequests.filter(
         (o) => o.employeeId === emp.id && o.status === 'Disetujui'
@@ -2408,34 +2934,29 @@ export default function App() {
           lateMinutes: 0,
         };
 
-    let recordToPersist: AttendanceRecord = normalizedAtt;
+    // Resolve merged same-day attendance record synchronously so Supabase and Part-Time logs get full checkIn + checkOut
+    const existingSameDay = attendances.find(
+      (a) =>
+        a.id === normalizedAtt.id ||
+        (a.employeeId === normalizedAtt.employeeId && a.date === normalizedAtt.date)
+    );
 
-    setAttendances((prev) => {
-      // Find any existing record for the same employee and date
-      const existingSameDay = prev.find(
-        (a) =>
-          a.id === normalizedAtt.id ||
-          (a.employeeId === normalizedAtt.employeeId && a.date === normalizedAtt.date)
+    let recordToPersist: AttendanceRecord = normalizedAtt;
+    if (existingSameDay) {
+      const alreadyHasCheckIn = Boolean(
+        existingSameDay.checkIn &&
+          existingSameDay.checkIn.trim() !== '' &&
+          existingSameDay.checkIn !== '-'
+      );
+      const alreadyHasCheckOut = Boolean(
+        existingSameDay.checkOut &&
+          existingSameDay.checkOut.trim() !== '' &&
+          existingSameDay.checkOut !== '-'
       );
 
-      if (existingSameDay) {
-        const alreadyHasCheckIn = Boolean(
-          existingSameDay.checkIn &&
-            existingSameDay.checkIn.trim() !== '' &&
-            existingSameDay.checkIn !== '-'
-        );
-        const alreadyHasCheckOut = Boolean(
-          existingSameDay.checkOut &&
-            existingSameDay.checkOut.trim() !== '' &&
-            existingSameDay.checkOut !== '-'
-        );
-
-        // If both Check-In and Check-Out are already recorded for today, prevent duplicate overwrite
-        if (alreadyHasCheckIn && alreadyHasCheckOut) {
-          recordToPersist = existingSameDay;
-          return prev;
-        }
-
+      if (alreadyHasCheckIn && alreadyHasCheckOut) {
+        recordToPersist = existingSameDay;
+      } else {
         const finalCheckIn = alreadyHasCheckIn ? existingSameDay.checkIn : normalizedAtt.checkIn;
         const finalCheckOut = alreadyHasCheckOut
           ? existingSameDay.checkOut
@@ -2451,8 +2972,7 @@ export default function App() {
               )
             : null;
 
-        // Merge: preserve original 1st Check-In data while allowing 1x Check-Out
-        const merged: AttendanceRecord = {
+        recordToPersist = {
           ...existingSameDay,
           ...normalizedAtt,
           id: existingSameDay.id,
@@ -2476,14 +2996,28 @@ export default function App() {
             : normalizedAtt.earlyLeaveMinutes,
           workHours: mergedEval ? mergedEval.workHours : normalizedAtt.workHours,
         };
-        recordToPersist = merged;
-        return prev.map((a) => (a.id === existingSameDay.id ? merged : a));
       }
+    }
 
-      return [normalizedAtt, ...prev];
+    setAttendances((prev) => {
+      const existsInPrev = prev.some(
+        (a) =>
+          a.id === recordToPersist.id ||
+          (a.employeeId === recordToPersist.employeeId && a.date === recordToPersist.date)
+      );
+      if (existsInPrev) {
+        return prev.map((a) =>
+          a.id === recordToPersist.id ||
+          (a.employeeId === recordToPersist.employeeId && a.date === recordToPersist.date)
+            ? recordToPersist
+            : a
+        );
+      }
+      return [recordToPersist, ...prev];
     });
 
     upsertAttendanceToSupabase(recordToPersist);
+    syncAttendanceToPartTimeLogs(recordToPersist);
   };
 
   const handleUpdateAttendance = (updatedAtt: AttendanceRecord) => {
@@ -2583,6 +3117,7 @@ export default function App() {
     });
 
     upsertAttendanceToSupabase(normalizedAtt);
+    syncAttendanceToPartTimeLogs(normalizedAtt);
     duplicateIdsToDelete.forEach((dupId) => deleteAttendanceFromSupabase(dupId));
 
     logActivity(
@@ -3978,6 +4513,8 @@ export default function App() {
                 allPayrolls={safePayrolls}
                 attendances={attendances}
                 onAddAttendance={handleAddAttendance}
+                partTimeLogs={partTimeLogs}
+                onSavePartTimeLog={handleSavePartTimeLog}
                 leaveRequests={leaveRequests}
                 overtimeRequests={overtimeRequests}
                 reimbursements={reimbursements}
@@ -4185,6 +4722,22 @@ export default function App() {
                 onNavigateToPerformanceReview={() => setActiveTab('performance_review')}
                 onApplyBonusToPayroll={handleApplyBonusToPayroll}
                 onBatchApplyBonusesToPayroll={handleBatchApplyBonusesToPayroll}
+                onOpenPartTimePayroll={() => setActiveTab('part_time_payroll')}
+              />
+            )}
+
+            {activeTab === 'part_time_payroll' && (
+              <PartTimePayrollSummary
+                employees={employees}
+                logs={partTimeLogs}
+                payouts={partTimePayouts}
+                attendances={attendances}
+                onSaveLog={handleSavePartTimeLog}
+                onDeleteLog={handleDeletePartTimeLog}
+                onMarkLogsPaid={handleMarkPartTimeLogsPaid}
+                onResetLogsPaid={handleResetPartTimeLogsPaid}
+                onUpdateEmployee={handleUpdateEmployee}
+                onPullWeeklyAttendance={handlePullWeeklyPartTimeAttendance}
               />
             )}
 

@@ -9,7 +9,308 @@ import {
   ReimbursementClaim,
   LiveStreamSalesRecord,
   LiveStreamPlatform,
+  EmploymentType,
+  PartTimeWorkLog,
+  PartTimeWeeklyPayout,
 } from '../types';
+import {
+  normalizeEmploymentType,
+  isEmployeePartTime,
+  calculateActualWorkHoursFromClock,
+} from '../utils/formatters';
+
+const EMP_EMPLOYMENT_META_STORAGE_KEY = 'tgi_emp_employment_meta_v2';
+const PARTTIME_OVERRIDES_STORAGE_KEY = 'tgi_parttime_overrides';
+
+export interface PersistedEmploymentMeta {
+  employmentType: EmploymentType;
+  employment_type?: EmploymentType;
+  status?: string;
+  employmentStatus?: string;
+  hourlyRate?: number;
+  hourly_rate?: number;
+  overtimeRate?: number;
+  overtime_rate?: number;
+  updatedAt: string;
+}
+
+export function getSavedEmploymentMetaMap(): Record<string, PersistedEmploymentMeta> {
+  try {
+    const merged: Record<string, PersistedEmploymentMeta> = {};
+    const rawLegacy = localStorage.getItem(EMP_EMPLOYMENT_META_STORAGE_KEY);
+    if (rawLegacy) {
+      const parsed = JSON.parse(rawLegacy);
+      if (parsed && typeof parsed === 'object') Object.assign(merged, parsed);
+    }
+    const rawOverrides = localStorage.getItem(PARTTIME_OVERRIDES_STORAGE_KEY);
+    if (rawOverrides) {
+      const parsedOverrides = JSON.parse(rawOverrides);
+      if (parsedOverrides && typeof parsedOverrides === 'object') {
+        for (const [k, v] of Object.entries(parsedOverrides)) {
+          if (v && typeof v === 'object') {
+            const item = v as any;
+            const normType =
+              normalizeEmploymentType(item.employment_type || item.employmentType || item.status) ||
+              'Part-Time';
+            merged[k] = {
+              employmentType: normType,
+              employment_type: normType,
+              status: item.status || (normType === 'Part-Time' ? 'Part-Time' : undefined),
+              employmentStatus:
+                item.employmentStatus ||
+                item.status ||
+                (normType === 'Part-Time' ? 'Part-Time' : undefined),
+              hourlyRate: Number(item.hourly_rate ?? item.hourlyRate) || undefined,
+              hourly_rate: Number(item.hourly_rate ?? item.hourlyRate) || undefined,
+              overtimeRate: Number(item.overtime_rate ?? item.overtimeRate) || undefined,
+              overtime_rate: Number(item.overtime_rate ?? item.overtimeRate) || undefined,
+              updatedAt: item.updatedAt || new Date().toISOString(),
+            };
+          }
+        }
+      }
+    }
+    return merged;
+  } catch {
+    return {};
+  }
+}
+
+export function getEmployeeEmploymentMetaLocal(
+  id?: string,
+  nik?: string
+): PersistedEmploymentMeta | null {
+  const map = getSavedEmploymentMetaMap();
+  if (id && map[id]) return map[id];
+  if (nik && map[`nik:${nik.trim().toLowerCase()}`]) {
+    return map[`nik:${nik.trim().toLowerCase()}`];
+  }
+  // Also check tgi_employees_data backup in localStorage
+  try {
+    const rawEmps = localStorage.getItem('tgi_employees_data');
+    if (rawEmps) {
+      const list = JSON.parse(rawEmps);
+      if (Array.isArray(list)) {
+        const found = list.find(
+          (e: any) =>
+            (id && e?.id === id) ||
+            (nik && String(e?.nik || '').trim().toLowerCase() === nik.trim().toLowerCase())
+        );
+        const normType = normalizeEmploymentType(
+          found?.employmentType ||
+            found?.employment_type ||
+            found?.employmentStatus ||
+            found?.status
+        );
+        if (found && normType) {
+          return {
+            employmentType: normType,
+            employment_type: normType,
+            status: normType === 'Part-Time' ? 'Part-Time' : found.employmentStatus,
+            employmentStatus: normType === 'Part-Time' ? 'Part-Time' : found.employmentStatus,
+            hourlyRate: Number(found.hourlyRate ?? found.hourly_rate) || undefined,
+            hourly_rate: Number(found.hourlyRate ?? found.hourly_rate) || undefined,
+            overtimeRate: Number(found.overtimeRate ?? found.overtime_rate) || undefined,
+            overtime_rate: Number(found.overtimeRate ?? found.overtime_rate) || undefined,
+            updatedAt: new Date().toISOString(),
+          };
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+export function saveEmployeeEmploymentMetaLocal(emp: Partial<Employee>): void {
+  if (!emp?.id && !emp?.nik) return;
+  const isPt =
+    normalizeEmploymentType(emp.employmentType) === 'Part-Time' ||
+    normalizeEmploymentType(emp.employment_type) === 'Part-Time' ||
+    normalizeEmploymentType(emp.employmentStatus) === 'Part-Time' ||
+    normalizeEmploymentType((emp as any).status) === 'Part-Time';
+  const resolvedType: EmploymentType = isPt
+    ? 'Part-Time'
+    : normalizeEmploymentType(emp.employmentType || emp.employment_type) ||
+      (emp.employmentStatus === 'PKWTT (Tetap)' ? 'Full-Time' : 'Contract');
+  const resolvedStatus = isPt
+    ? 'Part-Time'
+    : emp.employmentStatus || (emp as any).status || 'PKWT (Kontrak)';
+  const hRate = Math.max(0, Math.round(Number(emp.hourlyRate ?? emp.hourly_rate) || 0));
+  const oRate = Math.max(0, Math.round(Number(emp.overtimeRate ?? emp.overtime_rate) || 0));
+
+  try {
+    const map = getSavedEmploymentMetaMap();
+    const entry: PersistedEmploymentMeta = {
+      employmentType: resolvedType,
+      employment_type: resolvedType,
+      status: resolvedStatus,
+      employmentStatus: resolvedStatus,
+      hourlyRate: hRate > 0 ? hRate : undefined,
+      hourly_rate: hRate > 0 ? hRate : undefined,
+      overtimeRate: oRate > 0 ? oRate : undefined,
+      overtime_rate: oRate > 0 ? oRate : undefined,
+      updatedAt: new Date().toISOString(),
+    };
+    if (emp.id) map[emp.id] = entry;
+    if (emp.nik) map[`nik:${emp.nik.trim().toLowerCase()}`] = entry;
+    localStorage.setItem(EMP_EMPLOYMENT_META_STORAGE_KEY, JSON.stringify(map));
+
+    // Also persist to 'tgi_parttime_overrides' key as requested
+    const rawOverrides = localStorage.getItem(PARTTIME_OVERRIDES_STORAGE_KEY);
+    const overrides: Record<string, any> = rawOverrides ? JSON.parse(rawOverrides) : {};
+    const overridePayload = {
+      employment_type: resolvedType,
+      employmentType: resolvedType,
+      status: resolvedStatus,
+      employmentStatus: resolvedStatus,
+      hourly_rate: hRate > 0 ? hRate : undefined,
+      hourlyRate: hRate > 0 ? hRate : undefined,
+      overtime_rate: oRate > 0 ? oRate : undefined,
+      overtimeRate: oRate > 0 ? oRate : undefined,
+      updatedAt: new Date().toISOString(),
+    };
+    if (emp.id) overrides[emp.id] = overridePayload;
+    if (emp.nik) overrides[`nik:${emp.nik.trim().toLowerCase()}`] = overridePayload;
+    localStorage.setItem(PARTTIME_OVERRIDES_STORAGE_KEY, JSON.stringify(overrides));
+
+    // Also update 'tgi_employees_data' in localStorage so employee state is never reset on reload or pull
+    const rawEmps = localStorage.getItem('tgi_employees_data');
+    if (rawEmps) {
+      const parsedEmps = JSON.parse(rawEmps);
+      if (Array.isArray(parsedEmps)) {
+        let updated = false;
+        const nextEmps = parsedEmps.map((item: any) => {
+          if (!item) return item;
+          const matchId = Boolean(emp.id && item.id === emp.id);
+          const matchNik = Boolean(
+            emp.nik &&
+              item.nik &&
+              String(item.nik).trim().toLowerCase() === emp.nik.trim().toLowerCase()
+          );
+          if (!matchId && !matchNik) return item;
+          updated = true;
+          const nextHourly = hRate > 0 ? hRate : Number(item.hourlyRate ?? item.hourly_rate) || 0;
+          const nextOt =
+            oRate > 0
+              ? oRate
+              : Number(item.overtimeRate ?? item.overtime_rate) || Math.round(nextHourly * 1.5);
+          return {
+            ...item,
+            employmentType: resolvedType,
+            employment_type: resolvedType,
+            employmentStatus: resolvedStatus,
+            status: resolvedStatus,
+            hourlyRate: nextHourly > 0 ? nextHourly : item.hourlyRate,
+            hourly_rate: nextHourly > 0 ? nextHourly : item.hourly_rate,
+            overtimeRate: nextOt > 0 ? nextOt : item.overtimeRate,
+            overtime_rate: nextOt > 0 ? nextOt : item.overtime_rate,
+          };
+        });
+        if (updated) {
+          localStorage.setItem('tgi_employees_data', JSON.stringify(nextEmps));
+        }
+      }
+    }
+  } catch {
+    // ignore storage errors
+  }
+}
+
+export function applyPartTimeOverridesToEmployees(employees: Employee[]): Employee[] {
+  if (!Array.isArray(employees)) return [];
+  try {
+    const metaMap = getSavedEmploymentMetaMap();
+    const rawEmps = localStorage.getItem('tgi_employees_data');
+    const savedList: any[] = rawEmps ? JSON.parse(rawEmps) : [];
+    const savedById = new Map<string, any>();
+    const savedByNik = new Map<string, any>();
+    if (Array.isArray(savedList)) {
+      for (const item of savedList) {
+        if (item?.id) savedById.set(String(item.id), item);
+        if (item?.nik) savedByNik.set(String(item.nik).trim().toLowerCase(), item);
+      }
+    }
+
+    const rawOverrides = localStorage.getItem(PARTTIME_OVERRIDES_STORAGE_KEY);
+    const overrides: Record<string, any> = rawOverrides ? JSON.parse(rawOverrides) : {};
+    let overridesChanged = false;
+
+    const merged = employees.map((emp) => {
+      if (!emp) return emp;
+      const nikKey = emp.nik ? `nik:${emp.nik.trim().toLowerCase()}` : '';
+      const meta = metaMap[emp.id] || (nikKey ? metaMap[nikKey] : undefined);
+      const savedEmp =
+        savedById.get(emp.id) ||
+        (emp.nik ? savedByNik.get(emp.nik.trim().toLowerCase()) : undefined);
+
+      const isPt =
+        normalizeEmploymentType(emp.employmentType) === 'Part-Time' ||
+        normalizeEmploymentType(emp.employment_type) === 'Part-Time' ||
+        normalizeEmploymentType(emp.employmentStatus) === 'Part-Time' ||
+        normalizeEmploymentType(emp.status) === 'Part-Time' ||
+        normalizeEmploymentType(meta?.employmentType) === 'Part-Time' ||
+        normalizeEmploymentType(meta?.status) === 'Part-Time' ||
+        normalizeEmploymentType(savedEmp?.employmentType) === 'Part-Time' ||
+        normalizeEmploymentType(savedEmp?.employment_type) === 'Part-Time' ||
+        normalizeEmploymentType(savedEmp?.employmentStatus) === 'Part-Time' ||
+        normalizeEmploymentType(savedEmp?.status) === 'Part-Time';
+
+      if (!isPt) return emp;
+
+      const resolvedHourly =
+        Number(emp.hourlyRate ?? emp.hourly_rate) ||
+        Number(meta?.hourlyRate ?? meta?.hourly_rate) ||
+        Number(savedEmp?.hourlyRate ?? savedEmp?.hourly_rate) ||
+        0;
+      const resolvedOvertime =
+        Number(emp.overtimeRate ?? emp.overtime_rate) ||
+        Number(meta?.overtimeRate ?? meta?.overtime_rate) ||
+        Number(savedEmp?.overtimeRate ?? savedEmp?.overtime_rate) ||
+        Math.round(resolvedHourly * 1.5);
+
+      const overrideEntry = {
+        employment_type: 'Part-Time' as const,
+        employmentType: 'Part-Time' as const,
+        status: 'Part-Time',
+        employmentStatus: 'Part-Time',
+        hourly_rate: resolvedHourly > 0 ? resolvedHourly : undefined,
+        hourlyRate: resolvedHourly > 0 ? resolvedHourly : undefined,
+        overtime_rate: resolvedOvertime > 0 ? resolvedOvertime : undefined,
+        overtimeRate: resolvedOvertime > 0 ? resolvedOvertime : undefined,
+        updatedAt: meta?.updatedAt || new Date().toISOString(),
+      };
+      if (emp.id && !overrides[emp.id]) {
+        overrides[emp.id] = overrideEntry;
+        overridesChanged = true;
+      }
+      if (nikKey && !overrides[nikKey]) {
+        overrides[nikKey] = overrideEntry;
+        overridesChanged = true;
+      }
+
+      return {
+        ...emp,
+        employmentType: 'Part-Time' as const,
+        employment_type: 'Part-Time' as const,
+        employmentStatus: 'Part-Time' as const,
+        status: 'Part-Time',
+        hourlyRate: resolvedHourly > 0 ? resolvedHourly : emp.hourlyRate,
+        hourly_rate: resolvedHourly > 0 ? resolvedHourly : emp.hourly_rate,
+        overtimeRate: resolvedOvertime > 0 ? resolvedOvertime : emp.overtimeRate,
+        overtime_rate: resolvedOvertime > 0 ? resolvedOvertime : emp.overtime_rate,
+      };
+    });
+
+    if (overridesChanged) {
+      localStorage.setItem(PARTTIME_OVERRIDES_STORAGE_KEY, JSON.stringify(overrides));
+    }
+    return merged;
+  } catch {
+    return employees;
+  }
+}
 
 export interface SupabaseSyncStatus {
   isConnected: boolean;
@@ -37,6 +338,7 @@ export function getEmployeeEffectivePin(emp?: Partial<Employee> | null, fallback
 }
 
 export function employeeToDb(emp: Employee) {
+  saveEmployeeEmploymentMetaLocal(emp);
   const effectivePin = getEmployeeEffectivePin(emp);
   const rawAllowances = emp.allowances || { position: 0, transport: 0, meal: 0, communication: 0 };
   const explicitHourly = Number(emp.hourlyRate ?? emp.hourly_rate) || 0;
@@ -49,6 +351,21 @@ export function employeeToDb(emp: Employee) {
       : Math.round((Number(emp.baseSalary) || 0) / (25 * 9));
   const resolvedDailySalary =
     explicitDaily > 0 ? Math.round(explicitDaily) : resolvedHourlyRate * 9;
+  const explicitOvertimeRate = Number(emp.overtimeRate ?? emp.overtime_rate) || 0;
+  const resolvedOvertimeRate =
+    explicitOvertimeRate > 0 ? Math.round(explicitOvertimeRate) : Math.round(resolvedHourlyRate * 1.5);
+  const isPartTimeStatus =
+    normalizeEmploymentType(emp.employmentType) === 'Part-Time' ||
+    normalizeEmploymentType(emp.employment_type) === 'Part-Time' ||
+    normalizeEmploymentType(emp.employmentStatus) === 'Part-Time' ||
+    normalizeEmploymentType(emp.status) === 'Part-Time';
+  const resolvedEmploymentType: EmploymentType = isPartTimeStatus
+    ? 'Part-Time'
+    : normalizeEmploymentType(emp.employmentType || emp.employment_type) ||
+      (emp.employmentStatus === 'PKWTT (Tetap)' ? 'Full-Time' : 'Contract');
+  const resolvedEmploymentStatus = isPartTimeStatus
+    ? 'Part-Time'
+    : emp.employmentStatus || 'PKWT (Kontrak)';
   return {
     id: emp.id,
     nik: emp.nik,
@@ -61,7 +378,7 @@ export function employeeToDb(emp: Employee) {
     role: emp.role || 'Staff',
     gender: emp.gender || 'Laki-laki',
     department: emp.department || 'Operasional',
-    employment_status: emp.employmentStatus || 'PKWT (Kontrak)',
+    employment_status: resolvedEmploymentStatus,
     join_date: emp.joinDate || new Date().toISOString().split('T')[0],
     base_salary: Number(emp.baseSalary) || resolvedDailySalary * 25,
     allowances: {
@@ -70,7 +387,10 @@ export function employeeToDb(emp: Employee) {
       meal: Number(rawAllowances.meal) || 0,
       communication: Number(rawAllowances.communication) || 0,
       _hourlyRate: resolvedHourlyRate,
+      _overtimeRate: resolvedOvertimeRate,
       _dailySalary: resolvedDailySalary,
+      _employmentType: resolvedEmploymentType,
+      _employmentStatus: resolvedEmploymentStatus,
       _isLiveStreamHost: Boolean(emp.isLiveStreamHost ?? emp.is_host),
       _salesCommissionPercentage:
         Number(emp.salesCommissionPercentage ?? emp.host_commission_pct) || 0,
@@ -148,13 +468,42 @@ export function dbToEmployee(row: any): Employee {
     row.access_pin_hash || row.access_pin || rawAllowances._accessPin
   );
 
+  const localMeta = getEmployeeEmploymentMetaLocal(row.id, row.nik);
+  const allowanceEmpType = normalizeEmploymentType(
+    rawAllowances._employmentType || rawAllowances._employmentStatus
+  );
+  const rowEmpType = normalizeEmploymentType(
+    row.employment_type ?? row.employmentType ?? row.employment_status ?? row.status
+  );
+
+  // JANGAN menimpa employment_type kembali menjadi 'Full-Time' atau status ke 'PKWT' jika di local state / allowances / DB nilainya sudah 'Part-Time'
+  const isLockedPartTime =
+    localMeta?.employmentType === 'Part-Time' ||
+    localMeta?.status === 'Part-Time' ||
+    allowanceEmpType === 'Part-Time' ||
+    rowEmpType === 'Part-Time';
+
+  const resolvedEmploymentType: EmploymentType = isLockedPartTime
+    ? 'Part-Time'
+    : localMeta?.employmentType ||
+      allowanceEmpType ||
+      rowEmpType ||
+      (row.employment_status === 'PKWTT (Tetap)' ? 'Full-Time' : 'Contract');
+
+  const resolvedEmploymentStatus = isLockedPartTime
+    ? 'Part-Time'
+    : (row.employment_status as any) || 'PKWT (Kontrak)';
+
   const baseSalary = Number(row.base_salary) || 0;
   const rawDaily =
     Number(row.daily_salary ?? rawAllowances._dailySalary) ||
     (baseSalary > 0 ? Math.round(baseSalary / 25) : 0);
   const hourlyRate =
-    Number(row.hourly_rate ?? rawAllowances._hourlyRate) ||
+    Number(row.hourly_rate ?? rawAllowances._hourlyRate ?? localMeta?.hourlyRate) ||
     (rawDaily > 0 ? Math.round(rawDaily / 9) : 0);
+  const overtimeRate =
+    Number(row.overtime_rate ?? rawAllowances._overtimeRate ?? localMeta?.overtimeRate) ||
+    Math.round(hourlyRate * 1.5);
   const dailySalary = rawDaily > 0 ? rawDaily : hourlyRate * 9;
 
   const isHostResolved = Boolean(
@@ -233,11 +582,16 @@ export function dbToEmployee(row: any): Employee {
     role: row.role || 'Staff',
     gender: row.gender || 'Laki-laki',
     department: row.department || 'Operasional',
-    employmentStatus: row.employment_status || 'PKWT (Kontrak)',
+    employmentStatus: resolvedEmploymentStatus,
+    status: resolvedEmploymentStatus,
+    employmentType: resolvedEmploymentType,
+    employment_type: resolvedEmploymentType,
     joinDate: row.join_date || new Date().toISOString().split('T')[0],
     baseSalary: baseSalary || dailySalary * 25,
     hourlyRate,
     hourly_rate: hourlyRate,
+    overtimeRate,
+    overtime_rate: overtimeRate,
     dailySalary,
     daily_salary: dailySalary,
     allowances: {
@@ -575,12 +929,27 @@ export async function autoSeedSupabaseIfEmpty(
 
 export async function syncEmployeeLiveColumnsToSupabase(emp: Employee): Promise<void> {
   if (!emp?.id) return;
+  saveEmployeeEmploymentMetaLocal(emp);
   const isHost = Boolean(emp.is_host === true || emp.isLiveStreamHost === true);
   const isCoHost = Boolean(emp.is_co_host === true || emp.isCoHostLiveStream === true);
   const hostPct = Number(emp.host_commission_pct ?? emp.salesCommissionPercentage) || 0;
   const hostPcs = Number(emp.host_commission_per_pcs ?? emp.salesCommissionPerPcs) || 0;
   const coHostPct = Number(emp.co_host_commission_pct ?? emp.coHostCommissionPercentage) || 0;
   const coHostPcs = Number(emp.co_host_commission_per_pcs ?? emp.coHostCommissionPerPcs) || 0;
+  const isPt =
+    normalizeEmploymentType(emp.employmentType) === 'Part-Time' ||
+    normalizeEmploymentType(emp.employment_type) === 'Part-Time' ||
+    normalizeEmploymentType(emp.employmentStatus) === 'Part-Time' ||
+    normalizeEmploymentType(emp.status) === 'Part-Time';
+  const empType: EmploymentType = isPt
+    ? 'Part-Time'
+    : normalizeEmploymentType(emp.employmentType || emp.employment_type) ||
+      (emp.employmentStatus === 'PKWTT (Tetap)' ? 'Full-Time' : 'Contract');
+  const empStatus = isPt ? 'Part-Time' : emp.employmentStatus || 'PKWT (Kontrak)';
+  const hourlyVal = Math.max(0, Math.round(Number(emp.hourlyRate ?? emp.hourly_rate) || 0));
+  const overtimeVal =
+    Math.max(0, Math.round(Number(emp.overtimeRate ?? emp.overtime_rate) || 0)) ||
+    Math.round(hourlyVal * 1.5);
 
   const liveColumnsPayload = {
     is_host: isHost,
@@ -591,11 +960,30 @@ export async function syncEmployeeLiveColumnsToSupabase(emp: Employee): Promise<
     co_host_commission_per_pcs: coHostPcs,
   };
 
+  const partTimePayload = {
+    ...liveColumnsPayload,
+    employment_type: empType,
+    hourly_rate: hourlyVal,
+  };
+
+  const extendedPayload = {
+    ...partTimePayload,
+    overtime_rate: overtimeVal,
+  };
+
   if (typeof window !== 'undefined') {
     window.dispatchEvent(
       new CustomEvent('tgi_employee_live_updated', {
         detail: {
           ...emp,
+          employmentStatus: empStatus,
+          status: empStatus,
+          employmentType: empType,
+          employment_type: empType,
+          hourlyRate: hourlyVal,
+          hourly_rate: hourlyVal,
+          overtimeRate: overtimeVal,
+          overtime_rate: overtimeVal,
           isLiveStreamHost: isHost,
           is_host: isHost,
           isCoHostLiveStream: isCoHost,
@@ -613,19 +1001,77 @@ export async function syncEmployeeLiveColumnsToSupabase(emp: Employee): Promise<
     );
   }
 
-  await Promise.allSettled([
-    supabase.from('employees').update(liveColumnsPayload).eq('id', emp.id),
+  // Also ensure allowances JSONB and employment_status in `employees` table are updated with _employmentType, _hourlyRate, _overtimeRate
+  const fullDbRow = employeeToDb({
+    ...emp,
+    employmentStatus: empStatus as any,
+    status: empStatus,
+    employmentType: empType,
+    employment_type: empType,
+    hourlyRate: hourlyVal,
+    hourly_rate: hourlyVal,
+    overtimeRate: overtimeVal,
+    overtime_rate: overtimeVal,
+  });
+
+  const [empUpdateRes, tgiUpsertRes] = await Promise.allSettled([
+    supabase
+      .from('employees')
+      .update({
+        ...extendedPayload,
+        employment_status: empStatus,
+        allowances: fullDbRow.allowances,
+      })
+      .eq('id', emp.id),
     supabase.from('tgi_employees').upsert(
       {
         id: emp.id,
         nik: emp.nik || null,
         full_name: emp.fullName || '',
-        ...liveColumnsPayload,
+        ...extendedPayload,
+        status: empStatus,
         updated_at: new Date().toISOString(),
       },
       { onConflict: 'id' }
     ),
   ]);
+
+  if (empUpdateRes.status === 'fulfilled' && empUpdateRes.value.error) {
+    const retryPt = await supabase
+      .from('employees')
+      .update({ ...partTimePayload, allowances: fullDbRow.allowances })
+      .eq('id', emp.id);
+    if (retryPt.error) {
+      await supabase
+        .from('employees')
+        .update({ employment_status: empStatus, allowances: fullDbRow.allowances })
+        .eq('id', emp.id);
+    }
+  }
+  if (tgiUpsertRes.status === 'fulfilled' && tgiUpsertRes.value.error) {
+    const retryTgiPt = await supabase.from('tgi_employees').upsert(
+      {
+        id: emp.id,
+        nik: emp.nik || null,
+        full_name: emp.fullName || '',
+        ...partTimePayload,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'id' }
+    );
+    if (retryTgiPt.error) {
+      await supabase.from('tgi_employees').upsert(
+        {
+          id: emp.id,
+          nik: emp.nik || null,
+          full_name: emp.fullName || '',
+          ...liveColumnsPayload,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'id' }
+      );
+    }
+  }
 }
 
 export async function fetchEmployeesFromSupabase(): Promise<Employee[] | null> {
@@ -720,7 +1166,17 @@ export async function fetchEmployeesFromSupabase(): Promise<Employee[] | null> {
       }
     }
 
-    return allMapped.filter((emp) => !deletedIds.has(emp.id));
+    const filteredEmps = applyPartTimeOverridesToEmployees(
+      allMapped.filter((emp) => !deletedIds.has(emp.id))
+    );
+    try {
+      if (filteredEmps.length > 0) {
+        localStorage.setItem('tgi_employees_data', JSON.stringify(filteredEmps));
+      }
+    } catch {
+      // ignore storage errors
+    }
+    return filteredEmps;
   } catch {
     return null;
   }
@@ -891,6 +1347,15 @@ export async function upsertPayrollToSupabase(record: PayrollRecord): Promise<bo
 // ATTENDANCES (Presensi)
 // -----------------------------------------------------------------------------
 export function attendanceToDb(att: AttendanceRecord) {
+  const hasIn = Boolean(att.checkIn && att.checkIn.trim() !== '' && att.checkIn !== '-');
+  const hasOut = Boolean(att.checkOut && att.checkOut.trim() !== '' && att.checkOut !== '-');
+  const computedWorkHours =
+    hasIn && hasOut
+      ? calculateActualWorkHoursFromClock(att.checkIn, att.checkOut)
+      : hasIn && !hasOut
+      ? 0
+      : Math.max(0, Number(att.workHours) || 0);
+
   return {
     id: att.id,
     employee_id: att.employeeId,
@@ -898,7 +1363,7 @@ export function attendanceToDb(att: AttendanceRecord) {
     check_in: att.checkIn || '',
     check_out: att.checkOut || '',
     status: att.status || 'Hadir Tepat Waktu',
-    work_hours: Number(att.workHours) || 8,
+    work_hours: computedWorkHours,
     late_minutes: Number(att.lateMinutes) || 0,
     notes: att.notes || null,
     face_scan_verified: att.faceScanVerified ?? false,
@@ -913,14 +1378,25 @@ export function attendanceToDb(att: AttendanceRecord) {
 }
 
 export function dbToAttendance(row: any): AttendanceRecord {
+  const checkInStr = row.check_in || '';
+  const checkOutStr = row.check_out || '';
+  const hasIn = Boolean(checkInStr && checkInStr.trim() !== '' && checkInStr !== '-');
+  const hasOut = Boolean(checkOutStr && checkOutStr.trim() !== '' && checkOutStr !== '-');
+  const computedWorkHours =
+    hasIn && hasOut
+      ? calculateActualWorkHoursFromClock(checkInStr, checkOutStr)
+      : hasIn && !hasOut
+      ? 0
+      : Math.max(0, Number(row.work_hours) || 0);
+
   return {
     id: row.id,
     employeeId: row.employee_id,
     date: row.date,
-    checkIn: row.check_in || '',
-    checkOut: row.check_out || '',
+    checkIn: checkInStr,
+    checkOut: checkOutStr,
     status: row.status || 'Hadir Tepat Waktu',
-    workHours: Number(row.work_hours) || 8,
+    workHours: computedWorkHours,
     lateMinutes: Number(row.late_minutes) || 0,
     notes: row.notes || undefined,
     faceScanVerified: Boolean(row.face_scan_verified),
@@ -1642,6 +2118,653 @@ export async function deleteLivestreamSessionFromSupabase(sessionId: string): Pr
     return false;
   }
 }
+
+// ============================================================================
+// PART-TIME WEEKLY PAYROLL & SUNDAY PAYOUT SERVICES (SUPABASE + LOCAL SYNC)
+// ============================================================================
+export const PART_TIME_LOGS_STORAGE_KEY = 'tgi_part_time_work_logs';
+export const PART_TIME_PAYOUTS_STORAGE_KEY = 'tgi_part_time_weekly_payouts';
+
+function isEmployeePkwttOrNonPartTimeLocal(employeeId?: string, nik?: string): boolean {
+  if (!employeeId && !nik) return false;
+  try {
+    const meta = getEmployeeEmploymentMetaLocal(employeeId, nik);
+    if (meta) {
+      if (meta.employmentType === 'Part-Time' || meta.status === 'Part-Time') {
+        return false;
+      }
+      if (
+        meta.employmentType === 'Full-Time' ||
+        meta.employmentType === 'Contract' ||
+        String(meta.status || '').toUpperCase().includes('PKWTT')
+      ) {
+        return true;
+      }
+    }
+    const rawEmps = localStorage.getItem('tgi_employees_data');
+    if (rawEmps) {
+      const list = JSON.parse(rawEmps);
+      if (Array.isArray(list)) {
+        const found = list.find(
+          (e: any) =>
+            (employeeId && e?.id === employeeId) ||
+            (nik && String(e?.nik || '').trim().toLowerCase() === nik.trim().toLowerCase())
+        );
+        if (found) {
+          return !isEmployeePartTime(found);
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return false;
+}
+
+export function getSavedPartTimeLogs(): PartTimeWorkLog[] {
+  try {
+    const raw = localStorage.getItem(PART_TIME_LOGS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map(dbToPartTimeLog)
+      .filter((log) => !isEmployeePkwttOrNonPartTimeLocal(log.employeeId, log.employeeNik));
+  } catch {
+    return [];
+  }
+}
+
+export function savePartTimeLogsLocal(logs: PartTimeWorkLog[]): void {
+  try {
+    localStorage.setItem(PART_TIME_LOGS_STORAGE_KEY, JSON.stringify(logs));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('tgi_part_time_updated'));
+    }
+  } catch {
+    // ignore storage errors
+  }
+}
+
+export function getSavedPartTimePayouts(): PartTimeWeeklyPayout[] {
+  try {
+    const raw = localStorage.getItem(PART_TIME_PAYOUTS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function savePartTimePayoutsLocal(payouts: PartTimeWeeklyPayout[]): void {
+  try {
+    localStorage.setItem(PART_TIME_PAYOUTS_STORAGE_KEY, JSON.stringify(payouts));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('tgi_part_time_updated'));
+    }
+  } catch {
+    // ignore storage errors
+  }
+}
+
+export function partTimeLogToDb(log: PartTimeWorkLog) {
+  const clockIn = log.clockIn || log.clock_in || '';
+  const clockOut = log.clockOut || log.clock_out || '';
+  const hasIn = Boolean(clockIn && clockIn.trim() !== '' && clockIn !== '-');
+  const hasOut = Boolean(clockOut && clockOut.trim() !== '' && clockOut !== '-');
+
+  let normalHrs = 0;
+  let otHrs = 0;
+  let totalHrs = 0;
+
+  if (hasIn && !hasOut) {
+    // Jika clock_out belum diisi (baru Clock-In), actualHours = 0 dan daily_wage = 0
+    normalHrs = 0;
+    otHrs = 0;
+    totalHrs = 0;
+  } else if (hasIn && hasOut) {
+    const actualHours = calculateActualWorkHoursFromClock(clockIn, clockOut);
+    normalHrs = Number(Math.min(8, actualHours).toFixed(2));
+    otHrs = Number(Math.max(0, actualHours - 8).toFixed(2));
+    totalHrs = actualHours;
+  } else {
+    const hrs = Math.max(0, Number(log.hoursWorked ?? log.hours_worked) || 0);
+    normalHrs =
+      log.normalHours !== undefined || log.normal_hours !== undefined
+        ? Math.max(0, Number(log.normalHours ?? log.normal_hours) || 0)
+        : Math.min(8, hrs);
+    otHrs =
+      log.overtimeHours !== undefined || log.overtime_hours !== undefined
+        ? Math.max(0, Number(log.overtimeHours ?? log.overtime_hours) || 0)
+        : Math.max(0, Number((hrs - normalHrs).toFixed(2)));
+    totalHrs = hrs > 0 ? hrs : Number((normalHrs + otHrs).toFixed(2));
+  }
+
+  const rate = Math.max(
+    0,
+    Math.round(Number(log.hourlyRate ?? log.hourlyRateSnapshot ?? log.hourly_rate) || 0)
+  );
+  const otRate =
+    Math.max(0, Math.round(Number(log.overtimeRate ?? log.overtime_rate) || 0)) ||
+    Math.round(rate * 1.5);
+  const wage = Math.round(normalHrs * rate + otHrs * otRate);
+
+  const payload: Record<string, any> = {
+    employee_id: log.employeeId || log.employee_id || '',
+    employee_name: log.employeeName || log.employee_name || '',
+    employee_nik: log.employeeNik || null,
+    department: log.department || 'Operasional',
+    work_date: log.date || log.work_date || new Date().toISOString().split('T')[0],
+    clock_in: clockIn || null,
+    clock_out: clockOut || null,
+    normal_hours: normalHrs,
+    overtime_hours: otHrs,
+    hours_worked: totalHrs,
+    hourly_rate: rate,
+    overtime_rate: otRate,
+    daily_wage: wage,
+    source: log.source || 'portal',
+    notes: log.notes || null,
+    status: log.status === 'Paid' ? 'Paid' : 'Unpaid',
+    paid_at: log.paidAt || log.paid_at || null,
+    weekly_payout_id: log.weeklyPayoutId || log.weekly_payout_id || null,
+  };
+
+  if (log.id && UUID_REGEX.test(log.id)) {
+    payload.id = log.id;
+  }
+
+  return payload;
+}
+
+export function dbToPartTimeLog(row: any): PartTimeWorkLog {
+  const clockIn = row?.clock_in || row?.clockIn || '';
+  const clockOut = row?.clock_out || row?.clockOut || '';
+  const hasIn = Boolean(clockIn && String(clockIn).trim() !== '' && clockIn !== '-');
+  const hasOut = Boolean(clockOut && String(clockOut).trim() !== '' && clockOut !== '-');
+
+  let normalHrs = 0;
+  let otHrs = 0;
+  let totalHrs = 0;
+
+  if (hasIn && !hasOut) {
+    normalHrs = 0;
+    otHrs = 0;
+    totalHrs = 0;
+  } else if (hasIn && hasOut) {
+    const actualHours = calculateActualWorkHoursFromClock(String(clockIn), String(clockOut));
+    normalHrs = Number(Math.min(8, actualHours).toFixed(2));
+    otHrs = Number(Math.max(0, actualHours - 8).toFixed(2));
+    totalHrs = actualHours;
+  } else {
+    const hrs = Math.max(0, Number(row?.hours_worked ?? row?.hoursWorked) || 0);
+    normalHrs =
+      row?.normal_hours !== undefined || row?.normalHours !== undefined
+        ? Math.max(0, Number(row?.normal_hours ?? row?.normalHours) || 0)
+        : Math.min(8, hrs);
+    otHrs =
+      row?.overtime_hours !== undefined || row?.overtimeHours !== undefined
+        ? Math.max(0, Number(row?.overtime_hours ?? row?.overtimeHours) || 0)
+        : Math.max(0, Number((hrs - normalHrs).toFixed(2)));
+    totalHrs = hrs > 0 ? hrs : Number((normalHrs + otHrs).toFixed(2));
+  }
+
+  const rate = Math.max(
+    0,
+    Math.round(Number(row?.hourly_rate ?? row?.hourlyRate ?? row?.hourlyRateSnapshot) || 0)
+  );
+  const otRate =
+    Math.max(0, Math.round(Number(row?.overtime_rate ?? row?.overtimeRate) || 0)) ||
+    Math.round(rate * 1.5);
+  const wage = Math.round(normalHrs * rate + otHrs * otRate);
+  const dateStr =
+    typeof row?.work_date === 'string'
+      ? row.work_date.slice(0, 10)
+      : typeof row?.date === 'string'
+      ? row.date.slice(0, 10)
+      : new Date().toISOString().split('T')[0];
+
+  return {
+    id: String(row?.id || generateSessionUuid()),
+    employeeId: String(row?.employee_id || row?.employeeId || ''),
+    employee_id: String(row?.employee_id || row?.employeeId || ''),
+    employeeName: String(row?.employee_name || row?.employeeName || ''),
+    employee_name: String(row?.employee_name || row?.employeeName || ''),
+    employeeNik: row?.employee_nik || row?.employeeNik || undefined,
+    department: row?.department || 'Operasional',
+    role: row?.role || undefined,
+    date: dateStr,
+    work_date: dateStr,
+    clockIn: clockIn || undefined,
+    clock_in: clockIn || undefined,
+    clockOut: clockOut || undefined,
+    clock_out: clockOut || undefined,
+    normalHours: normalHrs,
+    normal_hours: normalHrs,
+    overtimeHours: otHrs,
+    overtime_hours: otHrs,
+    hoursWorked: totalHrs,
+    hours_worked: totalHrs,
+    hourlyRate: rate,
+    hourlyRateSnapshot: rate,
+    hourly_rate: rate,
+    overtimeRate: otRate,
+    overtime_rate: otRate,
+    dailyWage: wage,
+    daily_wage: wage,
+    source: row?.source || undefined,
+    notes: row?.notes || undefined,
+    status: row?.status === 'Paid' ? 'Paid' : 'Unpaid',
+    paidAt: row?.paid_at || row?.paidAt || undefined,
+    paid_at: row?.paid_at || row?.paidAt || undefined,
+    weeklyPayoutId: row?.weekly_payout_id || row?.weeklyPayoutId || undefined,
+    weekly_payout_id: row?.weekly_payout_id || row?.weeklyPayoutId || undefined,
+    createdAt: row?.created_at || row?.createdAt || new Date().toISOString(),
+    created_at: row?.created_at || row?.createdAt || new Date().toISOString(),
+  };
+}
+
+export function partTimePayoutToDb(payout: PartTimeWeeklyPayout) {
+  const grossVal = Math.max(
+    0,
+    Math.round(Number(payout.grossPay ?? payout.grossSalary ?? payout.gross_pay) || 0)
+  );
+  return {
+    id: payout.id,
+    reference_number: payout.referenceNumber || `PT-SUN-${Date.now().toString().slice(-6)}`,
+    employee_id: payout.employeeId,
+    employee_name: payout.employeeName,
+    employee_nik: payout.employeeNik || null,
+    department: payout.department || 'Operasional',
+    role: payout.role || 'Part-Time Staff',
+    bank_name: payout.bankName || 'BCA',
+    bank_account_number: payout.bankAccountNumber || '',
+    bank_account_holder: payout.bankAccountHolder || payout.employeeName,
+    week_start_date: payout.weekStartDate,
+    week_end_date: payout.weekEndDate,
+    payout_date: payout.sundayPayoutDate || payout.payoutDate || payout.weekEndDate,
+    total_days_worked: Math.max(0, Math.round(Number(payout.totalDaysWorked) || 0)),
+    total_hours_worked: Math.max(0, Number(payout.totalHoursWorked) || 0),
+    hourly_rate: Math.max(0, Math.round(Number(payout.hourlyRate) || 0)),
+    gross_salary: grossVal,
+    net_payout: Math.max(0, Math.round(Number(payout.netPayout ?? grossVal) || 0)),
+    status: payout.status === 'Paid' ? 'Paid' : 'Unpaid',
+    paid_at: payout.paidAt || new Date().toISOString(),
+    paid_by: payout.paidBy || 'Admin HR & Finance',
+    payment_method: payout.paymentMethod || 'Transfer Bank',
+    notes: payout.notes || null,
+    log_ids: Array.isArray(payout.logIds) ? payout.logIds : [],
+    created_at: payout.createdAt || new Date().toISOString(),
+  };
+}
+
+export function dbToPartTimePayout(row: any): PartTimeWeeklyPayout {
+  const grossVal = Math.max(
+    0,
+    Math.round(Number(row?.gross_salary ?? row?.grossSalary ?? row?.gross_pay ?? row?.grossPay) || 0)
+  );
+  const pDate = String(
+    row?.payout_date || row?.payoutDate || row?.sunday_payout_date || row?.sundayPayoutDate || ''
+  ).slice(0, 10);
+  return {
+    id: String(row?.id || `pt-pay-${Date.now()}`),
+    referenceNumber: String(row?.reference_number || row?.referenceNumber || 'PT-SUN-001'),
+    employeeId: String(row?.employee_id || row?.employeeId || ''),
+    employeeName: String(row?.employee_name || row?.employeeName || ''),
+    employeeNik: String(row?.employee_nik || row?.employeeNik || '-'),
+    department: String(row?.department || 'Operasional'),
+    role: String(row?.role || 'Part-Time Staff'),
+    bankName: String(row?.bank_name || row?.bankName || 'BCA'),
+    bankAccountNumber: String(row?.bank_account_number || row?.bankAccountNumber || '-'),
+    bankAccountHolder: String(
+      row?.bank_account_holder || row?.bankAccountHolder || row?.employee_name || '-'
+    ),
+    weekStartDate: String(row?.week_start_date || row?.weekStartDate || '').slice(0, 10),
+    weekEndDate: String(row?.week_end_date || row?.weekEndDate || '').slice(0, 10),
+    sundayPayoutDate: pDate,
+    payoutDate: pDate,
+    totalDaysWorked: Math.max(
+      0,
+      Math.round(Number(row?.total_days_worked ?? row?.totalDaysWorked) || 0)
+    ),
+    normalHoursWorked: Number(row?.normal_hours_worked ?? row?.normalHoursWorked) || undefined,
+    overtimeHoursWorked: Number(row?.overtime_hours_worked ?? row?.overtimeHoursWorked) || undefined,
+    totalHoursWorked: Math.max(
+      0,
+      Number(row?.total_hours_worked ?? row?.totalHoursWorked) || 0
+    ),
+    hourlyRate: Math.max(0, Math.round(Number(row?.hourly_rate ?? row?.hourlyRate) || 0)),
+    overtimeRate: Number(row?.overtime_rate ?? row?.overtimeRate) || undefined,
+    grossPay: grossVal,
+    gross_pay: grossVal,
+    grossSalary: grossVal,
+    netPayout: Math.max(0, Math.round(Number(row?.net_payout ?? row?.netPayout ?? grossVal) || 0)),
+    status: row?.status === 'Unpaid' ? 'Unpaid' : 'Paid',
+    paidAt: row?.paid_at || row?.paidAt || undefined,
+    paidBy: row?.paid_by || row?.paidBy || 'Admin HR & Finance',
+    paymentMethod:
+      row?.payment_method === 'Tunai / Kas Operasional'
+        ? 'Tunai / Kas Operasional'
+        : 'Transfer Bank',
+    notes: row?.notes || undefined,
+    logIds: Array.isArray(row?.log_ids)
+      ? row.log_ids
+      : Array.isArray(row?.logIds)
+      ? row.logIds
+      : [],
+    createdAt: row?.created_at || row?.createdAt || new Date().toISOString(),
+  };
+}
+
+export async function fetchPartTimeLogsFromSupabase(): Promise<PartTimeWorkLog[]> {
+  const localLogs = getSavedPartTimeLogs();
+  try {
+    const [res1, res2] = await Promise.allSettled([
+      supabase.from('tgi_parttime_logs').select('*').order('work_date', { ascending: false }),
+      supabase.from('tgi_part_time_logs').select('*').order('work_date', { ascending: false }),
+    ]);
+
+    const rows1 =
+      res1.status === 'fulfilled' && !res1.value.error && Array.isArray(res1.value.data)
+        ? res1.value.data
+        : [];
+    const rows2 =
+      res2.status === 'fulfilled' && !res2.value.error && Array.isArray(res2.value.data)
+        ? res2.value.data
+        : [];
+
+    const dbLogs = [...rows1, ...rows2].map(dbToPartTimeLog);
+    const mergedMap = new Map<string, PartTimeWorkLog>();
+    // Deduplicate by (employeeId + date), preserving clockIn/clockOut if present in localLogs
+    // and strictly excluding PKWTT (Karyawan Tetap) / non-Part-Time employees
+    for (const item of [...dbLogs, ...localLogs]) {
+      if (!item?.id) continue;
+      if (isEmployeePkwttOrNonPartTimeLocal(item.employeeId, item.employeeNik)) continue;
+      const key = `${item.employeeId}_${item.date}`;
+      const existing = mergedMap.get(key);
+      if (!existing) {
+        mergedMap.set(key, item);
+      } else {
+        const mergedClockIn = existing.clockIn || item.clockIn;
+        const mergedClockOut = existing.clockOut || item.clockOut;
+        const normalized = dbToPartTimeLog({
+          ...existing,
+          ...item,
+          id: existing.id,
+          clock_in: mergedClockIn,
+          clock_out: mergedClockOut,
+          status: existing.status === 'Paid' || item.status === 'Paid' ? 'Paid' : 'Unpaid',
+        });
+        mergedMap.set(key, normalized);
+      }
+    }
+    const merged = Array.from(mergedMap.values()).sort((a, b) =>
+      (b.date || '').localeCompare(a.date || '')
+    );
+    savePartTimeLogsLocal(merged);
+    return merged;
+  } catch {
+    return localLogs;
+  }
+}
+
+export async function upsertPartTimeLogToSupabase(log: PartTimeWorkLog): Promise<boolean> {
+  // Guard: never record Part-Time logs or overwrite status for PKWTT (Karyawan Tetap) / non-Part-Time employees
+  if (isEmployeePkwttOrNonPartTimeLocal(log?.employeeId || log?.employee_id, log?.employeeNik)) {
+    return false;
+  }
+  // Ensure 'tgi_parttime_overrides' and 'tgi_employees_data' are updated for this Part-Time employee without resetting contract info
+  if (log?.employeeId || log?.employeeNik) {
+    saveEmployeeEmploymentMetaLocal({
+      id: log.employeeId || log.employee_id,
+      nik: log.employeeNik,
+      employmentType: 'Part-Time',
+      employment_type: 'Part-Time',
+      employmentStatus: 'Part-Time',
+      status: 'Part-Time',
+      hourlyRate: Number(log.hourlyRate ?? log.hourlyRateSnapshot ?? log.hourly_rate) || undefined,
+      hourly_rate: Number(log.hourlyRate ?? log.hourlyRateSnapshot ?? log.hourly_rate) || undefined,
+      overtimeRate: Number(log.overtimeRate ?? log.overtime_rate) || undefined,
+      overtime_rate: Number(log.overtimeRate ?? log.overtime_rate) || undefined,
+    });
+  }
+  const normalizedLog: PartTimeWorkLog = dbToPartTimeLog({
+    ...log,
+    id: log.id && UUID_REGEX.test(log.id) ? log.id : generateSessionUuid(),
+  });
+  const current = getSavedPartTimeLogs();
+  const next = [
+    normalizedLog,
+    ...current.filter(
+      (item) =>
+        item.id !== normalizedLog.id &&
+        !(item.employeeId === normalizedLog.employeeId && item.date === normalizedLog.date)
+    ),
+  ].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  savePartTimeLogsLocal(next);
+
+  try {
+    const fullPayload = partTimeLogToDb(normalizedLog);
+    const basePayload = {
+      id: fullPayload.id,
+      employee_id: fullPayload.employee_id,
+      employee_name: fullPayload.employee_name,
+      employee_nik: fullPayload.employee_nik,
+      department: fullPayload.department,
+      work_date: fullPayload.work_date,
+      hours_worked: fullPayload.hours_worked,
+      hourly_rate: fullPayload.hourly_rate,
+      daily_wage: fullPayload.daily_wage,
+      notes: fullPayload.notes,
+      status: fullPayload.status,
+      paid_at: fullPayload.paid_at,
+      weekly_payout_id: fullPayload.weekly_payout_id,
+    };
+
+    const [r1, r2] = await Promise.allSettled([
+      supabase.from('tgi_parttime_logs').upsert(fullPayload, { onConflict: 'id' }),
+      supabase.from('tgi_part_time_logs').upsert(fullPayload, { onConflict: 'id' }),
+    ]);
+
+    if (r2.status === 'fulfilled' && r2.value.error) {
+      await supabase.from('tgi_part_time_logs').upsert(basePayload, { onConflict: 'id' });
+    }
+    if (r1.status === 'fulfilled' && r1.value.error) {
+      await supabase.from('tgi_parttime_logs').upsert(basePayload, { onConflict: 'id' });
+    }
+    return true;
+  } catch (err) {
+    console.warn('Supabase upsert parttime logs error:', err);
+    return false;
+  }
+}
+
+export async function deletePartTimeLogFromSupabase(logId: string): Promise<boolean> {
+  if (!logId) return false;
+  const current = getSavedPartTimeLogs();
+  savePartTimeLogsLocal(current.filter((item) => item.id !== logId));
+
+  try {
+    await Promise.allSettled([
+      supabase.from('tgi_parttime_logs').delete().eq('id', logId),
+      supabase.from('tgi_part_time_logs').delete().eq('id', logId),
+    ]);
+    return true;
+  } catch (err) {
+    console.warn('Supabase delete parttime logs error:', err);
+    return false;
+  }
+}
+
+export async function fetchPartTimeWeeklyPayoutsFromSupabase(): Promise<PartTimeWeeklyPayout[]> {
+  const localPayouts = getSavedPartTimePayouts();
+  try {
+    const { data, error } = await supabase
+      .from('tgi_part_time_weekly_payouts')
+      .select('*')
+      .order('payout_date', { ascending: false });
+
+    if (error || !Array.isArray(data)) {
+      return localPayouts;
+    }
+
+    const dbPayouts = data.map(dbToPartTimePayout);
+    const mergedMap = new Map<string, PartTimeWeeklyPayout>();
+    for (const item of [...dbPayouts, ...localPayouts]) {
+      if (item?.id) mergedMap.set(item.id, item);
+    }
+    const merged = Array.from(mergedMap.values()).sort((a, b) =>
+      (b.payoutDate || '').localeCompare(a.payoutDate || '')
+    );
+    savePartTimePayoutsLocal(merged);
+    return merged;
+  } catch {
+    return localPayouts;
+  }
+}
+
+export async function markPartTimeLogsPaidInSupabase(
+  logIds: string[],
+  payout: PartTimeWeeklyPayout
+): Promise<boolean> {
+  const paidIso = payout.paidAt || new Date().toISOString();
+  const idSet = new Set(logIds);
+
+  // Update local storage logs & payouts immediately
+  const currentLogs = getSavedPartTimeLogs();
+  const updatedLogs = currentLogs.map((l) =>
+    idSet.has(l.id)
+      ? {
+          ...l,
+          status: 'Paid' as const,
+          paidAt: paidIso,
+          paid_at: paidIso,
+          weeklyPayoutId: payout.id,
+          weekly_payout_id: payout.id,
+        }
+      : l
+  );
+  savePartTimeLogsLocal(updatedLogs);
+
+  const currentPayouts = getSavedPartTimePayouts();
+  const updatedPayouts = [
+    payout,
+    ...currentPayouts.filter((p) => p.id !== payout.id),
+  ];
+  savePartTimePayoutsLocal(updatedPayouts);
+
+  try {
+    await Promise.allSettled([
+      logIds.length > 0
+        ? supabase
+            .from('tgi_parttime_logs')
+            .update({
+              status: 'Paid',
+              paid_at: paidIso,
+              weekly_payout_id: payout.id,
+            })
+            .in('id', logIds)
+        : Promise.resolve(),
+      logIds.length > 0
+        ? supabase
+            .from('tgi_part_time_logs')
+            .update({
+              status: 'Paid',
+              paid_at: paidIso,
+              weekly_payout_id: payout.id,
+            })
+            .in('id', logIds)
+        : Promise.resolve(),
+      supabase
+        .from('tgi_part_time_weekly_payouts')
+        .upsert(partTimePayoutToDb(payout), { onConflict: 'id' }),
+    ]);
+    return true;
+  } catch (err) {
+    console.warn('Supabase markPartTimeLogsPaidInSupabase error:', err);
+    return false;
+  }
+}
+
+export async function resetPartTimeLogsPaidInSupabase(
+  logIds: string[],
+  employeeId?: string,
+  weekStartDate?: string,
+  weekEndDate?: string
+): Promise<boolean> {
+  const idSet = new Set(logIds);
+  const currentLogs = getSavedPartTimeLogs();
+  const updatedLogs = currentLogs.map((l) => {
+    const matchByRange =
+      employeeId &&
+      l.employeeId === employeeId &&
+      (!weekStartDate || l.date >= weekStartDate) &&
+      (!weekEndDate || l.date <= weekEndDate);
+    if (idSet.has(l.id) || matchByRange) {
+      return dbToPartTimeLog({
+        ...l,
+        status: 'Unpaid',
+        paidAt: undefined,
+        paid_at: undefined,
+        weeklyPayoutId: undefined,
+        weekly_payout_id: undefined,
+      });
+    }
+    return l;
+  });
+  savePartTimeLogsLocal(updatedLogs);
+
+  const currentPayouts = getSavedPartTimePayouts();
+  const removedPayoutIds: string[] = [];
+  const remainingPayouts = currentPayouts.filter((p) => {
+    const hasOverlapLog = Array.isArray(p.logIds) && p.logIds.some((lid) => idSet.has(lid));
+    const matchWeek =
+      employeeId &&
+      p.employeeId === employeeId &&
+      (!weekStartDate || p.weekStartDate === weekStartDate);
+    if (hasOverlapLog || matchWeek) {
+      removedPayoutIds.push(p.id);
+      return false;
+    }
+    return true;
+  });
+  savePartTimePayoutsLocal(remainingPayouts);
+
+  try {
+    await Promise.allSettled([
+      logIds.length > 0
+        ? supabase
+            .from('tgi_parttime_logs')
+            .update({
+              status: 'Unpaid',
+              paid_at: null,
+              weekly_payout_id: null,
+            })
+            .in('id', logIds)
+        : Promise.resolve(),
+      logIds.length > 0
+        ? supabase
+            .from('tgi_part_time_logs')
+            .update({
+              status: 'Unpaid',
+              paid_at: null,
+              weekly_payout_id: null,
+            })
+            .in('id', logIds)
+        : Promise.resolve(),
+      removedPayoutIds.length > 0
+        ? supabase.from('tgi_part_time_weekly_payouts').delete().in('id', removedPayoutIds)
+        : Promise.resolve(),
+    ]);
+    return true;
+  } catch (err) {
+    console.warn('Supabase resetPartTimeLogsPaidInSupabase error:', err);
+    return false;
+  }
+}
+
+
 
 
 
