@@ -28,6 +28,7 @@ export type ActiveTab =
   | 'employees'
   | 'payroll'
   | 'part_time_payroll'
+  | 'bonus_management'
   | 'attendance'
   | 'work_shifts'
   | 'leave'
@@ -98,6 +99,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: Clock,
       badge: 'Mingguan',
       badgeColor: 'bg-orange-100 text-orange-800',
+    },
+    {
+      id: 'bonus_management' as ActiveTab,
+      label: 'Manajemen Bonus',
+      icon: Award,
+      badge: 'Apresiasi',
+      badgeColor: 'bg-teal-100 text-teal-800',
     },
     {
       id: 'attendance' as ActiveTab,
@@ -313,7 +321,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
             const visibleMenuItems = menuItems.filter((item) => {
               if (userRole === 'Super Admin') return true;
               if (!allowedModules) return true;
-              return allowedModules.includes(item.id);
+              if (item.id === 'bonus_management') {
+                return (
+                  allowedModules.includes('payroll' as any) ||
+                  allowedModules.includes('employees' as any)
+                );
+              }
+              return allowedModules.includes(item.id as any);
             });
 
             return visibleMenuItems.map((item) => {

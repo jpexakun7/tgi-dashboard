@@ -84,7 +84,7 @@ export const PinManagementPanel: React.FC<PinManagementPanelProps> = ({
   useEffect(() => {
     const initEmpPins: Record<string, string> = {};
     employees.forEach((emp) => {
-      initEmpPins[emp.id] = getEmployeeEffectivePin(emp, '');
+      initEmpPins[emp.id] = '';
     });
     setEmployeePins(initEmpPins);
   }, [employees]);
@@ -95,6 +95,7 @@ export const PinManagementPanel: React.FC<PinManagementPanelProps> = ({
   };
 
   const handleCopyPin = (id: string, pinVal: string) => {
+    if (!pinVal || pinVal === '••••') return;
     navigator.clipboard.writeText(pinVal);
     setCopiedId(id);
     setTimeout(() => setCopiedId(null), 2000);
@@ -202,48 +203,57 @@ export const PinManagementPanel: React.FC<PinManagementPanelProps> = ({
     }
   };
 
-  // Auto-generate unique PINs based on NIK for all employees
-  const handleGenerateUniqueNikPins = () => {
-    const nextMap: Record<string, string> = { ...employeePins };
-    employees.forEach((emp, idx) => {
+  // Auto-generate unique PINs based on NIK for all employees (hashed via SHA-256 & RPC)
+  const handleGenerateUniqueNikPins = async () => {
+    const nextMap: Record<string, string> = {};
+    for (let idx = 0; idx < employees.length; idx++) {
+      const emp = employees[idx];
       const digits = emp.nik.replace(/\D/g, '');
       const uniquePin = digits.length >= 3 ? `1${digits.slice(-3)}` : `${1001 + idx}`;
-      // Ensure it never collides with masterAdminPin
       const safePin = uniquePin === masterAdminPin ? `9${uniquePin.slice(1)}` : uniquePin;
-      nextMap[emp.id] = safePin;
+      await updateEmployeePinSecure(emp.id, safePin);
+      nextMap[emp.id] = '';
       if (onUpdateEmployee) {
         onUpdateEmployee({
           ...emp,
-          accessPin: safePin,
+          accessPin: '••••',
         });
       }
-    });
+    }
     setEmployeePins(nextMap);
     showToast(
-      `Berhasil membuat & menyimpan PIN unik otomatis untuk ${employees.length} akun karyawan ke Cloud Supabase!`
+      `Berhasil membuat & mengenkripsi PIN unik otomatis untuk ${employees.length} akun karyawan ke Cloud Supabase!`
     );
   };
 
-  // Save all modified employee PINs at once
-  const handleSaveAllEmployeePins = () => {
+  // Save all modified employee PINs at once (hashed via SHA-256 & RPC)
+  const handleSaveAllEmployeePins = async () => {
     let updatedCount = 0;
-    employees.forEach((emp) => {
+    for (const emp of employees) {
       const targetPin = (employeePins[emp.id] || '').trim();
-      if (targetPin && targetPin !== emp.accessPin) {
+      if (targetPin && targetPin !== '••••' && targetPin.length >= 4) {
+        await updateEmployeePinSecure(emp.id, targetPin);
         if (onUpdateEmployee) {
           onUpdateEmployee({
             ...emp,
-            accessPin: targetPin,
+            accessPin: '••••',
           });
         }
         updatedCount++;
       }
+    }
+    setEmployeePins((prev) => {
+      const cleaned: Record<string, string> = {};
+      Object.keys(prev).forEach((k) => {
+        cleaned[k] = '';
+      });
+      return cleaned;
     });
 
     showToast(
       updatedCount > 0
-        ? `Berhasil menyimpan ${updatedCount} perubahan PIN akun karyawan ke Supabase!`
-        : 'Seluruh PIN akun karyawan sudah tersimpan dan sinkron.'
+        ? `Berhasil mengenkripsi & menyimpan ${updatedCount} perubahan PIN akun karyawan ke Supabase!`
+        : 'Seluruh PIN akun karyawan sudah terenkripsi dan sinkron.'
     );
   };
 
@@ -345,7 +355,7 @@ export const PinManagementPanel: React.FC<PinManagementPanelProps> = ({
                   value={masterAdminPin}
                   onChange={(e) => setMasterAdminPin(e.target.value)}
                   className="w-full px-3 py-2 bg-white border border-purple-300 rounded-xl font-mono text-sm font-extrabold text-purple-900 tracking-widest focus:outline-hidden focus:ring-2 focus:ring-purple-500"
-                  placeholder="2026"
+                  placeholder="••••••"
                 />
                 <KeyRound className="w-4 h-4 text-purple-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
               </div>

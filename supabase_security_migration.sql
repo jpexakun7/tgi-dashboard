@@ -690,5 +690,47 @@ CREATE POLICY "Authenticated Access PartTime Payouts"
   USING (public.is_app_authenticated())
   WITH CHECK (public.is_app_authenticated());
 
+-- ============================================================================
+-- 11. SKEMA & KEBIJAKAN RLS MANAJEMEN BONUS KARYAWAN (tgi_employee_bonuses)
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS public.tgi_employee_bonuses (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    employee_id TEXT NOT NULL,
+    employee_nik TEXT NOT NULL,
+    employee_name TEXT NOT NULL,
+    amount NUMERIC(14,2) NOT NULL CHECK (amount > 0),
+    reason_note TEXT NOT NULL,
+    period_month TEXT NOT NULL CHECK (period_month ~ '^\d{4}-\d{2}$'),
+    date_awarded TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    is_read BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE public.tgi_employee_bonuses ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Public Full Access tgi_employee_bonuses" ON public.tgi_employee_bonuses;
+DROP POLICY IF EXISTS "Authenticated Select Employee Bonuses" ON public.tgi_employee_bonuses;
+DROP POLICY IF EXISTS "Admin Insert Employee Bonuses" ON public.tgi_employee_bonuses;
+DROP POLICY IF EXISTS "Authenticated Update Read Status Employee Bonuses" ON public.tgi_employee_bonuses;
+DROP POLICY IF EXISTS "Admin Delete Employee Bonuses" ON public.tgi_employee_bonuses;
+
+CREATE POLICY "Authenticated Select Employee Bonuses"
+  ON public.tgi_employee_bonuses FOR SELECT
+  USING (public.is_app_authenticated());
+
+CREATE POLICY "Admin Insert Employee Bonuses"
+  ON public.tgi_employee_bonuses FOR INSERT
+  WITH CHECK (public.is_app_admin() AND amount > 0);
+
+CREATE POLICY "Authenticated Update Read Status Employee Bonuses"
+  ON public.tgi_employee_bonuses FOR UPDATE
+  USING (public.is_app_authenticated())
+  WITH CHECK (public.is_app_authenticated() AND amount > 0);
+
+CREATE POLICY "Admin Delete Employee Bonuses"
+  ON public.tgi_employee_bonuses FOR DELETE
+  USING (public.is_app_admin());
+
 
 

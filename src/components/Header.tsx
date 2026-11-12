@@ -331,7 +331,7 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Mode Tampilan Switcher: Hanya tampil jika sesi Admin terbuka (isAdminUnlocked). Jika karyawan login dengan NIK & PIN (!isAdminUnlocked), seluruh navigasi ke Dashboard Admin HR disembunyikan! */}
           {dashboardMode === 'employee' ? (
-            isAdminUnlocked ? (
+            Boolean(isAdminUnlocked && onToggleDashboardMode) ? (
               <button
                 onClick={onToggleDashboardMode}
                 className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs border bg-purple-50 text-purple-900 border-purple-200 hover:bg-purple-100 hover:border-purple-300 shrink-0 whitespace-nowrap"

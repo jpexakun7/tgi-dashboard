@@ -12,12 +12,21 @@ import {
   EmploymentType,
   PartTimeWorkLog,
   PartTimeWeeklyPayout,
+  EmployeeBonus,
 } from '../types';
 import {
   normalizeEmploymentType,
   isEmployeePartTime,
   calculateActualWorkHoursFromClock,
+  calculateCappedDailyWorkHours,
+  STANDARD_WORK_HOURS_PER_DAY,
 } from '../utils/formatters';
+import {
+  sanitizeEmployeesListForStorage,
+  updateEmployeePinSecure,
+  sanitizeSafeText,
+  validatePositiveIntegerAmount,
+} from './authSecurityService';
 
 const EMP_EMPLOYMENT_META_STORAGE_KEY = 'tgi_emp_employment_meta_v2';
 const PARTTIME_OVERRIDES_STORAGE_KEY = 'tgi_parttime_overrides';
@@ -209,7 +218,10 @@ export function saveEmployeeEmploymentMetaLocal(emp: Partial<Employee>): void {
           };
         });
         if (updated) {
-          localStorage.setItem('tgi_employees_data', JSON.stringify(nextEmps));
+          localStorage.setItem(
+            'tgi_employees_data',
+            JSON.stringify(sanitizeEmployeesListForStorage(nextEmps))
+          );
         }
       }
     }
@@ -404,7 +416,13 @@ export function employeeToDb(emp: Employee) {
       _liveStreamSalesLogs: Array.isArray(emp.liveStreamSalesLogs)
         ? emp.liveStreamSalesLogs
         : undefined,
-      _accessPin: effectivePin,
+      _hasConfiguredPin: (() => {
+        if (effectivePin) {
+          void updateEmployeePinSecure(emp.id, effectivePin);
+          return true;
+        }
+        return emp.accessPin === '••••';
+      })(),
       _ktpPhotoUrl: emp.ktpPhotoUrl || undefined,
       _ktpNumber: emp.ktpNumber || undefined,
       _ktpUploadedAt: emp.ktpUploadedAt || undefined,
@@ -465,7 +483,7 @@ export function dbToEmployee(row: any): Employee {
   }
   // Jangan ekspos PIN plaintext ke state React / DevTools; hanya tandai status terkonfigurasi
   const hasConfiguredPin = Boolean(
-    row.access_pin_hash || row.access_pin || rawAllowances._accessPin
+    row.access_pin_hash || row.access_pin || rawAllowances._hasConfiguredPin || rawAllowances._accessPin
   );
 
   const localMeta = getEmployeeEmploymentMetaLocal(row.id, row.nik);
@@ -1171,7 +1189,10 @@ export async function fetchEmployeesFromSupabase(): Promise<Employee[] | null> {
     );
     try {
       if (filteredEmps.length > 0) {
-        localStorage.setItem('tgi_employees_data', JSON.stringify(filteredEmps));
+        localStorage.setItem(
+          'tgi_employees_data',
+          JSON.stringify(sanitizeEmployeesListForStorage(filteredEmps))
+        );
       }
     } catch {
       // ignore storage errors
@@ -1347,14 +1368,12 @@ export async function upsertPayrollToSupabase(record: PayrollRecord): Promise<bo
 // ATTENDANCES (Presensi)
 // -----------------------------------------------------------------------------
 export function attendanceToDb(att: AttendanceRecord) {
-  const hasIn = Boolean(att.checkIn && att.checkIn.trim() !== '' && att.checkIn !== '-');
-  const hasOut = Boolean(att.checkOut && att.checkOut.trim() !== '' && att.checkOut !== '-');
-  const computedWorkHours =
-    hasIn && hasOut
-      ? calculateActualWorkHoursFromClock(att.checkIn, att.checkOut)
-      : hasIn && !hasOut
-      ? 0
-      : Math.max(0, Number(att.workHours) || 0);
+  const computedWorkHours = calculateCappedDailyWorkHours(
+    att.checkIn,
+    att.checkOut,
+    att.workHours,
+    STANDARD_WORK_HOURS_PER_DAY
+  ).cappedWorkHours;
 
   return {
     id: att.id,
@@ -1380,14 +1399,12 @@ export function attendanceToDb(att: AttendanceRecord) {
 export function dbToAttendance(row: any): AttendanceRecord {
   const checkInStr = row.check_in || '';
   const checkOutStr = row.check_out || '';
-  const hasIn = Boolean(checkInStr && checkInStr.trim() !== '' && checkInStr !== '-');
-  const hasOut = Boolean(checkOutStr && checkOutStr.trim() !== '' && checkOutStr !== '-');
-  const computedWorkHours =
-    hasIn && hasOut
-      ? calculateActualWorkHoursFromClock(checkInStr, checkOutStr)
-      : hasIn && !hasOut
-      ? 0
-      : Math.max(0, Number(row.work_hours) || 0);
+  const computedWorkHours = calculateCappedDailyWorkHours(
+    checkInStr,
+    checkOutStr,
+    row.work_hours,
+    STANDARD_WORK_HOURS_PER_DAY
+  ).cappedWorkHours;
 
   return {
     id: row.id,
@@ -2218,27 +2235,35 @@ export function partTimeLogToDb(log: PartTimeWorkLog) {
   let otHrs = 0;
   let totalHrs = 0;
 
-  if (hasIn && !hasOut) {
-    // Jika clock_out belum diisi (baru Clock-In), actualHours = 0 dan daily_wage = 0
+  if (hasIn && (!hasOut || clockIn.trim() === clockOut.trim())) {
+    // Jika clock_out belum diisi (baru Clock-In) atau sama dengan clock_in, actualHours = 0 dan daily_wage = 0
     normalHrs = 0;
     otHrs = 0;
     totalHrs = 0;
   } else if (hasIn && hasOut) {
-    const actualHours = calculateActualWorkHoursFromClock(clockIn, clockOut);
-    normalHrs = Number(Math.min(8, actualHours).toFixed(2));
-    otHrs = Number(Math.max(0, actualHours - 8).toFixed(2));
-    totalHrs = actualHours;
+    const cappedRes = calculateCappedDailyWorkHours(
+      clockIn,
+      clockOut,
+      0,
+      STANDARD_WORK_HOURS_PER_DAY
+    );
+    normalHrs = cappedRes.cappedWorkHours;
+    otHrs = Math.max(0, Number(log.overtimeHours ?? log.overtime_hours) || 0);
+    totalHrs = Number((normalHrs + otHrs).toFixed(2));
   } else {
     const hrs = Math.max(0, Number(log.hoursWorked ?? log.hours_worked) || 0);
     normalHrs =
       log.normalHours !== undefined || log.normal_hours !== undefined
-        ? Math.max(0, Number(log.normalHours ?? log.normal_hours) || 0)
-        : Math.min(8, hrs);
+        ? Math.min(
+            STANDARD_WORK_HOURS_PER_DAY,
+            Math.max(0, Number(log.normalHours ?? log.normal_hours) || 0)
+          )
+        : Math.min(STANDARD_WORK_HOURS_PER_DAY, hrs);
     otHrs =
       log.overtimeHours !== undefined || log.overtime_hours !== undefined
         ? Math.max(0, Number(log.overtimeHours ?? log.overtime_hours) || 0)
-        : Math.max(0, Number((hrs - normalHrs).toFixed(2)));
-    totalHrs = hrs > 0 ? hrs : Number((normalHrs + otHrs).toFixed(2));
+        : 0;
+    totalHrs = Number((normalHrs + otHrs).toFixed(2));
   }
 
   const rate = Math.max(
@@ -2288,26 +2313,34 @@ export function dbToPartTimeLog(row: any): PartTimeWorkLog {
   let otHrs = 0;
   let totalHrs = 0;
 
-  if (hasIn && !hasOut) {
+  if (hasIn && (!hasOut || String(clockIn).trim() === String(clockOut).trim())) {
     normalHrs = 0;
     otHrs = 0;
     totalHrs = 0;
   } else if (hasIn && hasOut) {
-    const actualHours = calculateActualWorkHoursFromClock(String(clockIn), String(clockOut));
-    normalHrs = Number(Math.min(8, actualHours).toFixed(2));
-    otHrs = Number(Math.max(0, actualHours - 8).toFixed(2));
-    totalHrs = actualHours;
+    const cappedRes = calculateCappedDailyWorkHours(
+      String(clockIn),
+      String(clockOut),
+      0,
+      STANDARD_WORK_HOURS_PER_DAY
+    );
+    normalHrs = cappedRes.cappedWorkHours;
+    otHrs = Math.max(0, Number(row?.overtime_hours ?? row?.overtimeHours) || 0);
+    totalHrs = Number((normalHrs + otHrs).toFixed(2));
   } else {
     const hrs = Math.max(0, Number(row?.hours_worked ?? row?.hoursWorked) || 0);
     normalHrs =
       row?.normal_hours !== undefined || row?.normalHours !== undefined
-        ? Math.max(0, Number(row?.normal_hours ?? row?.normalHours) || 0)
-        : Math.min(8, hrs);
+        ? Math.min(
+            STANDARD_WORK_HOURS_PER_DAY,
+            Math.max(0, Number(row?.normal_hours ?? row?.normalHours) || 0)
+          )
+        : Math.min(STANDARD_WORK_HOURS_PER_DAY, hrs);
     otHrs =
       row?.overtime_hours !== undefined || row?.overtimeHours !== undefined
         ? Math.max(0, Number(row?.overtime_hours ?? row?.overtimeHours) || 0)
-        : Math.max(0, Number((hrs - normalHrs).toFixed(2)));
-    totalHrs = hrs > 0 ? hrs : Number((normalHrs + otHrs).toFixed(2));
+        : 0;
+    totalHrs = Number((normalHrs + otHrs).toFixed(2));
   }
 
   const rate = Math.max(
@@ -2764,7 +2797,176 @@ export async function resetPartTimeLogsPaidInSupabase(
   }
 }
 
+// ============================================================================
+// EMPLOYEE BONUS MANAGEMENT (SUPABASE + LOCALSTORAGE SYNC 'tgi_employee_bonuses')
+// ============================================================================
+export const EMPLOYEE_BONUSES_STORAGE_KEY = 'tgi_employee_bonuses';
 
+export function dbToEmployeeBonus(row: any): EmployeeBonus {
+  const rawDate = row?.date_awarded || row?.dateAwarded || row?.created_at || new Date().toISOString();
+  const rawPeriod =
+    row?.period_month ||
+    row?.periodMonth ||
+    (typeof rawDate === 'string' && rawDate.length >= 7
+      ? rawDate.slice(0, 7)
+      : new Date().toISOString().slice(0, 7));
 
+  const validAmount = validatePositiveIntegerAmount(row?.amount) ?? 0;
 
+  return {
+    id: String(row?.id || generateSessionUuid()),
+    employee_id: sanitizeSafeText(row?.employee_id || row?.employeeId || '', 120),
+    employee_nik: sanitizeSafeText(row?.employee_nik || row?.employeeNik || '', 60),
+    employee_name: sanitizeSafeText(row?.employee_name || row?.employeeName || '', 150),
+    amount: validAmount,
+    reason_note: sanitizeSafeText(row?.reason_note || row?.reasonNote || '', 500),
+    period_month: String(rawPeriod).slice(0, 7),
+    date_awarded: String(rawDate),
+    is_read: Boolean(row?.is_read ?? row?.isRead ?? false),
+    department: row?.department ? sanitizeSafeText(row.department, 100) : undefined,
+    role: row?.role ? sanitizeSafeText(row.role, 100) : undefined,
+  };
+}
 
+export function employeeBonusToDb(bonus: EmployeeBonus) {
+  return {
+    id: bonus.id,
+    employee_id: bonus.employee_id,
+    employee_nik: bonus.employee_nik,
+    employee_name: bonus.employee_name,
+    amount: Math.max(0, Math.round(Number(bonus.amount) || 0)),
+    reason_note: bonus.reason_note || '',
+    period_month: bonus.period_month,
+    date_awarded: bonus.date_awarded || new Date().toISOString(),
+    is_read: Boolean(bonus.is_read),
+  };
+}
+
+export function getSavedEmployeeBonuses(): EmployeeBonus[] {
+  try {
+    const raw = localStorage.getItem(EMPLOYEE_BONUSES_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item) => item && Number(item.amount) > 0)
+      .map(dbToEmployeeBonus)
+      .sort((a, b) => (b.date_awarded || '').localeCompare(a.date_awarded || ''));
+  } catch {
+    return [];
+  }
+}
+
+export function saveEmployeeBonusesLocal(bonuses: EmployeeBonus[]): void {
+  try {
+    localStorage.setItem(EMPLOYEE_BONUSES_STORAGE_KEY, JSON.stringify(bonuses));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('tgi_employee_bonuses_updated'));
+    }
+  } catch {
+    // ignore storage errors
+  }
+}
+
+export async function fetchEmployeeBonuses(): Promise<EmployeeBonus[]> {
+  const localBonuses = getSavedEmployeeBonuses();
+  try {
+    const { data, error } = await supabase
+      .from('tgi_employee_bonuses')
+      .select('*')
+      .order('date_awarded', { ascending: false });
+
+    if (error || !Array.isArray(data)) {
+      return localBonuses;
+    }
+
+    const dbBonuses = data.map(dbToEmployeeBonus);
+    const mergedMap = new Map<string, EmployeeBonus>();
+    for (const item of [...dbBonuses, ...localBonuses]) {
+      if (!item?.id || !(Number(item.amount) > 0)) continue;
+      const existing = mergedMap.get(item.id);
+      if (!existing) {
+        mergedMap.set(item.id, item);
+      } else {
+        mergedMap.set(item.id, {
+          ...existing,
+          ...item,
+          is_read: Boolean(existing.is_read || item.is_read),
+        });
+      }
+    }
+
+    const merged = Array.from(mergedMap.values()).sort((a, b) =>
+      (b.date_awarded || '').localeCompare(a.date_awarded || '')
+    );
+    saveEmployeeBonusesLocal(merged);
+    return merged;
+  } catch {
+    return localBonuses;
+  }
+}
+
+export async function addEmployeeBonus(
+  bonusInput: Omit<EmployeeBonus, 'id' | 'date_awarded' | 'is_read'> & {
+    id?: string;
+    date_awarded?: string;
+    is_read?: boolean;
+  }
+): Promise<EmployeeBonus> {
+  const normalized = dbToEmployeeBonus({
+    ...bonusInput,
+    id:
+      bonusInput.id && UUID_REGEX.test(bonusInput.id)
+        ? bonusInput.id
+        : generateSessionUuid(),
+    date_awarded: bonusInput.date_awarded || new Date().toISOString(),
+    is_read: Boolean(bonusInput.is_read ?? false),
+  });
+
+  const current = getSavedEmployeeBonuses();
+  const next = [normalized, ...current.filter((b) => b.id !== normalized.id)];
+  saveEmployeeBonusesLocal(next);
+
+  try {
+    await supabase
+      .from('tgi_employee_bonuses')
+      .upsert(employeeBonusToDb(normalized), { onConflict: 'id' });
+  } catch {
+    // fallback handled by localStorage
+  }
+
+  return normalized;
+}
+
+export async function markBonusAsRead(bonusId: string): Promise<boolean> {
+  if (!bonusId) return false;
+  const current = getSavedEmployeeBonuses();
+  const next = current.map((b) =>
+    b.id === bonusId ? { ...b, is_read: true } : b
+  );
+  saveEmployeeBonusesLocal(next);
+
+  try {
+    await supabase
+      .from('tgi_employee_bonuses')
+      .update({ is_read: true })
+      .eq('id', bonusId);
+    return true;
+  } catch {
+    return true;
+  }
+}
+
+export async function deleteEmployeeBonus(bonusId: string): Promise<boolean> {
+  if (!bonusId) return false;
+  const current = getSavedEmployeeBonuses();
+  const next = current.filter((b) => b.id !== bonusId);
+  saveEmployeeBonusesLocal(next);
+
+  try {
+    await supabase.from('tgi_employee_bonuses').delete().eq('id', bonusId);
+    return true;
+  } catch {
+    return true;
+  }
+}

@@ -1,9 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
 
-// Helper to sanitize Supabase URL (handles markdown links like [url](url), quotes, brackets)
+// Helper to sanitize Supabase URL strictly from import.meta.env.VITE_SUPABASE_URL (no hardcoded project URLs)
 export function sanitizeSupabaseUrl(rawUrl?: string): string {
-  const fallback = 'https://aeopckbjlbpjpdqyppph.supabase.co';
-  if (!rawUrl || typeof rawUrl !== 'string') return fallback;
+  if (!rawUrl || typeof rawUrl !== 'string') return '';
 
   let cleaned = rawUrl.trim();
   // Handle markdown links: [https://...](https://...)
@@ -19,6 +18,7 @@ export function sanitizeSupabaseUrl(rawUrl?: string): string {
   }
 
   cleaned = cleaned.replace(/\/+$/, '');
+  if (cleaned.includes('your-project-ref.supabase.co')) return '';
 
   try {
     const parsed = new URL(cleaned);
@@ -26,29 +26,35 @@ export function sanitizeSupabaseUrl(rawUrl?: string): string {
       return cleaned;
     }
   } catch {
-    // If parsing fails, fall back to known valid URL
+    return '';
   }
-  return fallback;
+  return '';
 }
 
-// Helper to sanitize Supabase Anon Key (handles quotes, whitespace, or invalid templates)
+// Helper to sanitize Supabase Anon Key strictly from import.meta.env.VITE_SUPABASE_ANON_KEY (no hardcoded JWTs)
 export function sanitizeSupabaseKey(rawKey?: string): string {
-  const fallback =
-    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFlb3Bja2JqbGJwanBkcXlwcHBoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI0NzM1NzMsImV4cCI6MjEwODA0OTU3M30.nxuVs0w0oaaLo809NB1TnrENI-jRQMTjmMZf9OpC-0o';
-  if (!rawKey || typeof rawKey !== 'string') return fallback;
+  if (!rawKey || typeof rawKey !== 'string') return '';
 
   const cleaned = rawKey.trim().replace(/^["']|["']$/g, '');
-  if (cleaned.length < 20 || cleaned.includes('your-anon-key')) {
-    return fallback;
+  if (
+    cleaned.length < 20 ||
+    cleaned.includes('your-anon-key') ||
+    cleaned.includes('your-supabase-public-anon-key')
+  ) {
+    return '';
   }
   return cleaned;
 }
 
-// Supabase Credentials (cleaned and validated)
+// Supabase Credentials (read exclusively from Vite client environment variables)
 export const SUPABASE_URL = sanitizeSupabaseUrl(import.meta.env.VITE_SUPABASE_URL);
 export const SUPABASE_ANON_KEY = sanitizeSupabaseKey(import.meta.env.VITE_SUPABASE_ANON_KEY);
 
-export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+// Safe inert client initialization when env vars are not yet set so the app never crashes on load
+const CLIENT_INIT_URL = SUPABASE_URL || 'https://placeholder-unconfigured.supabase.co';
+const CLIENT_INIT_KEY = SUPABASE_ANON_KEY || 'public-anon-key-unconfigured';
+
+export const supabase = createClient(CLIENT_INIT_URL, CLIENT_INIT_KEY, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
@@ -65,7 +71,9 @@ export function isSupabaseConfigured(): boolean {
     SUPABASE_URL &&
       SUPABASE_ANON_KEY &&
       SUPABASE_URL.startsWith('http') &&
-      SUPABASE_ANON_KEY.length > 20
+      !SUPABASE_URL.includes('placeholder-unconfigured.supabase.co') &&
+      SUPABASE_ANON_KEY.length > 20 &&
+      SUPABASE_ANON_KEY !== 'public-anon-key-unconfigured'
   );
 }
 
@@ -217,6 +225,45 @@ CREATE POLICY "Authenticated Select Reimbursements" ON public.reimbursements FOR
 CREATE POLICY "Authenticated Insert Reimbursements" ON public.reimbursements FOR INSERT WITH CHECK (public.is_app_authenticated());
 CREATE POLICY "Authenticated Update Reimbursements" ON public.reimbursements FOR UPDATE USING (public.is_app_authenticated()) WITH CHECK (public.is_app_authenticated());
 CREATE POLICY "Admin Delete Reimbursements" ON public.reimbursements FOR DELETE USING (public.is_app_admin());
+
+-- Tabel Manajemen Bonus Karyawan (tgi_employee_bonuses) + RLS Ketat
+CREATE TABLE IF NOT EXISTS public.tgi_employee_bonuses (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  employee_id TEXT NOT NULL,
+  employee_nik TEXT NOT NULL,
+  employee_name TEXT NOT NULL,
+  amount NUMERIC(14,2) NOT NULL CHECK (amount > 0),
+  reason_note TEXT NOT NULL,
+  period_month TEXT NOT NULL CHECK (period_month ~ '^\\d{4}-\\d{2}$'),
+  date_awarded TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  is_read BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE public.tgi_employee_bonuses ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Public Full Access tgi_employee_bonuses" ON public.tgi_employee_bonuses;
+DROP POLICY IF EXISTS "Authenticated Select Employee Bonuses" ON public.tgi_employee_bonuses;
+DROP POLICY IF EXISTS "Admin Insert Employee Bonuses" ON public.tgi_employee_bonuses;
+DROP POLICY IF EXISTS "Authenticated Update Read Status Employee Bonuses" ON public.tgi_employee_bonuses;
+DROP POLICY IF EXISTS "Admin Delete Employee Bonuses" ON public.tgi_employee_bonuses;
+
+CREATE POLICY "Authenticated Select Employee Bonuses"
+  ON public.tgi_employee_bonuses FOR SELECT
+  USING (public.is_app_authenticated());
+
+CREATE POLICY "Admin Insert Employee Bonuses"
+  ON public.tgi_employee_bonuses FOR INSERT
+  WITH CHECK (public.is_app_admin() AND amount > 0);
+
+CREATE POLICY "Authenticated Update Read Status Employee Bonuses"
+  ON public.tgi_employee_bonuses FOR UPDATE
+  USING (public.is_app_authenticated())
+  WITH CHECK (public.is_app_authenticated() AND amount > 0);
+
+CREATE POLICY "Admin Delete Employee Bonuses"
+  ON public.tgi_employee_bonuses FOR DELETE
+  USING (public.is_app_admin());
 
 -- 6. Fungsi RPC Verifikasi Login Admin & Karyawan (Server-Side Bcrypt Hash)
 CREATE OR REPLACE FUNCTION public.verify_admin_login(p_email TEXT, p_secret TEXT)

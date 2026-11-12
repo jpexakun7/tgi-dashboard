@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Clock,
   Calendar,
@@ -18,6 +18,7 @@ import {
   PartTimeWorkLog,
   PartTimeWeeklyPayout,
   AttendanceRecord,
+  EmployeeBonus,
 } from '../types';
 import {
   formatRupiah,
@@ -25,6 +26,7 @@ import {
   getEmployeeHourlyRate,
   STANDARD_WORK_HOURS_PER_DAY,
   isEmployeePartTime,
+  getEmployeeBonusesForPeriod,
 } from '../utils/formatters';
 import {
   PartTimeLogs,
@@ -39,6 +41,7 @@ import {
   upsertPartTimeLogToSupabase,
   applyPartTimeOverridesToEmployees,
   saveEmployeeEmploymentMetaLocal,
+  getSavedEmployeeBonuses,
 } from '../services/supabaseService';
 
 interface PartTimePayrollSummaryProps {
@@ -76,6 +79,8 @@ interface EmployeeWeeklySummaryRow {
   paidHours: number;
   normalPay: number;
   overtimePay: number;
+  bonusPay: number;
+  bonusNotes: string;
   grossPay: number;
   unpaidGrossPay: number;
   paidGrossPay: number;
@@ -103,6 +108,15 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
   const [isPullingAttendance, setIsPullingAttendance] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [viewingSlipRow, setViewingSlipRow] = useState<EmployeeWeeklySummaryRow | null>(null);
+  const [employeeBonuses, setEmployeeBonuses] = useState<EmployeeBonus[]>(() =>
+    getSavedEmployeeBonuses()
+  );
+
+  useEffect(() => {
+    const syncBonuses = () => setEmployeeBonuses(getSavedEmployeeBonuses());
+    window.addEventListener('tgi_employee_bonuses_updated', syncBonuses);
+    return () => window.removeEventListener('tgi_employee_bonuses_updated', syncBonuses);
+  }, []);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -183,7 +197,7 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
       const hasIn = Boolean(resolvedIn);
       const hasOut = Boolean(resolvedOut);
 
-      if (hasIn && !hasOut) {
+      if (hasIn && (!hasOut || resolvedIn === resolvedOut)) {
         mergedMap.set(key, {
           ...log,
           clockIn: resolvedIn,
@@ -205,8 +219,14 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
           daily_wage: 0,
         });
       } else if (hasIn && hasOut) {
-        const computed = computeHoursFromClockInOut(resolvedIn, resolvedOut, 8);
-        const wage = Math.round(computed.normalHours * hrRate + computed.overtimeHours * otRate);
+        const computed = computeHoursFromClockInOut(
+          resolvedIn,
+          resolvedOut,
+          STANDARD_WORK_HOURS_PER_DAY
+        );
+        const otH = Math.max(0, Number(log.overtimeHours ?? log.overtime_hours) || 0);
+        const totalH = Number((computed.normalHours + otH).toFixed(2));
+        const wage = Math.round(computed.normalHours * hrRate + otH * otRate);
         mergedMap.set(key, {
           ...log,
           clockIn: resolvedIn,
@@ -215,10 +235,10 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
           clock_out: resolvedOut,
           normalHours: computed.normalHours,
           normal_hours: computed.normalHours,
-          overtimeHours: computed.overtimeHours,
-          overtime_hours: computed.overtimeHours,
-          hoursWorked: computed.totalHours,
-          hours_worked: computed.totalHours,
+          overtimeHours: otH,
+          overtime_hours: otH,
+          hoursWorked: totalH,
+          hours_worked: totalH,
           hourlyRate: hrRate,
           hourlyRateSnapshot: hrRate,
           hourly_rate: hrRate,
@@ -253,10 +273,12 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
           ? att.checkOut
           : existingLog?.clockOut || '';
 
-      const hasClockOut = Boolean(clockOut && clockOut.trim() !== '' && clockOut !== '-');
+      const hasClockOut = Boolean(
+        clockOut && clockOut.trim() !== '' && clockOut !== '-' && clockIn.trim() !== clockOut.trim()
+      );
       const computed =
         clockIn && hasClockOut
-          ? computeHoursFromClockInOut(clockIn, clockOut, 8)
+          ? computeHoursFromClockInOut(clockIn, clockOut, STANDARD_WORK_HOURS_PER_DAY)
           : { totalHours: 0, normalHours: 0, overtimeHours: 0 };
 
       const hrRate =
@@ -331,26 +353,34 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
       const resolveLogBreakdown = (l: PartTimeWorkLog) => {
         const hasIn = Boolean(l.clockIn && l.clockIn.trim() !== '' && l.clockIn !== '-');
         const hasOut = Boolean(l.clockOut && l.clockOut.trim() !== '' && l.clockOut !== '-');
-        if (hasIn && !hasOut) {
+        if (hasIn && (!hasOut || l.clockIn?.trim() === l.clockOut?.trim())) {
           return { normH: 0, otH: 0, totalH: 0 };
         }
         if (hasIn && hasOut) {
-          const computed = computeHoursFromClockInOut(l.clockIn, l.clockOut, 8);
+          const computed = computeHoursFromClockInOut(
+            l.clockIn,
+            l.clockOut,
+            STANDARD_WORK_HOURS_PER_DAY
+          );
+          const otH = Math.max(0, Number(l.overtimeHours ?? l.overtime_hours) || 0);
           return {
             normH: computed.normalHours,
-            otH: computed.overtimeHours,
-            totalH: computed.totalHours,
+            otH,
+            totalH: Number((computed.normalHours + otH).toFixed(2)),
           };
         }
         const totalH = Math.max(0, Number(l.hoursWorked ?? l.hours_worked) || 0);
         const normH =
           l.normalHours !== undefined || l.normal_hours !== undefined
-            ? Math.max(0, Number(l.normalHours ?? l.normal_hours) || 0)
-            : Math.min(8, totalH);
+            ? Math.min(
+                STANDARD_WORK_HOURS_PER_DAY,
+                Math.max(0, Number(l.normalHours ?? l.normal_hours) || 0)
+              )
+            : Math.min(STANDARD_WORK_HOURS_PER_DAY, totalH);
         const otH =
           l.overtimeHours !== undefined || l.overtime_hours !== undefined
             ? Math.max(0, Number(l.overtimeHours ?? l.overtime_hours) || 0)
-            : Math.max(0, Math.round((totalH - normH) * 100) / 100);
+            : 0;
         return { normH, otH, totalH: Math.round((normH + otH) * 100) / 100 };
       };
 
@@ -393,17 +423,27 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
       });
       const paidHours = Math.round((paidNormalHours + paidOvertimeHours) * 100) / 100;
 
-      // Rumus Gaji Kotor = (Jam Normal × hourly_rate) + (Jam Lembur × overtime_rate)
+      // Rumus Gaji Kotor = (Jam Normal × hourly_rate) + (Jam Lembur × overtime_rate) + Bonus Tambahan
       const normalPay = Math.round(normalHoursWorked * hourlyRate);
       const overtimePay = Math.round(overtimeHoursWorked * overtimeRate);
-      const grossPay = normalPay + overtimePay;
+      const bonusSummary = getEmployeeBonusesForPeriod(
+        employeeBonuses,
+        emp,
+        (weekEnd || weekStart || '').slice(0, 7)
+      );
+      const bonusPay = Math.max(0, Math.round(Number(bonusSummary.totalAmount) || 0));
+      const bonusNotes = bonusSummary.combinedNotes || '';
+      const grossPay = normalPay + overtimePay + bonusPay;
 
-      const unpaidGrossPay =
+      const baseUnpaidWage =
         Math.round(unpaidNormalHours * hourlyRate) +
         Math.round(unpaidOvertimeHours * overtimeRate);
+      const unpaidGrossPay =
+        unpaidLogs.length > 0 ? baseUnpaidWage + bonusPay : baseUnpaidWage;
       const paidGrossPay =
         Math.round(paidNormalHours * hourlyRate) +
-        Math.round(paidOvertimeHours * overtimeRate);
+        Math.round(paidOvertimeHours * overtimeRate) +
+        (unpaidLogs.length === 0 && paidLogs.length > 0 ? bonusPay : 0);
 
       const isFullyPaid =
         empWeekLogs.length > 0 &&
@@ -428,13 +468,15 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
         paidHours,
         normalPay,
         overtimePay,
+        bonusPay,
+        bonusNotes,
         grossPay,
         unpaidGrossPay,
         paidGrossPay,
         isFullyPaid,
       };
     });
-  }, [relevantPartTimeEmployees, safeLogs, weekStart, weekEnd]);
+  }, [relevantPartTimeEmployees, safeLogs, weekStart, weekEnd, employeeBonuses]);
 
   // KPI Aggregate Totals for the Weekly Cycle
   const aggregateTotals = useMemo(() => {
@@ -505,7 +547,7 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
         if (l.id.startsWith('pt-att-') || (hasIn && hasOut)) {
           const computed =
             hasIn && hasOut
-              ? computeHoursFromClockInOut(l.clockIn, l.clockOut, 8)
+              ? computeHoursFromClockInOut(l.clockIn, l.clockOut, STANDARD_WORK_HOURS_PER_DAY)
               : {
                   totalHours: Number(l.hoursWorked ?? l.hours_worked) || 0,
                   normalHours: Number(l.normalHours ?? l.normal_hours) || 0,
@@ -555,7 +597,7 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
         const hasOut = Boolean(l.clockOut && l.clockOut.trim() !== '' && l.clockOut !== '-');
         const computed =
           hasIn && hasOut
-            ? computeHoursFromClockInOut(l.clockIn, l.clockOut, 8)
+            ? computeHoursFromClockInOut(l.clockIn, l.clockOut, STANDARD_WORK_HOURS_PER_DAY)
             : hasIn && !hasOut
             ? { totalHours: 0, normalHours: 0, overtimeHours: 0 }
             : {
@@ -1295,7 +1337,7 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
             const hasOut = Boolean(log.clockOut && log.clockOut.trim() !== '' && log.clockOut !== '-');
             const computed =
               hasIn && hasOut
-                ? computeHoursFromClockInOut(log.clockIn, log.clockOut, 8)
+                ? computeHoursFromClockInOut(log.clockIn, log.clockOut, STANDARD_WORK_HOURS_PER_DAY)
                 : { totalHours: 0, normalHours: 0, overtimeHours: 0 };
             const hrRate = Number(log.hourlyRate ?? log.hourlyRateSnapshot ?? log.hourly_rate) || 0;
             const otRate = Number(log.overtimeRate ?? log.overtime_rate) || Math.round(hrRate * 1.5);
@@ -1512,12 +1554,15 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
                         const totalH = Math.max(0, Number(l.hoursWorked ?? l.hours_worked) || 0);
                         const normH =
                           l.normalHours !== undefined || l.normal_hours !== undefined
-                            ? Math.max(0, Number(l.normalHours ?? l.normal_hours) || 0)
-                            : Math.min(8, totalH);
+                            ? Math.min(
+                                STANDARD_WORK_HOURS_PER_DAY,
+                                Math.max(0, Number(l.normalHours ?? l.normal_hours) || 0)
+                              )
+                            : Math.min(STANDARD_WORK_HOURS_PER_DAY, totalH);
                         const otH =
                           l.overtimeHours !== undefined || l.overtime_hours !== undefined
                             ? Math.max(0, Number(l.overtimeHours ?? l.overtime_hours) || 0)
-                            : Math.max(0, Math.round((totalH - normH) * 100) / 100);
+                            : 0;
                         const rowHrRate =
                           Number(l.hourlyRate ?? l.hourlyRateSnapshot ?? l.hourly_rate) ||
                           viewingSlipRow.hourlyRate;
@@ -1580,6 +1625,23 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
                     {formatRupiah(viewingSlipRow.overtimePay)}
                   </span>
                 </div>
+                {viewingSlipRow.bonusPay > 0 && (
+                  <div className="flex items-start justify-between text-xs text-emerald-800 pt-1 border-t border-orange-200/60">
+                    <div>
+                      <span className="font-bold block">
+                        Bonus Tambahan / Apresiasi
+                      </span>
+                      {Boolean(viewingSlipRow.bonusNotes) && (
+                        <span className="text-[10px] text-emerald-700 block">
+                          Catatan: {viewingSlipRow.bonusNotes}
+                        </span>
+                      )}
+                    </div>
+                    <span className="font-mono font-bold text-emerald-700">
+                      +{formatRupiah(viewingSlipRow.bonusPay)}
+                    </span>
+                  </div>
+                )}
                 <div className="pt-2 border-t border-orange-200 flex items-center justify-between">
                   <div>
                     <span className="text-xs font-extrabold text-orange-950 block">
@@ -1587,6 +1649,7 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
                     </span>
                     <span className="text-[11px] text-orange-800">
                       (Jam Normal × hourly_rate) + (Jam Lembur × overtime_rate)
+                      {viewingSlipRow.bonusPay > 0 ? ' + Bonus Apresiasi' : ''}
                     </span>
                   </div>
                   <span className="text-lg font-extrabold text-orange-900 font-mono">

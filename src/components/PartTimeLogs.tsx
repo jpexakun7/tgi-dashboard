@@ -98,14 +98,14 @@ export function getOperationalSixDayRange(referenceDate: Date = new Date()): {
 export function computeHoursFromClockInOut(
   clockIn?: string,
   clockOut?: string,
-  standardNormalHours = 8
+  standardNormalHours = STANDARD_WORK_HOURS_PER_DAY
 ): { totalHours: number; normalHours: number; overtimeHours: number } {
   if (!clockIn || !clockOut) {
     return { totalHours: 0, normalHours: 0, overtimeHours: 0 };
   }
   const cleanIn = clockIn.trim();
   const cleanOut = clockOut.trim();
-  if (!cleanIn || !cleanOut || cleanIn === '-' || cleanOut === '-') {
+  if (!cleanIn || !cleanOut || cleanIn === '-' || cleanOut === '-' || cleanIn === cleanOut) {
     return { totalHours: 0, normalHours: 0, overtimeHours: 0 };
   }
   const inParts = cleanIn.split(':').map(Number);
@@ -134,9 +134,9 @@ export function computeHoursFromClockInOut(
 
   const diffInMinutes = (clockOutTime.getTime() - clockInTime.getTime()) / (1000 * 60);
   const actualHours = Math.max(0, Number((diffInMinutes / 60).toFixed(2)));
-  const normalHours = Number(Math.min(standardNormalHours, actualHours).toFixed(2));
-  const overtimeHours = Number(Math.max(0, actualHours - standardNormalHours).toFixed(2));
-  return { totalHours: actualHours, normalHours, overtimeHours };
+  const maxCap = Math.max(1, Number(standardNormalHours) || STANDARD_WORK_HOURS_PER_DAY);
+  const normalHours = Number(Math.min(maxCap, actualHours).toFixed(2));
+  return { totalHours: normalHours, normalHours, overtimeHours: 0 };
 }
 
 export const PartTimeLogs: React.FC<PartTimeLogsProps> = ({
@@ -237,7 +237,7 @@ export const PartTimeLogs: React.FC<PartTimeLogsProps> = ({
   const handleClockChange = (newIn: string, newOut: string) => {
     setClockInInput(newIn);
     setClockOutInput(newOut);
-    const computed = computeHoursFromClockInOut(newIn, newOut, 8);
+    const computed = computeHoursFromClockInOut(newIn, newOut, STANDARD_WORK_HOURS_PER_DAY);
     if (computed.totalHours > 0) {
       setNormalHours(computed.normalHours);
       setOvertimeHours(computed.overtimeHours);
@@ -264,9 +264,9 @@ export const PartTimeLogs: React.FC<PartTimeLogsProps> = ({
   const handleResetForm = () => {
     setEditingLogId(null);
     setWorkDate(new Date().toISOString().split('T')[0]);
-    setClockInInput('08:00');
-    setClockOutInput('16:00');
-    setNormalHours(8);
+    setClockInInput('09:00');
+    setClockOutInput('18:00');
+    setNormalHours(STANDARD_WORK_HOURS_PER_DAY);
     setOvertimeHours(0);
     if (selectedEmployee) {
       const hRate = getEmployeeHourlyRate(selectedEmployee, STANDARD_WORK_HOURS_PER_DAY, 25);
@@ -464,16 +464,22 @@ export const PartTimeLogs: React.FC<PartTimeLogsProps> = ({
           };
         }
         if (hasIn && hasOut) {
-          const computed = computeHoursFromClockInOut(rawLog.clockIn, rawLog.clockOut, 8);
-          const wage = Math.round(computed.normalHours * hRate + computed.overtimeHours * otRate);
+          const computed = computeHoursFromClockInOut(
+            rawLog.clockIn,
+            rawLog.clockOut,
+            STANDARD_WORK_HOURS_PER_DAY
+          );
+          const otH = Math.max(0, Number(rawLog.overtimeHours ?? rawLog.overtime_hours) || 0);
+          const totalH = Number((computed.normalHours + otH).toFixed(2));
+          const wage = Math.round(computed.normalHours * hRate + otH * otRate);
           return {
             ...rawLog,
             normalHours: computed.normalHours,
             normal_hours: computed.normalHours,
-            overtimeHours: computed.overtimeHours,
-            overtime_hours: computed.overtimeHours,
-            hoursWorked: computed.totalHours,
-            hours_worked: computed.totalHours,
+            overtimeHours: otH,
+            overtime_hours: otH,
+            hoursWorked: totalH,
+            hours_worked: totalH,
             dailyWage: wage,
             daily_wage: wage,
           };
@@ -525,12 +531,15 @@ export const PartTimeLogs: React.FC<PartTimeLogsProps> = ({
       const h = Math.max(0, Number(l.hoursWorked) || 0);
       const normH =
         l.normalHours !== undefined || l.normal_hours !== undefined
-          ? Math.max(0, Number(l.normalHours ?? l.normal_hours) || 0)
-          : Math.min(8, h);
+          ? Math.min(
+              STANDARD_WORK_HOURS_PER_DAY,
+              Math.max(0, Number(l.normalHours ?? l.normal_hours) || 0)
+            )
+          : Math.min(STANDARD_WORK_HOURS_PER_DAY, h);
       const otH =
         l.overtimeHours !== undefined || l.overtime_hours !== undefined
           ? Math.max(0, Number(l.overtimeHours ?? l.overtime_hours) || 0)
-          : Math.max(0, Number((h - normH).toFixed(2)));
+          : 0;
       const hRate = Number(l.hourlyRate ?? l.hourlyRateSnapshot ?? l.hourly_rate) || 0;
       const otRate = Number(l.overtimeRate ?? l.overtime_rate) || Math.round(hRate * 1.5);
       const w = Math.round(normH * hRate + otH * otRate);

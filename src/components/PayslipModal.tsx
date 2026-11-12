@@ -1,47 +1,1203 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Employee,
   PayrollRecord,
   CompanyConfig,
   PayrollSignatoriesConfig,
+  EmployeeBonus,
+  CashAdvance,
+  LeaveRequest,
+  OvertimeRequest,
+  LiveStreamSalesRecord,
+  DailyWorkWageItem,
 } from '../types';
 import {
   formatRupiah,
+  formatAccountingRupiah,
   terbilangRupiah,
   formatIndoDate,
+  formatCutOffPeriodRange,
+  formatEndOfPeriodPrintDate,
   getOvertimeRatePerMinute,
+  getOvertimeMinutes,
+  calculateOvertimePayByMinutes,
+  calculateCappedDailyWorkHours,
   getPayrollSignatoriesConfig,
   savePayrollSignatoriesConfig,
   getEmployeeDailySalary,
   getEmployeeHourlyRate,
   STANDARD_WORK_HOURS_PER_DAY,
   calculateEmployeeLiveSalesCommission,
+  getEmployeeBonusesForPeriod,
 } from '../utils/formatters';
 import { getPayslipWhatsAppUrl, getPayslipEmailUrl } from '../utils/notificationHelper';
 import {
   X,
   Printer,
   Download,
-  CheckCircle,
-  ShieldCheck,
   MessageCircle,
   Mail,
   PenTool,
   Check,
-  Video,
 } from 'lucide-react';
 import { SignatoryConfigModal } from './SignatoryConfigModal';
 import {
   fetchLivestreamSessionsFromSupabase,
   fetchEmployeeByIdFromSupabase,
+  getSavedEmployeeBonuses,
+  fetchEmployeeBonuses,
 } from '../services/supabaseService';
-import { LiveStreamSalesRecord } from '../types';
+
+export interface OfficialPayslipComputedData {
+  effectiveEmployee: Employee;
+  periodCutOffLabel: string;
+  printCityAndDate: string;
+  workDaysCount: number;
+  totalActualWorkHours: number;
+  maxNormalHoursPerDay: number;
+  hourlyRate: number;
+  dailyWorkBreakdown: DailyWorkWageItem[];
+  positionLines: string[];
+  // 1. Gaji Tetap
+  dailySalaryRate: number;
+  gajiPokokTotal: number;
+  tunjanganJabatanRate: number;
+  tunjanganJabatanTotal: number;
+  subtotalGajiTetap: number;
+  // 2. Gaji Tidak Tetap
+  tunjanganKerajinanRate: number;
+  tunjanganKerajinanTotal: number;
+  tunjanganKedisiplinanRate: number;
+  tunjanganKedisiplinanTotal: number;
+  overtimeHourlyRate: number;
+  overtimeHoursQty: number;
+  lemburJamTotal: number;
+  overtimeDailyRate: number;
+  overtimeDaysQty: number;
+  lemburHariTotal: number;
+  bonusItems: Array<{
+    id: string;
+    amount: number;
+    qty: number;
+    reason_note: string;
+  }>;
+  totalTambahanLainnya: number;
+  liveOmsetAmount: number;
+  liveCommissionPct: number;
+  liveCommissionPcsNote: string;
+  salesCommissionAmount: number;
+  subtotalGajiTidakTetap: number;
+  // 3. Pengurangan
+  alphaDays: number;
+  alphaDeductionTotal: number;
+  izinJamMinutes: number;
+  izinJamDeduction: number;
+  izinHariDays: number;
+  izinHariDeduction: number;
+  sakitDays: number;
+  sakitDeduction: number;
+  lateRatePerMinute: number;
+  totalLateMinutes: number;
+  lateDeductionTotal: number;
+  kesalahanRate: number;
+  kesalahanQty: number;
+  kesalahanTotal: number;
+  // Kasbon
+  sisaKasbonBulanLalu: number;
+  pembayaranKasbonBulanIni: number;
+  sisaKasbonBulanDepan: number;
+  // BPJS & PPh 21
+  bpjsBaseSalary: number;
+  bpjsTkPct: number;
+  bpjsTkEmployeeTotal: number;
+  bpjsKesPct: number;
+  bpjsKesEmployeeTotal: number;
+  pph21Total: number;
+  subtotalPengurangan: number;
+  // 4. Jumlah Bersih
+  jumlahBersih: number;
+  terbilangText: string;
+}
+
+function getLocalCashAdvancesForEmployee(employeeId: string): CashAdvance[] {
+  if (!employeeId || typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem('tgi_cash_advances_data');
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (c: CashAdvance) =>
+        c &&
+        c.employeeId === employeeId &&
+        (c.status === 'disbursed' || c.status === 'approved' || c.status === 'paid')
+    );
+  } catch {
+    return [];
+  }
+}
+
+function getLocalLeavesForEmployee(employeeId: string): LeaveRequest[] {
+  if (!employeeId || typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem('tgi_leave_requests_data');
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (l: LeaveRequest) => l && l.employeeId === employeeId && l.status === 'Disetujui'
+    );
+  } catch {
+    return [];
+  }
+}
+
+function getLocalOvertimeRequestsForEmployee(employeeId: string): OvertimeRequest[] {
+  if (!employeeId || typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem('tgi_overtime_requests_data');
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((o: OvertimeRequest) => o && o.employeeId === employeeId);
+  } catch {
+    return [];
+  }
+}
+
+export function computeOfficialPayslipData(params: {
+  payroll: PayrollRecord;
+  employee: Employee;
+  companyConfig: CompanyConfig;
+  employeeBonuses?: EmployeeBonus[];
+  cashAdvances?: CashAdvance[];
+  leaveRequests?: LeaveRequest[];
+  overtimeRequests?: OvertimeRequest[];
+  signatories?: PayrollSignatoriesConfig;
+}): OfficialPayslipComputedData {
+  const {
+    payroll,
+    employee,
+    companyConfig,
+    employeeBonuses = [],
+    cashAdvances,
+    leaveRequests,
+    overtimeRequests,
+    signatories,
+  } = params;
+
+  const periodStr = payroll.period || companyConfig.currentPayrollPeriod || 'November 2026';
+  const periodCutOffLabel = formatCutOffPeriodRange(
+    periodStr,
+    companyConfig.cutOffStartDay || 26,
+    companyConfig.cutOffEndDay || 25
+  );
+
+  const resolvedCity = signatories?.city?.trim() || 'Tangerang';
+  const printDateStr = formatEndOfPeriodPrintDate(periodStr, signatories?.customDateText);
+  const printCityAndDate = `${resolvedCity}, ${printDateStr}`;
+
+  // Multi-line Posisi / Jabatan dengan tanda "-"
+  const rawRoleParts = (employee.role || '-')
+    .split(/(?:\r?\n|\/|;|•|,)+/)
+    .map((s) => s.replace(/^-\s*/, '').trim())
+    .filter(Boolean);
+  const isHost = Boolean(employee.is_host || employee.isLiveStreamHost);
+  const isCoHost = Boolean(employee.is_co_host || employee.isCoHostLiveStream);
+  if (
+    isHost &&
+    !rawRoleParts.some((r) => r.toLowerCase().includes('host'))
+  ) {
+    rawRoleParts.push('Host Live Streaming');
+  }
+  if (
+    isCoHost &&
+    !rawRoleParts.some((r) => r.toLowerCase().includes('co-host') || r.toLowerCase().includes('co host'))
+  ) {
+    rawRoleParts.push('Co-Host Live Streaming');
+  }
+  const positionLines = rawRoleParts.length > 0 ? rawRoleParts : [employee.role || '-'];
+
+  // 1. GAJI TETAP (Batas Maksimal Jam Kerja Normal = 9 Jam/Hari, Total Jam Kerja Aktual × Tarif Per Jam)
+  const maxNormalHoursPerDay = Math.max(
+    1,
+    Number(payroll.standardWorkHoursPerDay) || STANDARD_WORK_HOURS_PER_DAY
+  );
+  const hourlyRate = Math.max(
+    0,
+    Math.round(
+      Number(payroll.hourlyRate) ||
+        getEmployeeHourlyRate(employee, maxNormalHoursPerDay, payroll.standardWorkingDays || 25)
+    )
+  );
+  const dailySalaryRate = Math.max(
+    0,
+    Math.round(
+      Number(payroll.dailySalary) ||
+        hourlyRate * maxNormalHoursPerDay ||
+        getEmployeeDailySalary(employee, payroll.standardWorkingDays || 25, maxNormalHoursPerDay)
+    )
+  );
+
+  const rawBreakdown = Array.isArray(payroll.dailyWorkBreakdown)
+    ? payroll.dailyWorkBreakdown
+    : [];
+  const dailyWorkBreakdown: DailyWorkWageItem[] = rawBreakdown.map((item) => {
+    const isNonPresent =
+      item.status === 'Alpa' ||
+      item.status === 'Sakit' ||
+      item.status === 'Izin' ||
+      item.status === 'Cuti';
+    if (isNonPresent) {
+      return {
+        ...item,
+        workHours: 0,
+        rawDurationHours: 0,
+        isCappedToMax: false,
+        isMissingClockOut: false,
+        dailyWage: 0,
+      };
+    }
+    const cappedRes = calculateCappedDailyWorkHours(
+      item.checkIn,
+      item.checkOut,
+      item.workHours,
+      maxNormalHoursPerDay
+    );
+    return {
+      ...item,
+      workHours: cappedRes.cappedWorkHours,
+      rawDurationHours: cappedRes.rawDurationHours,
+      isCappedToMax: cappedRes.isCappedToMax,
+      isMissingClockOut: cappedRes.isMissingClockOut,
+      dailyWage: Math.round(cappedRes.cappedWorkHours * hourlyRate),
+    };
+  });
+
+  const hasDailyBreakdown = dailyWorkBreakdown.length > 0;
+  const presentDaysFromBreakdown = hasDailyBreakdown
+    ? dailyWorkBreakdown.filter(
+        (d) =>
+          d.status !== 'Alpa' &&
+          d.status !== 'Sakit' &&
+          d.status !== 'Izin' &&
+          d.status !== 'Cuti'
+      ).length
+    : undefined;
+
+  const workDaysCount =
+    Number(payroll.presentDaysCount) !== undefined && !isNaN(Number(payroll.presentDaysCount))
+      ? Math.max(0, Math.round(Number(payroll.presentDaysCount)))
+      : presentDaysFromBreakdown !== undefined
+      ? presentDaysFromBreakdown
+      : payroll.standardWorkingDays || 25;
+
+  const totalActualWorkHours = hasDailyBreakdown
+    ? Number(
+        dailyWorkBreakdown
+          .reduce((sum, item) => sum + (Number(item.workHours) || 0), 0)
+          .toFixed(2)
+      )
+    : payroll.totalActualWorkHours !== undefined && !isNaN(Number(payroll.totalActualWorkHours))
+    ? Number(
+        Math.max(
+          0,
+          Math.min(workDaysCount * maxNormalHoursPerDay, Number(payroll.totalActualWorkHours))
+        ).toFixed(2)
+      )
+    : Number((workDaysCount * maxNormalHoursPerDay).toFixed(2));
+
+  // Gaji Pokok = Total Akumulasi Jam Kerja Aktual (sudah dibatasi maks 9 jam/hari) × Tarif Per Jam
+  const gajiPokokTotal = Math.round(totalActualWorkHours * hourlyRate);
+
+  const tunjanganJabatanRate = Math.max(
+    0,
+    Math.round(Number(payroll.allowancePosition ?? employee.allowances?.position) || 0)
+  );
+  const tunjanganJabatanTotal = tunjanganJabatanRate;
+  const subtotalGajiTetap = gajiPokokTotal + tunjanganJabatanTotal;
+
+  // 2. GAJI TIDAK TETAP
+  const tunjanganKerajinanRate = Math.max(
+    0,
+    Math.round(
+      (Number(payroll.allowanceTransport ?? employee.allowances?.transport) || 0) +
+        (Number(payroll.allowanceCommunication ?? employee.allowances?.communication) || 0)
+    )
+  );
+  const tunjanganKerajinanTotal = tunjanganKerajinanRate;
+
+  const tunjanganKedisiplinanRate = Math.max(
+    0,
+    Math.round(Number(payroll.allowanceMeal ?? employee.allowances?.meal) || 0)
+  );
+  const tunjanganKedisiplinanTotal = tunjanganKedisiplinanRate;
+
+  // Kelebihan jam kerja hanya dihitung jika ada Pengajuan Lembur yang berstatus "Disetujui" (Approved)
+  const empOtList = overtimeRequests
+    ? overtimeRequests.filter((o) => o && o.employeeId === employee.id)
+    : getLocalOvertimeRequestsForEmployee(employee.id);
+  const approvedOtList = empOtList.filter((o) => o.status === 'Disetujui');
+
+  const approvedOtMinutesFromRequests = approvedOtList.reduce(
+    (sum, o) => sum + getOvertimeMinutes(o),
+    0
+  );
+  const approvedOtPayFromRequests = approvedOtList.reduce(
+    (sum, o) =>
+      sum +
+      (Math.max(0, Math.round(Number(o.calculatedPay) || 0)) ||
+        calculateOvertimePayByMinutes(employee, getOvertimeMinutes(o), 1.5)),
+    0
+  );
+
+  const hasOvertimeRequestContext = overtimeRequests !== undefined || empOtList.length > 0;
+  const overtimeMinutes = hasOvertimeRequestContext
+    ? approvedOtMinutesFromRequests
+    : Math.max(0, Math.round(Number(payroll.overtimeMinutes) || 0));
+  const lemburJamTotal = hasOvertimeRequestContext
+    ? approvedOtPayFromRequests
+    : Math.max(0, Math.round(Number(payroll.overtimePay) || 0));
+
+  const baseOtRatePerMin =
+    Number(payroll.overtimeRatePerMinute) || getOvertimeRatePerMinute(employee, 1.5);
+  const overtimeHourlyRate =
+    overtimeMinutes > 0 && lemburJamTotal > 0
+      ? Math.round(lemburJamTotal / (overtimeMinutes / 60))
+      : Math.round(baseOtRatePerMin * 60);
+  const overtimeHoursQty =
+    overtimeMinutes > 0
+      ? Number((overtimeMinutes / 60).toFixed(1))
+      : lemburJamTotal > 0 && overtimeHourlyRate > 0
+      ? Number((lemburJamTotal / overtimeHourlyRate).toFixed(1))
+      : 0;
+
+  const overtimeDailyRate = dailySalaryRate;
+  const overtimeDaysQty = 0;
+  const lemburHariTotal = 0;
+
+  // Tambahan Lainnya (Manajemen Bonus + Bonus KPI jika ada)
+  const bonusSummary = getEmployeeBonusesForPeriod(employeeBonuses, employee, periodStr);
+  const bonusItems: Array<{
+    id: string;
+    amount: number;
+    qty: number;
+    reason_note: string;
+  }> = bonusSummary.bonuses
+    .filter((b) => Boolean(b && Number(b.amount) > 0))
+    .map((b) => ({
+      id: b.id,
+      amount: Math.max(0, Math.round(Number(b.amount) || 0)),
+      qty: 1,
+      reason_note: (b.reason_note || 'Bonus & Apresiasi Kinerja').trim(),
+    }));
+
+  const payrollBonusVal = Math.max(0, Math.round(Number(payroll.bonus) || 0));
+  if (payrollBonusVal > 0) {
+    bonusItems.unshift({
+      id: `kpi-bonus-${payroll.id}`,
+      amount: payrollBonusVal,
+      qty: 1,
+      reason_note: 'Bonus Insentif Kinerja / KPI',
+    });
+  }
+
+  const totalTambahanLainnya = bonusItems.reduce((sum, item) => sum + item.amount, 0);
+
+  // Komisi Penjualan Live Streaming
+  const liveSalesSummary = calculateEmployeeLiveSalesCommission(employee, periodStr);
+  const salesCommissionAmount = Math.max(
+    0,
+    Math.round(Number(payroll.salesCommission) || 0),
+    Math.round(Number(liveSalesSummary.totalCommission) || 0)
+  );
+  const liveOmsetAmount = Math.max(0, Math.round(Number(liveSalesSummary.totalOmset) || 0));
+  const liveCommissionPct =
+    liveSalesSummary.commissionPercentage > 0
+      ? liveSalesSummary.commissionPercentage
+      : liveSalesSummary.coHostCommissionPercentage > 0
+      ? liveSalesSummary.coHostCommissionPercentage
+      : Number(employee.salesCommissionPercentage || employee.coHostCommissionPercentage) || 0;
+  const liveCommissionPcsNote =
+    liveSalesSummary.totalPcs > 0
+      ? `${liveSalesSummary.totalPcs.toLocaleString('id-ID')} Pcs`
+      : '';
+
+  const subtotalGajiTidakTetap =
+    tunjanganKerajinanTotal +
+    tunjanganKedisiplinanTotal +
+    lemburJamTotal +
+    lemburHariTotal +
+    totalTambahanLainnya +
+    salesCommissionAmount;
+
+  // 3. PENGURANGAN
+  const alphaDays = Math.max(0, Math.round(Number(payroll.alphaDaysCount) || 0));
+  const rawAlphaPenalty = Math.max(0, Math.round(Number(payroll.alphaPenaltyAmount) || 0));
+  const alphaDeductionTotal = payroll.isLateFeeWaived
+    ? 0
+    : rawAlphaPenalty > 0
+    ? rawAlphaPenalty
+    : alphaDays > 0
+    ? alphaDays * dailySalaryRate
+    : 0;
+
+  const empLeaves = leaveRequests
+    ? leaveRequests.filter((l) => l.employeeId === employee.id && l.status === 'Disetujui')
+    : getLocalLeavesForEmployee(employee.id);
+  const izinHariDays = empLeaves
+    .filter((l) => l.type === 'Izin Pribadi')
+    .reduce((sum, l) => sum + Math.max(0, Number(l.totalDays) || 0), 0);
+  const sakitDays = empLeaves
+    .filter((l) => l.type === 'Cuti Sakit')
+    .reduce((sum, l) => sum + Math.max(0, Number(l.totalDays) || 0), 0);
+
+  const izinJamMinutes = 0;
+  const izinJamDeduction = 0;
+  const izinHariDeduction = 0;
+  const sakitDeduction = 0;
+
+  const totalLateMinutes = Math.max(0, Math.round(Number(payroll.totalLateMinutes) || 0));
+  const rawTotalLateAndAlpha = payroll.isLateFeeWaived
+    ? 0
+    : Math.max(0, Math.round(Number(payroll.lateDeduction) || 0));
+  const lateDeductionTotal = Math.max(0, rawTotalLateAndAlpha - alphaDeductionTotal);
+  const lateRatePerMinute =
+    totalLateMinutes > 0 && lateDeductionTotal > 0
+      ? Math.round(lateDeductionTotal / totalLateMinutes)
+      : Number(companyConfig.attendancePenaltyPolicy?.flatLatePenaltyAmount) || 1000;
+
+  const kesalahanTotal = Math.max(0, Math.round(Number(payroll.otherDeductions) || 0));
+  const kesalahanQty = kesalahanTotal > 0 ? 1 : 0;
+  const kesalahanRate = kesalahanTotal;
+
+  // Rincian Kasbon (Sinkron dengan modul Kasbon & Pinjaman)
+  const empCashAdvances = (
+    cashAdvances
+      ? cashAdvances.filter(
+          (c) =>
+            c.employeeId === employee.id &&
+            (c.status === 'disbursed' || c.status === 'approved' || c.status === 'paid')
+        )
+      : getLocalCashAdvancesForEmployee(employee.id)
+  );
+
+  const activeCaRemaining = empCashAdvances
+    .filter((c) => c.status === 'disbursed' || c.status === 'approved')
+    .reduce((sum, c) => sum + Math.max(0, Math.round(Number(c.remainingBalance) || 0)), 0);
+  const activeCaMonthlyInstallment = empCashAdvances
+    .filter((c) => c.status === 'disbursed' || c.status === 'approved')
+    .reduce((sum, c) => sum + Math.max(0, Math.round(Number(c.monthlyInstallment) || 0)), 0);
+
+  const pembayaranKasbonBulanIni = Math.max(
+    0,
+    Math.round(Number(payroll.cashAdvanceDeduction) || activeCaMonthlyInstallment || 0)
+  );
+
+  const sisaKasbonBulanLalu =
+    activeCaRemaining > 0
+      ? activeCaRemaining >= pembayaranKasbonBulanIni
+        ? activeCaRemaining
+        : activeCaRemaining + pembayaranKasbonBulanIni
+      : pembayaranKasbonBulanIni;
+
+  const sisaKasbonBulanDepan = Math.max(0, sisaKasbonBulanLalu - pembayaranKasbonBulanIni);
+
+  // BPJS & PPh 21
+  const bpjsBaseSalary = subtotalGajiTetap > 0 ? subtotalGajiTetap : Math.round(Number(employee.baseSalary) || 0);
+  const bpjsTkEmployeeTotal = Math.max(
+    0,
+    Math.round((Number(payroll.bpjsJhtEmployee) || 0) + (Number(payroll.bpjsJpEmployee) || 0))
+  );
+  const bpjsTkPct = 3; // JHT 2% + JP 1%
+  const bpjsKesEmployeeTotal = Math.max(0, Math.round(Number(payroll.bpjsKesehatanEmployee) || 0));
+  const bpjsKesPct = 1; // 1% Ditanggung karyawan
+  const pph21Total = Math.max(0, Math.round(Number(payroll.pph21TER) || 0));
+
+  // Subtotal Pengurangan (Sisa Kasbon bulan lalu & bulan depan TIDAK dijumlahkan)
+  const subtotalPengurangan =
+    alphaDeductionTotal +
+    izinJamDeduction +
+    izinHariDeduction +
+    sakitDeduction +
+    lateDeductionTotal +
+    kesalahanTotal +
+    pembayaranKasbonBulanIni +
+    bpjsTkEmployeeTotal +
+    bpjsKesEmployeeTotal +
+    pph21Total;
+
+  // 4. JUMLAH BERSIH
+  const jumlahBersih = Math.max(0, subtotalGajiTetap + subtotalGajiTidakTetap - subtotalPengurangan);
+  const terbilangText = terbilangRupiah(jumlahBersih);
+
+  return {
+    effectiveEmployee: employee,
+    periodCutOffLabel,
+    printCityAndDate,
+    workDaysCount,
+    totalActualWorkHours,
+    maxNormalHoursPerDay,
+    hourlyRate,
+    dailyWorkBreakdown,
+    positionLines,
+    dailySalaryRate,
+    gajiPokokTotal,
+    tunjanganJabatanRate,
+    tunjanganJabatanTotal,
+    subtotalGajiTetap,
+    tunjanganKerajinanRate,
+    tunjanganKerajinanTotal,
+    tunjanganKedisiplinanRate,
+    tunjanganKedisiplinanTotal,
+    overtimeHourlyRate,
+    overtimeHoursQty,
+    lemburJamTotal,
+    overtimeDailyRate,
+    overtimeDaysQty,
+    lemburHariTotal,
+    bonusItems,
+    totalTambahanLainnya,
+    liveOmsetAmount,
+    liveCommissionPct,
+    liveCommissionPcsNote,
+    salesCommissionAmount,
+    subtotalGajiTidakTetap,
+    alphaDays,
+    alphaDeductionTotal,
+    izinJamMinutes,
+    izinJamDeduction,
+    izinHariDays,
+    izinHariDeduction,
+    sakitDays,
+    sakitDeduction,
+    lateRatePerMinute,
+    totalLateMinutes,
+    lateDeductionTotal,
+    kesalahanRate,
+    kesalahanQty,
+    kesalahanTotal,
+    sisaKasbonBulanLalu,
+    pembayaranKasbonBulanIni,
+    sisaKasbonBulanDepan,
+    bpjsBaseSalary,
+    bpjsTkPct,
+    bpjsTkEmployeeTotal,
+    bpjsKesPct,
+    bpjsKesEmployeeTotal,
+    pph21Total,
+    subtotalPengurangan,
+    jumlahBersih,
+    terbilangText,
+  };
+}
+
+interface OfficialPayslipDocumentProps {
+  data: OfficialPayslipComputedData;
+  companyConfig: CompanyConfig;
+  signatories: PayrollSignatoriesConfig;
+  onEditSignatories?: () => void;
+}
+
+export const OfficialPayslipDocument: React.FC<OfficialPayslipDocumentProps> = ({
+  data,
+  companyConfig,
+  signatories,
+  onEditSignatories,
+}) => {
+  const { effectiveEmployee } = data;
+  const accountingSignatoryName =
+    signatories.preparedBy?.name && signatories.preparedBy.name.trim()
+      ? signatories.preparedBy.name.trim()
+      : 'Siti Rahma Ramadany, S.KM';
+  const preparedStamp =
+    signatories.preparedBy?.stampDataUrl || signatories.companyStampDataUrl || '';
+  const hourlyRateRef = getEmployeeHourlyRate(
+    effectiveEmployee,
+    STANDARD_WORK_HOURS_PER_DAY,
+    25
+  );
+
+  return (
+    <div className="bg-white text-slate-900 border border-slate-300 rounded-xl p-5 sm:p-8 print:p-3 print:border-slate-400 print:rounded-none print:shadow-none font-sans text-xs leading-relaxed">
+      {/* 1. KOP SURAT RESMI PT LUPYTA MAJU PERKASA & JUDUL SLIP GAJI */}
+      <div className="w-full border-b-2 border-slate-900 pb-2.5 mb-3 print:pb-2 print:mb-2.5">
+        <div className="w-full overflow-hidden rounded-xs">
+          <img
+            src="/assets/aistudio/image_2a293321.png"
+            alt="Kop Surat Resmi PT Lupyta Maju Perkasa"
+            className="w-full h-auto object-contain block scale-[1.012] origin-center"
+          />
+        </div>
+      </div>
+      <div className="text-center pb-3 mb-4 print:pb-2 print:mb-3 border-b border-slate-300">
+        <h1 className="text-lg sm:text-xl print:text-lg font-black tracking-[0.25em] uppercase text-slate-950">
+          SLIP GAJI
+        </h1>
+      </div>
+
+      {/* INFORMASI KARYAWAN (LAYOUT 2 KOLOM) */}
+      <div className="grid grid-cols-1 md:grid-cols-2 print:grid-cols-2 gap-x-8 gap-y-2 pb-4 mb-4 border-b border-slate-300 text-xs">
+        {/* Kolom Kiri */}
+        <div className="space-y-1.5">
+          <div className="grid grid-cols-[135px_12px_1fr] items-start">
+            <span className="font-semibold text-slate-700">ID Karyawan</span>
+            <span className="text-slate-600">:</span>
+            <span className="font-mono font-bold text-slate-950">
+              {effectiveEmployee.nik || effectiveEmployee.id || '-'}
+            </span>
+          </div>
+          <div className="grid grid-cols-[135px_12px_1fr] items-start">
+            <span className="font-semibold text-slate-700">Nama Karyawan</span>
+            <span className="text-slate-600">:</span>
+            <span className="font-bold text-slate-950">{effectiveEmployee.fullName || '-'}</span>
+          </div>
+          <div className="grid grid-cols-[135px_12px_1fr] items-start">
+            <span className="font-semibold text-slate-700">Status Karyawan</span>
+            <span className="text-slate-600">:</span>
+            <span className="font-semibold text-slate-900">
+              {effectiveEmployee.employmentStatus || effectiveEmployee.status || '-'}
+            </span>
+          </div>
+          <div className="grid grid-cols-[135px_12px_1fr] items-start">
+            <span className="font-semibold text-slate-700">Divisi</span>
+            <span className="text-slate-600">:</span>
+            <span className="font-semibold text-slate-900">
+              {effectiveEmployee.department || '-'}
+            </span>
+          </div>
+          <div className="grid grid-cols-[135px_12px_1fr] items-start">
+            <span className="font-semibold text-slate-700">Posisi / Jabatan</span>
+            <span className="text-slate-600">:</span>
+            <div className="font-semibold text-slate-900 space-y-0.5">
+              {data.positionLines.map((line, idx) => (
+                <div key={idx} className="leading-snug">
+                  - {line}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Kolom Kanan */}
+        <div className="space-y-1.5">
+          <div className="grid grid-cols-[135px_12px_1fr] items-start">
+            <span className="font-semibold text-slate-700">Periode</span>
+            <span className="text-slate-600">:</span>
+            <span className="font-bold text-slate-950">{data.periodCutOffLabel}</span>
+          </div>
+          <div className="grid grid-cols-[135px_12px_1fr] items-start">
+            <span className="font-semibold text-slate-700">Jumlah Hari Kerja</span>
+            <span className="text-slate-600">:</span>
+            <span className="font-bold text-slate-950">{data.workDaysCount} Hari</span>
+          </div>
+          <div className="grid grid-cols-[135px_12px_1fr] items-start">
+            <span className="font-semibold text-slate-700">*Bank</span>
+            <span className="text-slate-600">:</span>
+            <span className="font-bold text-slate-950">{effectiveEmployee.bankName || '-'}</span>
+          </div>
+          <div className="grid grid-cols-[135px_12px_1fr] items-start">
+            <span className="font-semibold text-slate-700">Nomor Rekening</span>
+            <span className="text-slate-600">:</span>
+            <span className="font-mono font-bold text-slate-950">
+              {effectiveEmployee.bankAccountNumber || '-'}
+            </span>
+          </div>
+          <div className="grid grid-cols-[135px_12px_1fr] items-start">
+            <span className="font-semibold text-slate-700">Nama Penerima</span>
+            <span className="text-slate-600">:</span>
+            <span className="font-bold text-slate-950">
+              {effectiveEmployee.bankAccountHolder || effectiveEmployee.fullName || '-'}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* 2. TABEL RINCIAN PENDAPATAN & 3. PENGURANGAN */}
+      <div className="overflow-x-auto">
+        <table className="w-full border-collapse border border-slate-300 text-[11px] sm:text-xs">
+          <thead>
+            <tr className="bg-slate-800 text-white font-bold uppercase tracking-wider">
+              <th className="py-2 px-3 text-left border border-slate-300 w-[34%]">
+                Komponen Slip Gaji
+              </th>
+              <th className="py-2 px-3 text-right border border-slate-300 w-[22%]">
+                Tarif / Dasar (Rp)
+              </th>
+              <th className="py-2 px-3 text-left border border-slate-300 w-[24%]">
+                Kuantitas / Keterangan
+              </th>
+              <th className="py-2 px-3 text-right border border-slate-300 w-[20%]">
+                Total (Rp)
+              </th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-200">
+            {/* ============================================================== */}
+            {/* BAGIAN 1 — GAJI TETAP                                          */}
+            {/* ============================================================== */}
+            <tr className="bg-emerald-50/90 font-extrabold text-emerald-950">
+              <td colSpan={4} className="py-1.5 px-3 border border-slate-300 uppercase tracking-wider">
+                1. GAJI TETAP
+              </td>
+            </tr>
+            <tr>
+              <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                <div>Gaji Pokok</div>
+                <div className="text-[10px] text-slate-500">
+                  Akumulasi Jam Kerja Aktual (Maks. {data.maxNormalHoursPerDay} Jam/Hari • {formatAccountingRupiah(data.dailySalaryRate)}/hari)
+                </div>
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                <div>{formatAccountingRupiah(data.hourlyRate)} / jam</div>
+                <div className="text-[10px] text-slate-500">
+                  ({formatAccountingRupiah(data.dailySalaryRate)} / hari)
+                </div>
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                <div className="font-semibold text-slate-900">
+                  × {data.totalActualWorkHours} Jam Aktual
+                </div>
+                <div className="text-[10px] text-slate-500">
+                  ({data.workDaysCount} Hari Kerja • Maks. {data.maxNormalHoursPerDay} Jam/Hari)
+                </div>
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-slate-900">
+                {formatAccountingRupiah(data.gajiPokokTotal)}
+              </td>
+            </tr>
+            <tr>
+              <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                Tunjangan Jabatan
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                {formatAccountingRupiah(data.tunjanganJabatanRate)}
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                × 1 Kali / Bulan
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-slate-900">
+                {formatAccountingRupiah(data.tunjanganJabatanTotal)}
+              </td>
+            </tr>
+            <tr className="bg-emerald-100/80 font-extrabold text-slate-950">
+              <td colSpan={3} className="py-2 px-3 border border-slate-300 text-right uppercase">
+                Subtotal Gaji Tetap
+              </td>
+              <td className="py-2 px-3 border border-slate-300 text-right font-mono text-emerald-900">
+                {formatAccountingRupiah(data.subtotalGajiTetap)}
+              </td>
+            </tr>
+
+            {/* ============================================================== */}
+            {/* BAGIAN 2 — GAJI TIDAK TETAP                                    */}
+            {/* ============================================================== */}
+            <tr className="bg-teal-50/90 font-extrabold text-teal-950">
+              <td colSpan={4} className="py-1.5 px-3 border border-slate-300 uppercase tracking-wider">
+                2. GAJI TIDAK TETAP
+              </td>
+            </tr>
+            <tr>
+              <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                Tunjangan Kerajinan
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                {formatAccountingRupiah(data.tunjanganKerajinanRate)}
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                × 1 Kali / Bulan
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-slate-900">
+                {formatAccountingRupiah(data.tunjanganKerajinanTotal)}
+              </td>
+            </tr>
+            <tr>
+              <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                Tunjangan Kedisiplinan
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                {formatAccountingRupiah(data.tunjanganKedisiplinanRate)}
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                × 1 Kali / Bulan
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-slate-900">
+                {formatAccountingRupiah(data.tunjanganKedisiplinanTotal)}
+              </td>
+            </tr>
+            <tr>
+              <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                Lembur (Jam)
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                {formatAccountingRupiah(data.lemburJamTotal > 0 ? data.overtimeHourlyRate : 0)}
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                × {data.overtimeHoursQty} Jam
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-slate-900">
+                {formatAccountingRupiah(data.lemburJamTotal)}
+              </td>
+            </tr>
+            <tr>
+              <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                Lembur (Hari)
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                {formatAccountingRupiah(data.lemburHariTotal > 0 ? data.overtimeDailyRate : 0)}
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                × {data.overtimeDaysQty} Hari
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-slate-900">
+                {formatAccountingRupiah(data.lemburHariTotal)}
+              </td>
+            </tr>
+
+            {/* Tambahan Lainnya (Terintegrasi dengan Manajemen Bonus) */}
+            {data.bonusItems.length > 0 ? (
+              data.bonusItems.map((bItem, idx) => (
+                <tr key={bItem.id} className="bg-amber-50/40">
+                  <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                    {idx === 0 ? 'Tambahan Lainnya' : '↳ Tambahan Lainnya'}
+                  </td>
+                  <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                    {formatAccountingRupiah(bItem.amount)}
+                  </td>
+                  <td className="py-1.5 px-3 border border-slate-300 text-slate-800">
+                    <span className="font-semibold">× {bItem.qty}</span>{' '}
+                    <span className="text-slate-600">({bItem.reason_note})</span>
+                  </td>
+                  <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-emerald-800">
+                    {formatAccountingRupiah(bItem.amount)}
+                  </td>
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                  Tambahan Lainnya
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                  Rp -
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-slate-500">
+                  × 0 (-)
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-slate-900">
+                  Rp -
+                </td>
+              </tr>
+            )}
+
+            <tr>
+              <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                Komisi
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                {formatAccountingRupiah(data.liveOmsetAmount)}
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                × {data.liveCommissionPct}%
+                {Boolean(data.liveCommissionPcsNote) ? ` (${data.liveCommissionPcsNote})` : ''}
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-slate-900">
+                {formatAccountingRupiah(data.salesCommissionAmount)}
+              </td>
+            </tr>
+            <tr className="bg-teal-100/80 font-extrabold text-slate-950">
+              <td colSpan={3} className="py-2 px-3 border border-slate-300 text-right uppercase">
+                Subtotal Gaji Tidak Tetap
+              </td>
+              <td className="py-2 px-3 border border-slate-300 text-right font-mono text-teal-900">
+                {formatAccountingRupiah(data.subtotalGajiTidakTetap)}
+              </td>
+            </tr>
+
+            {/* ============================================================== */}
+            {/* BAGIAN 3 — PENGURANGAN                                         */}
+            {/* ============================================================== */}
+            <tr className="bg-rose-50/90 font-extrabold text-rose-950">
+              <td colSpan={4} className="py-1.5 px-3 border border-slate-300 uppercase tracking-wider">
+                3. PENGURANGAN
+              </td>
+            </tr>
+            <tr>
+              <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                Tanpa Keterangan
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                {formatAccountingRupiah(data.alphaDays > 0 ? data.dailySalaryRate : 0)}
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                × {data.alphaDays} Hari
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
+                {formatAccountingRupiah(data.alphaDeductionTotal)}
+              </td>
+            </tr>
+            <tr>
+              <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                Izin (Jam)
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                {formatAccountingRupiah(data.izinJamMinutes > 0 ? hourlyRateRef : 0)}
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                × {data.izinJamMinutes} Menit
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
+                {formatAccountingRupiah(data.izinJamDeduction)}
+              </td>
+            </tr>
+            <tr>
+              <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                Izin (Hari)
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                {formatAccountingRupiah(data.izinHariDeduction > 0 ? data.dailySalaryRate : 0)}
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                × {data.izinHariDays} Hari
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
+                {formatAccountingRupiah(data.izinHariDeduction)}
+              </td>
+            </tr>
+            <tr>
+              <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                Sakit
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                {formatAccountingRupiah(data.sakitDeduction > 0 ? data.dailySalaryRate : 0)}
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                × {data.sakitDays} Hari
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
+                {formatAccountingRupiah(data.sakitDeduction)}
+              </td>
+            </tr>
+            <tr>
+              <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                Keterlambatan
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                {formatAccountingRupiah(data.totalLateMinutes > 0 ? data.lateRatePerMinute : 0)}
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                × {data.totalLateMinutes} Menit
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
+                {formatAccountingRupiah(data.lateDeductionTotal)}
+              </td>
+            </tr>
+            <tr>
+              <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                Kesalahan
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                {formatAccountingRupiah(data.kesalahanRate)}
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                × {data.kesalahanQty} Kesalahan / Bulan
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
+                {formatAccountingRupiah(data.kesalahanTotal)}
+              </td>
+            </tr>
+
+            {/* Blok Rincian Kasbon */}
+            <tr className="bg-slate-50/80">
+              <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-700">
+                Kasbon
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono text-slate-700">
+                {formatAccountingRupiah(data.sisaKasbonBulanLalu)}
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-slate-600 italic">
+                Sisa Kasbon bulan lalu
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono text-slate-400">
+                Rp -
+              </td>
+            </tr>
+            <tr className="bg-amber-50/40">
+              <td className="py-1.5 px-3 border border-slate-300 font-semibold text-slate-800">
+                Pembayaran Kasbon
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                {formatAccountingRupiah(data.pembayaranKasbonBulanIni)}
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-slate-700 font-medium">
+                Cicilan bulan ini
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
+                {formatAccountingRupiah(data.pembayaranKasbonBulanIni)}
+              </td>
+            </tr>
+            <tr className="bg-slate-50/80">
+              <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-700">
+                Sisa Kasbon
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono text-slate-700">
+                {formatAccountingRupiah(data.sisaKasbonBulanDepan)}
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-slate-600 italic">
+                Sisa Kasbon bulan depan
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono text-slate-400">
+                Rp -
+              </td>
+            </tr>
+
+            {/* Potongan Wajib */}
+            <tr>
+              <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                **BPJS Ketenagakerjaan
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                {formatAccountingRupiah(data.bpjsTkEmployeeTotal > 0 ? data.bpjsBaseSalary : 0)}
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                × {data.bpjsTkPct}% Ditanggung karyawan
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
+                {formatAccountingRupiah(data.bpjsTkEmployeeTotal)}
+              </td>
+            </tr>
+            <tr>
+              <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                **BPJS Kesehatan
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                {formatAccountingRupiah(data.bpjsKesEmployeeTotal > 0 ? data.bpjsBaseSalary : 0)}
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                × {data.bpjsKesPct}% Ditanggung karyawan
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
+                {formatAccountingRupiah(data.bpjsKesEmployeeTotal)}
+              </td>
+            </tr>
+            <tr>
+              <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                **PPh 21
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                {formatAccountingRupiah(data.pph21Total)}
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                × 100% Ditanggung karyawan
+              </td>
+              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
+                {formatAccountingRupiah(data.pph21Total)}
+              </td>
+            </tr>
+            <tr className="bg-rose-100/80 font-extrabold text-slate-950">
+              <td colSpan={3} className="py-2 px-3 border border-slate-300 text-right uppercase">
+                Subtotal Pengurangan
+              </td>
+              <td className="py-2 px-3 border border-slate-300 text-right font-mono text-rose-800">
+                {formatAccountingRupiah(data.subtotalPengurangan)}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      {/* 4. RINGKASAN JUMLAH BERSIH & TERBILANG */}
+      <div className="mt-4 p-4 bg-emerald-50 border-2 border-slate-900 rounded-lg print:bg-white">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <span className="text-sm sm:text-base font-black tracking-wider uppercase text-slate-950">
+            JUMLAH BERSIH :
+          </span>
+          <span className="text-lg sm:text-2xl font-black font-mono text-emerald-800 print:text-black">
+            {formatRupiah(data.jumlahBersih)}
+          </span>
+        </div>
+        <div className="mt-2 pt-2 border-t border-slate-300 flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+          <span className="text-[11px] font-semibold text-slate-600 uppercase tracking-wider">
+            Terbilang :
+          </span>
+          <span className="text-xs sm:text-sm font-bold italic text-slate-900 font-serif">
+            &ldquo;{data.terbilangText}&rdquo;
+          </span>
+        </div>
+      </div>
+
+      {/* CATATAN KAKI & BLOK TANDA TANGAN */}
+      <div className="mt-6 pt-4 border-t border-slate-300 grid grid-cols-1 md:grid-cols-12 print:grid-cols-12 gap-6 items-end break-inside-avoid">
+        {/* Catatan Kaki di Kiri Bawah */}
+        <div className="md:col-span-5 print:col-span-5 space-y-1 text-[11px] text-slate-600 italic self-start">
+          <p>*Pembayaran akan dilakukan pada nomor rekening tujuan tercantum</p>
+          <p>**Akan dilakukan pemotongan sesuai dengan aturan pemerintah (akan datang)</p>
+        </div>
+
+        {/* Blok Tanda Tangan di Kanan Bawah */}
+        <div className="md:col-span-7 print:col-span-7">
+          <div className="text-right font-semibold text-slate-800 mb-3 text-xs">
+            {data.printCityAndDate}
+          </div>
+          <div className="grid grid-cols-2 gap-6 text-center text-xs">
+            {/* Kolom Kiri: Karyawan */}
+            <div className="flex flex-col justify-between min-h-[110px]">
+              <span className="font-semibold text-slate-800">Karyawan,</span>
+              <div className="h-16" />
+              <div className="border-t border-slate-800 pt-1.5 mx-auto w-44 max-w-full">
+                <p className="font-bold text-slate-950 truncate">
+                  {effectiveEmployee.fullName}
+                </p>
+              </div>
+            </div>
+
+            {/* Kolom Kanan: Prepared by Accounting */}
+            <div
+              onClick={onEditSignatories}
+              className={`flex flex-col justify-between min-h-[110px] rounded-lg p-1 ${
+                onEditSignatories ? 'hover:bg-slate-50 cursor-pointer transition-colors' : ''
+              }`}
+              title={onEditSignatories ? 'Klik untuk mengubah nama penandatangan Accounting/HR' : undefined}
+            >
+              <span className="font-semibold text-slate-800">Prepared by Accounting,</span>
+              <div className="relative h-16 flex items-end justify-center my-0.5">
+                {Boolean(signatories.preparedBy?.showStamp && preparedStamp) && (
+                  <img
+                    src={preparedStamp}
+                    alt="Stempel"
+                    className="absolute left-1/2 -translate-x-10 bottom-0 w-14 h-14 object-contain opacity-80 pointer-events-none z-10"
+                  />
+                )}
+                {Boolean(signatories.preparedBy?.signatureDataUrl) && (
+                  <img
+                    src={signatories.preparedBy.signatureDataUrl}
+                    alt={accountingSignatoryName}
+                    className="max-h-14 max-w-[130px] object-contain relative z-20"
+                  />
+                )}
+              </div>
+              <div className="border-t border-slate-800 pt-1.5 mx-auto w-48 max-w-full relative z-20">
+                <p className="font-bold text-slate-950 truncate">
+                  {accountingSignatoryName}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 interface PayslipModalProps {
   payroll: PayrollRecord | null;
   employee: Employee | null;
   companyConfig: CompanyConfig;
   employees?: Employee[];
+  cashAdvances?: CashAdvance[];
+  leaveRequests?: LeaveRequest[];
+  overtimeRequests?: OvertimeRequest[];
+  employeeBonuses?: EmployeeBonus[];
   onClose: () => void;
   onUpdateSignatories?: (config: PayrollSignatoriesConfig) => void;
 }
@@ -51,6 +1207,10 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
   employee,
   companyConfig,
   employees = [],
+  cashAdvances,
+  leaveRequests,
+  overtimeRequests,
+  employeeBonuses: propEmployeeBonuses = [],
   onClose,
   onUpdateSignatories,
 }) => {
@@ -61,6 +1221,9 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
   const [savedToast, setSavedToast] = useState<string | null>(null);
   const [cloudLiveSessions, setCloudLiveSessions] = useState<LiveStreamSalesRecord[]>([]);
   const [syncedEmployeeData, setSyncedEmployeeData] = useState<Partial<Employee> | null>(null);
+  const [employeeBonuses, setEmployeeBonuses] = useState<EmployeeBonus[]>(() =>
+    getSavedEmployeeBonuses()
+  );
 
   useEffect(() => {
     setSignatories(getPayrollSignatoriesConfig(companyConfig));
@@ -79,9 +1242,10 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
     let isMounted = true;
 
     const loadLiveCommissionData = async () => {
-      const [sessions, empFromDb] = await Promise.all([
+      const [sessions, empFromDb, bonusesFromDb] = await Promise.all([
         fetchLivestreamSessionsFromSupabase(employee.id, payroll?.period),
         fetchEmployeeByIdFromSupabase(employee.id),
+        fetchEmployeeBonuses(),
       ]);
       if (!isMounted) return;
       if (Array.isArray(sessions) && sessions.length > 0) {
@@ -89,6 +1253,9 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
       }
       if (empFromDb) {
         setSyncedEmployeeData(empFromDb);
+      }
+      if (Array.isArray(bonusesFromDb)) {
+        setEmployeeBonuses(bonusesFromDb);
       }
     };
 
@@ -102,16 +1269,97 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
       loadLiveCommissionData();
     };
 
+    const handleBonusesUpdated = () => {
+      setEmployeeBonuses(getSavedEmployeeBonuses());
+    };
+
     window.addEventListener('tgi_employee_live_updated', handleLiveUpdated);
     window.addEventListener('tgi_livestream_sessions_updated', handleLiveUpdated);
+    window.addEventListener('tgi_employee_bonuses_updated', handleBonusesUpdated);
     return () => {
       isMounted = false;
       window.removeEventListener('tgi_employee_live_updated', handleLiveUpdated);
       window.removeEventListener('tgi_livestream_sessions_updated', handleLiveUpdated);
+      window.removeEventListener('tgi_employee_bonuses_updated', handleBonusesUpdated);
     };
   }, [employee?.id, payroll?.period]);
 
-  if (!payroll || !employee) return null;
+  const effectiveEmployee = useMemo<Employee | null>(() => {
+    if (!employee) return null;
+    const map = new Map<string, LiveStreamSalesRecord>();
+    const propLogs = Array.isArray(employee.liveStreamSalesLogs)
+      ? employee.liveStreamSalesLogs
+      : [];
+    const dbEmpLogs = Array.isArray(syncedEmployeeData?.liveStreamSalesLogs)
+      ? syncedEmployeeData!.liveStreamSalesLogs!
+      : [];
+    for (const s of [...cloudLiveSessions, ...dbEmpLogs, ...propLogs]) {
+      if (s?.id) map.set(s.id, s);
+    }
+    return {
+      ...employee,
+      ...(syncedEmployeeData || {}),
+      id: employee.id,
+      isLiveStreamHost: Boolean(
+        syncedEmployeeData?.is_host ??
+          syncedEmployeeData?.isLiveStreamHost ??
+          employee.is_host ??
+          employee.isLiveStreamHost
+      ),
+      is_host: Boolean(
+        syncedEmployeeData?.is_host ??
+          syncedEmployeeData?.isLiveStreamHost ??
+          employee.is_host ??
+          employee.isLiveStreamHost
+      ),
+      isCoHostLiveStream: Boolean(
+        syncedEmployeeData?.is_co_host ??
+          syncedEmployeeData?.isCoHostLiveStream ??
+          employee.is_co_host ??
+          employee.isCoHostLiveStream
+      ),
+      is_co_host: Boolean(
+        syncedEmployeeData?.is_co_host ??
+          syncedEmployeeData?.isCoHostLiveStream ??
+          employee.is_co_host ??
+          employee.isCoHostLiveStream
+      ),
+      liveStreamSalesLogs: Array.from(map.values()),
+    };
+  }, [employee, syncedEmployeeData, cloudLiveSessions]);
+
+  const combinedBonuses = useMemo(() => {
+    const map = new Map<string, EmployeeBonus>();
+    for (const b of [...employeeBonuses, ...propEmployeeBonuses]) {
+      if (b?.id) map.set(b.id, b);
+    }
+    return Array.from(map.values());
+  }, [employeeBonuses, propEmployeeBonuses]);
+
+  const computedData = useMemo(() => {
+    if (!payroll || !effectiveEmployee) return null;
+    return computeOfficialPayslipData({
+      payroll,
+      employee: effectiveEmployee,
+      companyConfig,
+      employeeBonuses: combinedBonuses,
+      cashAdvances,
+      leaveRequests,
+      overtimeRequests,
+      signatories,
+    });
+  }, [
+    payroll,
+    effectiveEmployee,
+    companyConfig,
+    combinedBonuses,
+    cashAdvances,
+    leaveRequests,
+    overtimeRequests,
+    signatories,
+  ]);
+
+  if (!payroll || !effectiveEmployee || !computedData) return null;
 
   const handlePrint = () => {
     window.print();
@@ -125,100 +1373,6 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
     setTimeout(() => setSavedToast(null), 3500);
   };
 
-  const mergedLiveLogs = (() => {
-    const map = new Map<string, LiveStreamSalesRecord>();
-    const propLogs = Array.isArray(employee.liveStreamSalesLogs)
-      ? employee.liveStreamSalesLogs
-      : [];
-    const dbEmpLogs = Array.isArray(syncedEmployeeData?.liveStreamSalesLogs)
-      ? syncedEmployeeData!.liveStreamSalesLogs!
-      : [];
-    for (const s of [...cloudLiveSessions, ...dbEmpLogs, ...propLogs]) {
-      if (s?.id) map.set(s.id, s);
-    }
-    return Array.from(map.values());
-  })();
-
-  const effectiveEmployee: Employee = {
-    ...employee,
-    ...(syncedEmployeeData || {}),
-    id: employee.id,
-    isLiveStreamHost: Boolean(
-      syncedEmployeeData?.is_host ??
-        syncedEmployeeData?.isLiveStreamHost ??
-        employee.is_host ??
-        employee.isLiveStreamHost
-    ),
-    is_host: Boolean(
-      syncedEmployeeData?.is_host ??
-        syncedEmployeeData?.isLiveStreamHost ??
-        employee.is_host ??
-        employee.isLiveStreamHost
-    ),
-    isCoHostLiveStream: Boolean(
-      syncedEmployeeData?.is_co_host ??
-        syncedEmployeeData?.isCoHostLiveStream ??
-        employee.is_co_host ??
-        employee.isCoHostLiveStream
-    ),
-    is_co_host: Boolean(
-      syncedEmployeeData?.is_co_host ??
-        syncedEmployeeData?.isCoHostLiveStream ??
-        employee.is_co_host ??
-        employee.isCoHostLiveStream
-    ),
-    liveStreamSalesLogs: mergedLiveLogs,
-  };
-
-  const liveSalesSummary = calculateEmployeeLiveSalesCommission(
-    effectiveEmployee,
-    payroll.period
-  );
-  const salesCommissionAmount = Math.max(
-    Number(payroll.salesCommission) || 0,
-    Number(liveSalesSummary.totalCommission) || 0
-  );
-
-  const baseEarningsWithoutCommission =
-    (Number(payroll.baseSalary) || 0) +
-    (Number(payroll.allowancePosition) || 0) +
-    (Number(payroll.allowanceTransport) || 0) +
-    (Number(payroll.allowanceMeal) || 0) +
-    (Number(payroll.allowanceCommunication) || 0) +
-    (Number(payroll.overtimePay) || 0) +
-    (Number(payroll.bonus) || 0);
-
-  const totalEarnings = Math.max(
-    Number(payroll.totalGrossSalary) || 0,
-    baseEarningsWithoutCommission + salesCommissionAmount
-  );
-  const effectiveTotalDeductions = Number(payroll.totalDeductions) || 0;
-  const effectiveTakeHomePay = Math.max(0, totalEarnings - effectiveTotalDeductions);
-  const isHostActive = Boolean(
-    effectiveEmployee.is_host === true || effectiveEmployee.isLiveStreamHost === true
-  );
-  const isCoHostActive = Boolean(
-    effectiveEmployee.is_co_host === true || effectiveEmployee.isCoHostLiveStream === true
-  );
-
-  const effectiveSignDate =
-    signatories.customDateText && signatories.customDateText.trim()
-      ? signatories.customDateText.trim()
-      : payroll.paymentDate
-      ? formatIndoDate(payroll.paymentDate)
-      : new Date().toLocaleDateString('id-ID', {
-          day: 'numeric',
-          month: 'long',
-          year: 'numeric',
-        });
-
-  const preparedStamp =
-    signatories.preparedBy.stampDataUrl || signatories.companyStampDataUrl;
-  const verifiedStamp =
-    signatories.verifiedBy.stampDataUrl || signatories.companyStampDataUrl;
-  const approvedStamp =
-    signatories.approvedBy.stampDataUrl || signatories.companyStampDataUrl;
-
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 print:p-0 print:bg-white print:fixed">
       <div className="relative w-full max-w-4xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh] print:max-h-none print:shadow-none print:border-none print:rounded-none">
@@ -229,7 +1383,7 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
               TGI
             </div>
             <div>
-              <h3 className="font-semibold text-slate-800 text-sm">Slip Gaji Elektronik</h3>
+              <h3 className="font-semibold text-slate-800 text-sm">Slip Gaji Karyawan (A4)</h3>
               <p className="text-xs text-slate-500">{payroll.referenceNumber}</p>
             </div>
           </div>
@@ -238,25 +1392,25 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
               type="button"
               onClick={() => setIsSignatoryModalOpen(true)}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100 transition-colors shadow-2xs cursor-pointer"
-              title="Ubah nama penandatangan, jabatan, tanda tangan digital & stempel perusahaan"
+              title="Ubah nama penandatangan Accounting/HR, tanda tangan digital & stempel perusahaan"
             >
               <PenTool className="w-3.5 h-3.5 text-indigo-600" />
               <span>Atur Penandatangan &amp; TTD</span>
             </button>
             <a
-              href={getPayslipWhatsAppUrl(employee, payroll, companyConfig)}
+              href={getPayslipWhatsAppUrl(effectiveEmployee, payroll, companyConfig)}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors shadow-2xs"
-              title={`Kirim Notifikasi WA Slip Gaji ke ${employee.fullName} (${employee.phone || 'No HP kosong'})`}
+              title={`Kirim Notifikasi WA Slip Gaji ke ${effectiveEmployee.fullName}`}
             >
               <MessageCircle className="w-3.5 h-3.5" />
               <span>Kirim Notifikasi WA</span>
             </a>
             <a
-              href={getPayslipEmailUrl(employee, payroll, companyConfig)}
+              href={getPayslipEmailUrl(effectiveEmployee, payroll, companyConfig)}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-blue-700 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors shadow-2xs"
-              title={`Kirim Email Slip Gaji ke ${employee.fullName} (${employee.email || 'Email kosong'})`}
+              title={`Kirim Email Slip Gaji ke ${effectiveEmployee.fullName}`}
             >
               <Mail className="w-3.5 h-3.5 text-blue-600" />
               <span>Kirim Email</span>
@@ -265,10 +1419,10 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
               type="button"
               onClick={handlePrint}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg hover:bg-emerald-100 transition-colors shadow-2xs cursor-pointer"
-              title="Unduh dan simpan slip gaji format PDF"
+              title="Unduh dan simpan slip gaji format PDF ukuran A4"
             >
               <Download className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Unduh PDF</span>
+              <span>Unduh PDF (A4)</span>
             </button>
             <button
               type="button"
@@ -288,7 +1442,7 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
           </div>
         </div>
 
-        {savedToast && (
+        {Boolean(savedToast) && (
           <div className="px-6 py-2 bg-emerald-600 text-white text-xs font-bold flex items-center justify-between print:hidden">
             <div className="flex items-center gap-2">
               <Check className="w-4 h-4" />
@@ -304,657 +1458,20 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
           </div>
         )}
 
-        {/* Printable Payslip Body */}
-        <div className="p-6 sm:p-10 overflow-y-auto print:overflow-visible print:p-6 text-slate-800 bg-white print:text-black">
-          {/* Header Tas Grosir Import */}
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center pb-6 border-b-2 border-slate-800 gap-4">
-            <div className="flex items-center gap-4">
-              <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-emerald-600 to-teal-700 text-white flex items-center justify-center font-black text-2xl shadow-md print:border print:border-slate-300">
-                TGI
-              </div>
-              <div>
-                <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900">
-                  {companyConfig.companyName}
-                </h1>
-                <p className="text-xs text-slate-500 mt-0.5">{companyConfig.address}</p>
-                <p className="text-xs text-slate-500">
-                  Telp: {companyConfig.phone} | NPWP: {companyConfig.npwpCompany}
-                </p>
-              </div>
-            </div>
-            <div className="text-left sm:text-right bg-emerald-50 sm:bg-transparent p-3 sm:p-0 rounded-lg w-full sm:w-auto">
-              <span className="inline-block px-2.5 py-1 text-xs font-bold uppercase tracking-wider bg-emerald-100 text-emerald-800 rounded-md print:border print:border-emerald-300">
-                SLIP GAJI RESMI
-              </span>
-              <p className="text-sm font-semibold text-slate-800 mt-1">Periode: {payroll.period}</p>
-              <p className="text-xs text-slate-500">Ref: {payroll.referenceNumber}</p>
-            </div>
+        {/* Printable A4 Payslip Container */}
+        <div className="p-4 sm:p-8 overflow-y-auto print:overflow-visible print:p-0 bg-slate-100 print:bg-white">
+          <div className="max-w-[210mm] mx-auto">
+            <OfficialPayslipDocument
+              data={computedData}
+              companyConfig={companyConfig}
+              signatories={signatories}
+              onEditSignatories={() => setIsSignatoryModalOpen(true)}
+            />
           </div>
-
-          {/* Employee Metadata Grid */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 py-5 bg-slate-50/75 rounded-xl px-4 mt-5 border border-slate-100 text-xs">
-            <div>
-              <span className="text-slate-500 block">Nama Karyawan</span>
-              <span className="font-semibold text-slate-900 text-sm">{employee.fullName}</span>
-              <span className="text-slate-500 block mt-1">NIK: {employee.nik}</span>
-            </div>
-            <div>
-              <span className="text-slate-500 block">Jabatan &amp; Dept</span>
-              <span className="font-semibold text-slate-900">{employee.role}</span>
-              <span className="text-slate-500 block mt-1">{employee.department}</span>
-            </div>
-            <div>
-              <span className="text-slate-500 block">Status Pajak (PTKP)</span>
-              <span className="font-semibold text-slate-900">{employee.ptkpStatus}</span>
-              <span className="text-slate-500 block mt-1">NPWP: {employee.npwp}</span>
-            </div>
-            <div>
-              <span className="text-slate-500 block">Tarif Gaji &amp; Bank</span>
-              <span className="font-bold text-emerald-700 block">
-                {formatRupiah(
-                  payroll.hourlyRate ||
-                    getEmployeeHourlyRate(employee, STANDARD_WORK_HOURS_PER_DAY, 25)
-                )}{' '}
-                / jam (Std 9 Jam/Hr)
-              </span>
-              {(employee.isLiveStreamHost || salesCommissionAmount > 0) && (
-                <span className="font-bold text-pink-700 block text-[10px] mt-0.5">
-                  Host Live: {employee.salesCommissionPercentage || 0}% Omset
-                  {(employee.salesCommissionPerPcs || 0) > 0
-                    ? ` + ${formatRupiah(employee.salesCommissionPerPcs || 0)}/pcs`
-                    : ''}
-                </span>
-              )}
-              {(employee.isCoHostLiveStream ||
-                (employee.coHostCommissionPercentage || 0) > 0 ||
-                liveSalesSummary.isCoHostLiveStream) && (
-                <span className="font-bold text-violet-700 block text-[10px] mt-0.5">
-                  Co-Host Live: {employee.coHostCommissionPercentage || 0}% dari Omset Live
-                </span>
-              )}
-              <span className="font-semibold text-slate-900 block mt-0.5">
-                {employee.bankName} - {employee.bankAccountNumber}
-              </span>
-              <span className="text-slate-500 block">a/n {employee.bankAccountHolder}</span>
-            </div>
-          </div>
-
-          {/* Salary Breakdown Dual Columns */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
-            {/* PENDAPATAN (EARNINGS) */}
-            <div className="border border-slate-200 rounded-xl overflow-hidden">
-              <div className="bg-emerald-700 text-white font-semibold text-xs px-4 py-2.5 flex justify-between items-center">
-                <span>A. PENDAPATAN / PENGHASILAN</span>
-                <span className="text-[11px] opacity-90">Jumlah (IDR)</span>
-              </div>
-              <div className="divide-y divide-slate-100 text-xs">
-                <div className="flex justify-between py-2 px-4">
-                  <div>
-                    <span className="text-slate-700 font-medium block">
-                      Gaji Pokok (Real-Time Jam Kerja Aktual)
-                    </span>
-                    <span className="text-[10px] text-emerald-700 font-mono block">
-                      {payroll.totalActualWorkHours ?? 0} Jam Kerja Riil ({payroll.presentDaysCount ?? 0} Hari Masuk) ×{' '}
-                      {formatRupiah(
-                        payroll.hourlyRate ||
-                          getEmployeeHourlyRate(employee, STANDARD_WORK_HOURS_PER_DAY, 25)
-                      )}
-                      /jam
-                    </span>
-                    <span className="text-[10px] text-slate-500 block">
-                      Standar 9 Jam/Hari ={' '}
-                      {formatRupiah(
-                        payroll.dailySalary ||
-                          getEmployeeDailySalary(employee, 25, STANDARD_WORK_HOURS_PER_DAY)
-                      )}
-                      /hari
-                    </span>
-                    {(payroll.alphaDaysCount || 0) > 0 && (
-                      <span className="text-[10px] text-rose-600 font-semibold block">
-                        Alpha / Tanpa Keterangan {payroll.alphaDaysCount} hari (0 jam) otomatis dipotong (-
-                        {formatRupiah(
-                          payroll.alphaPenaltyAmount ||
-                            (payroll.alphaDaysCount || 0) *
-                              (payroll.dailySalary ||
-                                getEmployeeDailySalary(employee, 25, STANDARD_WORK_HOURS_PER_DAY))
-                        )}
-                        )
-                      </span>
-                    )}
-                  </div>
-                  <span className="font-semibold">{formatRupiah(payroll.baseSalary)}</span>
-                </div>
-                <div className="flex justify-between py-2 px-4">
-                  <span className="text-slate-700">Tunjangan Jabatan</span>
-                  <span className="font-medium">{formatRupiah(payroll.allowancePosition)}</span>
-                </div>
-                <div className="flex justify-between py-2 px-4">
-                  <span className="text-slate-700">Tunjangan Transport</span>
-                  <span className="font-medium">{formatRupiah(payroll.allowanceTransport)}</span>
-                </div>
-                <div className="flex justify-between py-2 px-4">
-                  <span className="text-slate-700">Tunjangan Uang Makan</span>
-                  <span className="font-medium">{formatRupiah(payroll.allowanceMeal)}</span>
-                </div>
-                <div className="flex justify-between py-2 px-4">
-                  <span className="text-slate-700">Tunjangan Komunikasi</span>
-                  <span className="font-medium">{formatRupiah(payroll.allowanceCommunication)}</span>
-                </div>
-                <div className="flex justify-between py-2 px-4">
-                  <div>
-                    <span className="text-slate-700 block">
-                      Upah Lembur (UU Ketenagakerjaan: Jam ke-1 1.5x, Jam ke-2+ 2x)
-                    </span>
-                    {payroll.overtimePay > 0 && (
-                      <span className="text-[10px] text-emerald-700 font-mono">
-                        {(() => {
-                          const mins = payroll.overtimeMinutes || 0;
-                          const firstMins = Math.min(60, mins);
-                          const subMins = Math.max(0, mins - 60);
-                          if (mins > 60) {
-                            return `${firstMins}m (1.5x) + ${subMins}m (2.0x) = ${mins} menit`;
-                          }
-                          const ratePerMin =
-                            payroll.overtimeRatePerMinute || getOvertimeRatePerMinute(employee, 1.5);
-                          return `${mins} menit × ${formatRupiah(ratePerMin)}/menit (1.5x)`;
-                        })()}
-                      </span>
-                    )}
-                  </div>
-                  <span className="font-medium">{formatRupiah(payroll.overtimePay)}</span>
-                </div>
-                {(salesCommissionAmount > 0 ||
-                  isHostActive ||
-                  isCoHostActive ||
-                  liveSalesSummary.isLiveStreamHost ||
-                  liveSalesSummary.isCoHostLiveStream) && (
-                  <div className="flex justify-between py-2 px-4 bg-pink-50/70 border-l-2 border-pink-500">
-                    <div>
-                      <span className="text-slate-900 font-bold block">
-                        Insentif / Komisi Penjualan (
-                        {isCoHostActive && !isHostActive
-                          ? 'Co-Host Live Streaming'
-                          : isCoHostActive && isHostActive
-                          ? 'Host & Co-Host Live Streaming'
-                          : 'Host Live Streaming'}
-                        )
-                      </span>
-                      <span className="text-[10px] text-pink-700 font-medium block">
-                        {payroll.salesCommissionNotes ||
-                          liveSalesSummary.notes ||
-                          (isCoHostActive && !isHostActive
-                            ? `Komisi Co-Host Live (${effectiveEmployee.coHostCommissionPercentage || 0}% Omset${
-                                (effectiveEmployee.coHostCommissionPerPcs || 0) > 0
-                                  ? ` + ${formatRupiah(effectiveEmployee.coHostCommissionPerPcs || 0)}/pcs`
-                                  : ''
-                              })`
-                            : `Komisi Host Live (${effectiveEmployee.salesCommissionPercentage || 0}% Omset${
-                                (effectiveEmployee.salesCommissionPerPcs || 0) > 0
-                                  ? ` + ${formatRupiah(effectiveEmployee.salesCommissionPerPcs || 0)}/pcs`
-                                  : ''
-                              }${
-                                isCoHostActive
-                                  ? ` | Co-Host: ${effectiveEmployee.coHostCommissionPercentage || 0}% Omset${
-                                      (effectiveEmployee.coHostCommissionPerPcs || 0) > 0
-                                        ? ` + ${formatRupiah(effectiveEmployee.coHostCommissionPerPcs || 0)}/pcs`
-                                        : ''
-                                    }`
-                                  : ''
-                              })`)}
-                      </span>
-                    </div>
-                    <span className="font-bold text-pink-700">
-                      {formatRupiah(salesCommissionAmount)}
-                    </span>
-                  </div>
-                )}
-                {payroll.bonus > 0 && (
-                  <div className="flex justify-between py-2 px-4 bg-emerald-50/50">
-                    <span className="text-slate-700 font-medium">Bonus &amp; Insentif Kinerja</span>
-                    <span className="font-semibold text-emerald-800">{formatRupiah(payroll.bonus)}</span>
-                  </div>
-                )}
-                <div className="flex justify-between py-2.5 px-4 bg-slate-100/80 font-semibold text-slate-900 border-t border-slate-200">
-                  <span>TOTAL PENGHASILAN BRUTO</span>
-                  <span className="text-emerald-700">{formatRupiah(totalEarnings)}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* POTONGAN (DEDUCTIONS) */}
-            <div className="border border-slate-200 rounded-xl overflow-hidden">
-              <div className="bg-rose-700 text-white font-semibold text-xs px-4 py-2.5 flex justify-between items-center">
-                <span>B. POTONGAN RESMI</span>
-                <span className="text-[11px] opacity-90">Jumlah (IDR)</span>
-              </div>
-              <div className="divide-y divide-slate-100 text-xs">
-                <div className="flex justify-between py-2 px-4">
-                  <div>
-                    <span className="text-slate-700 block">
-                      {payroll.isDecemberReconciliation
-                        ? 'PPh 21 Masa Desember (Rekonsiliasi Pasal 17 Form 1721-A1)'
-                        : 'PPh 21 (TER + Premi BPJS Pemberi Kerja)'}
-                    </span>
-                    <span className="text-[10px] text-slate-400">
-                      {payroll.taxableGrossSalary
-                        ? `DPP Pajak Bruto + BPJS Perusahaan: ${formatRupiah(payroll.taxableGrossSalary)}`
-                        : 'Pajak Penghasilan Karyawan (PP 58/2023 & PMK 168/2023)'}
-                    </span>
-                  </div>
-                  <span className="font-medium text-rose-600">{formatRupiah(payroll.pph21TER)}</span>
-                </div>
-                <div className="flex justify-between py-2 px-4">
-                  <div>
-                    <span className="text-slate-700 block">BPJS Kesehatan (1%)</span>
-                    <span className="text-[10px] text-slate-400">Iuran Peserta Karyawan</span>
-                  </div>
-                  <span className="font-medium text-rose-600">{formatRupiah(payroll.bpjsKesehatanEmployee)}</span>
-                </div>
-                <div className="flex justify-between py-2 px-4">
-                  <div>
-                    <span className="text-slate-700 block">BPJS TK - JHT (2%)</span>
-                    <span className="text-[10px] text-slate-400">Jaminan Hari Tua</span>
-                  </div>
-                  <span className="font-medium text-rose-600">{formatRupiah(payroll.bpjsJhtEmployee)}</span>
-                </div>
-                <div className="flex justify-between py-2 px-4">
-                  <div>
-                    <span className="text-slate-700 block">BPJS TK - JP (1%)</span>
-                    <span className="text-[10px] text-slate-400">Jaminan Pensiun Karyawan</span>
-                  </div>
-                  <span className="font-medium text-rose-600">{formatRupiah(payroll.bpjsJpEmployee)}</span>
-                </div>
-                {payroll.isLateFeeWaived ? (
-                  <div className="flex justify-between py-2 px-4 bg-indigo-50/70 border-l-2 border-indigo-500">
-                    <div>
-                      <span className="text-slate-900 font-semibold block">
-                        Potongan Keterlambatan &amp; Absen (Dispensasi Denda)
-                      </span>
-                      <span className="text-[10px] text-indigo-700 font-medium block">
-                        {payroll.attendanceDeductionNotes ||
-                          `Dispensasi Denda Absensi (Tugas Luar / Kebijakan HR): Bebas Potongan`}
-                      </span>
-                    </div>
-                    <span className="font-bold text-indigo-700">Rp 0</span>
-                  </div>
-                ) : (
-                  payroll.lateDeduction > 0 && (
-                    <div className="flex justify-between py-2 px-4 bg-rose-50/70 border-l-2 border-rose-500">
-                      <div>
-                        <span className="text-slate-900 font-semibold block">
-                          Potongan Keterlambatan &amp; Absen
-                        </span>
-                        <span className="text-[10px] text-rose-700 font-medium block">
-                          {payroll.attendanceDeductionNotes ||
-                            `Potongan Terlambat ${payroll.lateFrequency || 1}x / ${
-                              payroll.totalLateMinutes || 0
-                            } mnt: -${formatRupiah(payroll.lateDeduction)}`}
-                        </span>
-                      </div>
-                      <span className="font-bold text-rose-700">
-                        -{formatRupiah(payroll.lateDeduction)}
-                      </span>
-                    </div>
-                  )
-                )}
-                {payroll.otherDeductions > 0 && (
-                  <div className="flex justify-between py-2 px-4">
-                    <span className="text-slate-700">Potongan Lainnya</span>
-                    <span className="font-medium text-rose-600">{formatRupiah(payroll.otherDeductions)}</span>
-                  </div>
-                )}
-                {Boolean(payroll.cashAdvanceDeduction && payroll.cashAdvanceDeduction > 0) && (
-                  <div className="flex justify-between py-2 px-4 bg-amber-50/70 border-l-2 border-amber-500">
-                    <div>
-                      <span className="text-slate-900 font-semibold block">Potongan Cicilan Kasbon Karyawan</span>
-                      <span className="text-[10px] text-amber-800">
-                        {payroll.cashAdvanceNotes || 'Potongan cicilan cash advance pinjaman karyawan'}
-                      </span>
-                    </div>
-                    <span className="font-bold text-rose-700">{formatRupiah(payroll.cashAdvanceDeduction || 0)}</span>
-                  </div>
-                )}
-                <div className="flex justify-between py-2.5 px-4 bg-slate-100/80 font-semibold text-slate-900 border-t border-slate-200">
-                  <span>TOTAL POTONGAN</span>
-                  <span className="text-rose-700">({formatRupiah(payroll.totalDeductions)})</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* BENEFIT PERUSAHAAN */}
-          <div className="mt-4 p-3.5 bg-sky-50/60 rounded-xl border border-sky-200/70 text-xs">
-            <div className="flex items-center gap-1.5 font-semibold text-sky-900 mb-2">
-              <ShieldCheck className="w-4 h-4 text-sky-600" />
-              <span>C. Iuran Jaminan Sosial Ditanggung Perusahaan ({companyConfig.companyName})</span>
-              <span className="text-[10px] text-sky-600 font-normal ml-auto">(Tidak memotong gaji karyawan)</span>
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-[11px] text-sky-800">
-              <div className="bg-white p-2 rounded border border-sky-100">
-                <span className="block text-slate-500">BPJS Kes (4%)</span>
-                <span className="font-medium">{formatRupiah(payroll.bpjsKesehatanEmployer)}</span>
-              </div>
-              <div className="bg-white p-2 rounded border border-sky-100">
-                <span className="block text-slate-500">BPJS JHT (3.7%)</span>
-                <span className="font-medium">{formatRupiah(payroll.bpjsJhtEmployer)}</span>
-              </div>
-              <div className="bg-white p-2 rounded border border-sky-100">
-                <span className="block text-slate-500">BPJS JP (2%)</span>
-                <span className="font-medium">{formatRupiah(payroll.bpjsJpEmployer)}</span>
-              </div>
-              <div className="bg-white p-2 rounded border border-sky-100">
-                <span className="block text-slate-500">BPJS JKK (0.24%)</span>
-                <span className="font-medium">{formatRupiah(payroll.bpjsJkkEmployer)}</span>
-              </div>
-              <div className="bg-white p-2 rounded border border-sky-100">
-                <span className="block text-slate-500">BPJS JKM (0.3%)</span>
-                <span className="font-medium">{formatRupiah(payroll.bpjsJkmEmployer)}</span>
-              </div>
-            </div>
-          </div>
-
-          {/* LAMPIRAN TRANSPARANSI SESI LIVE STREAMING (BILA ADA KOMISI LIVE) */}
-          {liveSalesSummary.filteredLogs.length > 0 && (
-            <div className="mt-4 p-3.5 bg-pink-50/60 rounded-xl border border-pink-200/80 text-xs">
-              <div className="flex flex-wrap items-center justify-between gap-2 font-semibold text-pink-950 mb-2">
-                <div className="flex items-center gap-1.5">
-                  <Video className="w-4 h-4 text-pink-600" />
-                  <span>
-                    Rincian Sesi Live Streaming &amp; Komisi Penjualan ({liveSalesSummary.sessionsCount} Sesi)
-                  </span>
-                </div>
-                <span className="text-[11px] font-bold text-pink-700">
-                  Total Omset: {formatRupiah(liveSalesSummary.totalOmset)} • Tas Terjual:{' '}
-                  {(liveSalesSummary.totalPcs ?? 0).toLocaleString('id-ID')} Pcs • Total Komisi:{' '}
-                  {formatRupiah(salesCommissionAmount)}
-                </span>
-              </div>
-              <div className="overflow-x-auto bg-white rounded-lg border border-pink-100">
-                <table className="w-full text-[11px] text-left">
-                  <thead className="bg-pink-50/80 text-pink-950 font-semibold border-b border-pink-100">
-                    <tr>
-                      <th className="py-1.5 px-2.5">Tanggal</th>
-                      <th className="py-1.5 px-2.5">Peran &amp; Platform</th>
-                      <th className="py-1.5 px-2.5 text-right">Omset Live</th>
-                      <th className="py-1.5 px-2.5 text-right">Tas Terjual</th>
-                      <th className="py-1.5 px-2.5 text-right">Komisi Sesi</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-pink-50">
-                    {liveSalesSummary.filteredLogs.map((log) => (
-                      <tr key={log.id}>
-                        <td className="py-1 px-2.5 font-medium text-slate-700">
-                          {formatIndoDate(log.date || log.session_date || '')}
-                        </td>
-                        <td className="py-1 px-2.5">
-                          <span className="font-bold text-pink-800">
-                            {log.sessionRole || (log.role_type === 'co_host' ? 'Co-Host' : 'Host')}
-                          </span>{' '}
-                          • <span className="text-slate-600">{log.platform}</span>
-                        </td>
-                        <td className="py-1 px-2.5 text-right font-mono">
-                          {formatRupiah(Number(log.omsetAmount ?? log.omset) || 0)}
-                        </td>
-                        <td className="py-1 px-2.5 text-right font-mono font-semibold text-indigo-800">
-                          {(Number(log.pcsSold ?? log.pcs_sold) || 0).toLocaleString('id-ID')} Pcs
-                        </td>
-                        <td className="py-1 px-2.5 text-right font-mono font-bold text-pink-700">
-                          +{formatRupiah(Number(log.calculatedCommission ?? log.total_commission) || 0)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* TAKE HOME PAY HIGHLIGHT */}
-          <div className="mt-6 p-5 bg-gradient-to-r from-emerald-600 to-teal-700 rounded-xl text-white shadow-md flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-            <div>
-              <span className="text-xs font-medium tracking-wide uppercase text-emerald-100">
-                PENGHASILAN BERSIH DITERIMA (TAKE HOME PAY)
-              </span>
-              <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight mt-0.5">
-                {formatRupiah(effectiveTakeHomePay)}
-              </h2>
-              <p className="text-xs italic text-emerald-100 mt-1 font-serif">
-                &ldquo;{terbilangRupiah(effectiveTakeHomePay)}&rdquo;
-              </p>
-            </div>
-            <div className="sm:text-right text-xs bg-emerald-800/60 sm:bg-transparent p-2.5 sm:p-0 rounded-lg w-full sm:w-auto">
-              <span className="inline-flex items-center gap-1 text-emerald-200 font-medium">
-                <CheckCircle className="w-3.5 h-3.5 text-emerald-300" />
-                Status: {payroll.paymentStatus}
-              </span>
-              <p className="text-emerald-100 mt-0.5">Metode: Transfer Payroll {employee.bankName}</p>
-              <p className="text-emerald-200/80 text-[11px]">
-                Tanggal: {signatories.city || 'Jakarta'}, {effectiveSignDate}
-              </p>
-            </div>
-          </div>
-
-          {/* Signatures & Verification Section (Dinamis dari Konfigurasi Penandatangan) */}
-          <div className="mt-8 pt-4 border-t border-slate-200 space-y-3 break-inside-avoid">
-            <div className="flex items-center justify-between text-[11px] text-slate-500 print:hidden">
-              <span>
-                Pengesahan Slip Gaji ({signatories.city || 'Jakarta'}, {effectiveSignDate})
-              </span>
-              <button
-                type="button"
-                onClick={() => setIsSignatoryModalOpen(true)}
-                className="text-indigo-600 hover:text-indigo-800 font-bold inline-flex items-center gap-1 cursor-pointer"
-              >
-                <PenTool className="w-3 h-3" />
-                <span>Ubah Penandatangan / TTD / Stempel</span>
-              </button>
-            </div>
-
-            {signatories.showAllThreeOnPayslip ? (
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs text-center pt-1">
-                {/* 1. Disiapkan Oleh */}
-                <div
-                  onClick={() => setIsSignatoryModalOpen(true)}
-                  className="p-2 rounded-xl hover:bg-slate-50 transition-colors cursor-pointer flex flex-col justify-between"
-                  title="Klik untuk mengubah penandatangan"
-                >
-                  <div>
-                    <span className="text-slate-500 block">{signatories.preparedBy.headerLabel}</span>
-                    <span className="font-semibold text-slate-700 text-[10px] block">
-                      {signatories.preparedBy.topSubtitle}
-                    </span>
-                  </div>
-                  <div className="relative h-20 flex items-end justify-center my-1">
-                    {signatories.preparedBy.showStamp && preparedStamp && (
-                      <img
-                        src={preparedStamp}
-                        alt="Stempel"
-                        className="absolute left-1/2 -translate-x-10 bottom-0 w-16 h-16 object-contain opacity-80 pointer-events-none z-10"
-                      />
-                    )}
-                    {signatories.preparedBy.signatureDataUrl && (
-                      <img
-                        src={signatories.preparedBy.signatureDataUrl}
-                        alt={signatories.preparedBy.name}
-                        className="max-h-16 max-w-[130px] object-contain relative z-20"
-                      />
-                    )}
-                  </div>
-                  <div className="w-36 mx-auto border-t border-slate-400 pt-1.5 relative z-20">
-                    <p className="font-bold text-slate-900 text-[11px] leading-tight">
-                      {signatories.preparedBy.name || '( ........................ )'}
-                    </p>
-                    <p className="text-slate-500 text-[10px]">{signatories.preparedBy.jobTitle}</p>
-                  </div>
-                </div>
-
-                {/* 2. Diperiksa & Diverifikasi */}
-                <div
-                  onClick={() => setIsSignatoryModalOpen(true)}
-                  className="p-2 rounded-xl hover:bg-slate-50 transition-colors cursor-pointer flex flex-col justify-between"
-                  title="Klik untuk mengubah penandatangan"
-                >
-                  <div>
-                    <span className="text-slate-500 block">{signatories.verifiedBy.headerLabel}</span>
-                    <span className="font-semibold text-slate-700 text-[10px] block">
-                      {signatories.verifiedBy.topSubtitle}
-                    </span>
-                  </div>
-                  <div className="relative h-20 flex items-end justify-center my-1">
-                    {signatories.verifiedBy.showStamp && verifiedStamp && (
-                      <img
-                        src={verifiedStamp}
-                        alt="Stempel"
-                        className="absolute left-1/2 -translate-x-10 bottom-0 w-16 h-16 object-contain opacity-80 pointer-events-none z-10"
-                      />
-                    )}
-                    {signatories.verifiedBy.signatureDataUrl && (
-                      <img
-                        src={signatories.verifiedBy.signatureDataUrl}
-                        alt={signatories.verifiedBy.name}
-                        className="max-h-16 max-w-[130px] object-contain relative z-20"
-                      />
-                    )}
-                  </div>
-                  <div className="w-36 mx-auto border-t border-slate-400 pt-1.5 relative z-20">
-                    <p className="font-bold text-slate-900 text-[11px] leading-tight">
-                      {signatories.verifiedBy.name || '( ........................ )'}
-                    </p>
-                    <p className="text-slate-500 text-[10px]">{signatories.verifiedBy.jobTitle}</p>
-                  </div>
-                </div>
-
-                {/* 3. Disetujui Oleh */}
-                <div
-                  onClick={() => setIsSignatoryModalOpen(true)}
-                  className="p-2 rounded-xl hover:bg-slate-50 transition-colors cursor-pointer flex flex-col justify-between"
-                  title="Klik untuk mengubah penandatangan"
-                >
-                  <div>
-                    <span className="text-slate-500 block">{signatories.approvedBy.headerLabel}</span>
-                    <span className="font-semibold text-slate-700 text-[10px] block">
-                      {signatories.approvedBy.topSubtitle}
-                    </span>
-                  </div>
-                  <div className="relative h-20 flex items-end justify-center my-1">
-                    {signatories.approvedBy.showStamp && approvedStamp && (
-                      <img
-                        src={approvedStamp}
-                        alt="Stempel"
-                        className="absolute left-1/2 -translate-x-10 bottom-0 w-16 h-16 object-contain opacity-80 pointer-events-none z-10"
-                      />
-                    )}
-                    {signatories.approvedBy.signatureDataUrl && (
-                      <img
-                        src={signatories.approvedBy.signatureDataUrl}
-                        alt={signatories.approvedBy.name}
-                        className="max-h-16 max-w-[130px] object-contain relative z-20"
-                      />
-                    )}
-                  </div>
-                  <div className="w-36 mx-auto border-t border-slate-400 pt-1.5 relative z-20">
-                    <p className="font-bold text-slate-900 text-[11px] leading-tight">
-                      {signatories.approvedBy.name || '( ........................ )'}
-                    </p>
-                    <p className="text-slate-500 text-[10px]">{signatories.approvedBy.jobTitle}</p>
-                  </div>
-                </div>
-
-                {/* 4. Diterima Oleh Karyawan */}
-                <div className="p-2 flex flex-col justify-between">
-                  <div>
-                    <span className="text-slate-500 block">Diterima Oleh,</span>
-                    <span className="font-semibold text-slate-700 text-[10px] block">
-                      Karyawan Penerima
-                    </span>
-                  </div>
-                  <div className="h-20 flex items-center justify-center my-1">
-                    <div className="w-14 h-14 bg-slate-50 p-1 rounded-lg border border-slate-200 flex items-center justify-center">
-                      <svg viewBox="0 0 100 100" className="w-full h-full text-slate-800 fill-current">
-                        <path d="M10,10 h30 v30 h-30 z M15,15 v20 h20 v-20 z M22,22 h6 v6 h-6 z" />
-                        <path d="M60,10 h30 v30 h-30 z M65,15 v20 h20 v-20 z M72,22 h6 v6 h-6 z" />
-                        <path d="M10,60 h30 v30 h-30 z M15,65 v20 h20 v-20 z M22,72 h6 v6 h-6 z" />
-                        <rect x="50" y="20" width="5" height="15" />
-                        <rect x="50" y="45" width="20" height="6" />
-                        <rect x="75" y="55" width="15" height="6" />
-                        <rect x="60" y="70" width="10" height="20" />
-                      </svg>
-                    </div>
-                  </div>
-                  <div className="w-36 mx-auto border-t border-slate-400 pt-1.5">
-                    <p className="font-bold text-slate-900 text-[11px] leading-tight">
-                      {employee.fullName}
-                    </p>
-                    <p className="text-slate-500 text-[10px]">NIK: {employee.nik}</p>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 text-xs pt-1">
-                <div
-                  onClick={() => setIsSignatoryModalOpen(true)}
-                  className="text-center cursor-pointer hover:bg-slate-50 p-2 rounded-xl transition-colors"
-                >
-                  <span className="text-slate-500 block">{signatories.preparedBy.headerLabel}</span>
-                  <div className="relative h-20 flex items-end justify-center my-1">
-                    {signatories.preparedBy.showStamp && preparedStamp && (
-                      <img
-                        src={preparedStamp}
-                        alt="Stempel"
-                        className="absolute left-1/2 -translate-x-10 bottom-0 w-16 h-16 object-contain opacity-80 pointer-events-none z-10"
-                      />
-                    )}
-                    {signatories.preparedBy.signatureDataUrl && (
-                      <img
-                        src={signatories.preparedBy.signatureDataUrl}
-                        alt={signatories.preparedBy.name}
-                        className="max-h-16 max-w-[140px] object-contain relative z-20"
-                      />
-                    )}
-                  </div>
-                  <div className="w-36 mx-auto border-b border-slate-400"></div>
-                  <p className="font-semibold text-slate-800 mt-1.5">
-                    {signatories.preparedBy.name || '( ........................ )'}
-                  </p>
-                  <p className="text-slate-500 text-[11px]">{signatories.preparedBy.jobTitle}</p>
-                </div>
-
-                <div className="flex flex-col items-center justify-center p-2 bg-slate-50 rounded-xl border border-slate-200 text-center">
-                  <div className="w-20 h-20 bg-white p-1 rounded-lg border border-slate-300 flex items-center justify-center">
-                    <svg viewBox="0 0 100 100" className="w-full h-full text-slate-900 fill-current">
-                      <path d="M10,10 h30 v30 h-30 z M15,15 v20 h20 v-20 z M22,22 h6 v6 h-6 z" />
-                      <path d="M60,10 h30 v30 h-30 z M65,15 v20 h20 v-20 z M72,22 h6 v6 h-6 z" />
-                      <path d="M10,60 h30 v30 h-30 z M15,65 v20 h20 v-20 z M22,72 h6 v6 h-6 z" />
-                      <rect x="50" y="20" width="5" height="15" />
-                      <rect x="50" y="45" width="20" height="6" />
-                      <rect x="75" y="55" width="15" height="6" />
-                      <rect x="60" y="70" width="10" height="20" />
-                      <rect x="80" y="80" width="10" height="10" />
-                      <rect x="45" y="75" width="8" height="8" />
-                    </svg>
-                  </div>
-                  <span className="text-[10px] text-slate-500 mt-1.5">TGI E-Slip Verified Digital</span>
-                  <span className="text-[9px] text-slate-400 font-mono">{payroll.id.slice(0, 16)}</span>
-                </div>
-
-                <div className="text-center p-2">
-                  <span className="text-slate-500 block">Diterima Oleh Karyawan:</span>
-                  <div className="h-20" />
-                  <div className="w-36 mx-auto border-b border-slate-400"></div>
-                  <p className="font-semibold text-slate-800 mt-1.5">{employee.fullName}</p>
-                  <p className="text-slate-500 text-[11px]">{employee.nik}</p>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <p className="text-[10px] text-slate-400 text-center mt-6">
-            Dokumen ini dicetak secara sah dan otomatis oleh TGI Dashboard (Platform Penggajian &amp; HRIS).
-          </p>
         </div>
       </div>
 
-      {/* Modal Pengaturan Penandatangan & TTD */}
+      {/* Modal Pengaturan Penandatangan, TTD Digital & Stempel */}
       <SignatoryConfigModal
         isOpen={isSignatoryModalOpen}
         onClose={() => setIsSignatoryModalOpen(false)}

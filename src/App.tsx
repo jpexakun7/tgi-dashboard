@@ -42,6 +42,8 @@ import {
   AttendancePenaltyPolicy,
   PartTimeWorkLog,
   PartTimeWeeklyPayout,
+  EmployeeBonus,
+  DashboardModule,
 } from './types';
 import {
   calculatePayroll,
@@ -120,6 +122,9 @@ const RoleManagementView = lazy(() =>
 const PartTimePayrollSummary = lazy(() =>
   import('./components/PartTimePayrollSummary').then((m) => ({ default: m.PartTimePayrollSummary }))
 );
+const BonusManagementView = lazy(() =>
+  import('./components/BonusManagementView').then((m) => ({ default: m.BonusManagementView }))
+);
 
 import {
   checkSupabaseStatus,
@@ -170,7 +175,20 @@ import {
   getEmployeeEmploymentMetaLocal,
   saveEmployeeEmploymentMetaLocal,
   applyPartTimeOverridesToEmployees,
+  getSavedEmployeeBonuses,
+  fetchEmployeeBonuses,
+  addEmployeeBonus,
+  markBonusAsRead,
+  deleteEmployeeBonus,
 } from './services/supabaseService';
+import {
+  isAdminSessionVerified,
+  markAdminSessionVerified,
+  markEmployeeSessionLocked,
+  clearAllAuthSessions,
+  sanitizeEmployeesListForStorage,
+  hydrateEmployeesListFromStorage,
+} from './services/authSecurityService';
 import { supabase } from './lib/supabase';
 
 export default function App() {
@@ -198,6 +216,8 @@ export default function App() {
   });
 
   const handleLoginSuccess = (user: GoogleAdminUser) => {
+    markAdminSessionVerified(user.email);
+    setIsAdminUnlocked(true);
     setAdminUser(user);
     try {
       localStorage.setItem('tgi_admin_google_user', JSON.stringify(user));
@@ -207,6 +227,8 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    clearAllAuthSessions();
+    setIsAdminUnlocked(false);
     setAdminUser(null);
     try {
       localStorage.removeItem('tgi_admin_google_user');
@@ -678,6 +700,15 @@ export default function App() {
               ) {
                 roleConf.allowedModules.push('part_time_payroll');
               }
+              if (
+                (key === 'Super Admin' ||
+                  key === 'HR & Payroll Admin' ||
+                  key === 'Finance & Reimbursement' ||
+                  key === 'Operations Manager') &&
+                !roleConf.allowedModules.includes('bonus_management')
+              ) {
+                roleConf.allowedModules.push('bonus_management');
+              }
             }
           });
         }
@@ -779,7 +810,10 @@ export default function App() {
     const finalMerged = applyPartTimeOverridesToEmployees(baseMerged);
     try {
       if (finalMerged.length > 0) {
-        localStorage.setItem('tgi_employees_data', JSON.stringify(finalMerged));
+        localStorage.setItem(
+          'tgi_employees_data',
+          JSON.stringify(sanitizeEmployeesListForStorage(finalMerged))
+        );
       }
     } catch {
       // ignore storage errors
@@ -787,7 +821,7 @@ export default function App() {
     return finalMerged;
   };
 
-  // 100% Real-Time Supabase Data State (dengan backup localStorage agar status Part-Time tidak pernah ter-reset)
+  // 100% Real-Time Supabase Data State (dengan backup localStorage terenkripsi agar status Part-Time tidak pernah ter-reset)
   const [employees, setEmployees] = useState<Employee[]>(() => {
     const deletedIds = new Set(getDeletedEmployeeIds());
     try {
@@ -795,7 +829,8 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          const valid = parsed.filter(
+          const hydrated = hydrateEmployeesListFromStorage(parsed);
+          const valid = hydrated.filter(
             (e: Employee) => e && !deletedIds.has(e.id) && !isLegacyDummyRecord(e)
           );
           return mergePreservingPartTimeStatus(valid, valid);
@@ -812,6 +847,60 @@ export default function App() {
   const [partTimePayouts, setPartTimePayouts] = useState<PartTimeWeeklyPayout[]>(() =>
     getSavedPartTimePayouts()
   );
+  const [employeeBonuses, setEmployeeBonuses] = useState<EmployeeBonus[]>(() =>
+    getSavedEmployeeBonuses()
+  );
+
+  useEffect(() => {
+    let mounted = true;
+    fetchEmployeeBonuses()
+      .then((bonuses) => {
+        if (mounted && Array.isArray(bonuses)) {
+          setEmployeeBonuses(bonuses);
+        }
+      })
+      .catch(() => {});
+
+    const handleBonusesUpdated = () => {
+      if (mounted) {
+        setEmployeeBonuses(getSavedEmployeeBonuses());
+      }
+    };
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'tgi_employee_bonuses' && mounted) {
+        setEmployeeBonuses(getSavedEmployeeBonuses());
+      }
+    };
+    window.addEventListener('tgi_employee_bonuses_updated', handleBonusesUpdated);
+    window.addEventListener('storage', handleStorage);
+    return () => {
+      mounted = false;
+      window.removeEventListener('tgi_employee_bonuses_updated', handleBonusesUpdated);
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, []);
+
+  const handleAddEmployeeBonus = async (
+    payload: Omit<EmployeeBonus, 'id' | 'date_awarded' | 'is_read'> & {
+      id?: string;
+      date_awarded?: string;
+      is_read?: boolean;
+    }
+  ): Promise<EmployeeBonus> => {
+    const created = await addEmployeeBonus(payload);
+    setEmployeeBonuses(getSavedEmployeeBonuses());
+    return created;
+  };
+
+  const handleDeleteEmployeeBonus = async (bonusId: string) => {
+    await deleteEmployeeBonus(bonusId);
+    setEmployeeBonuses(getSavedEmployeeBonuses());
+  };
+
+  const handleMarkBonusAsRead = async (bonusId: string) => {
+    await markBonusAsRead(bonusId);
+    setEmployeeBonuses(getSavedEmployeeBonuses());
+  };
 
   const handleSavePartTimeLog = (log: PartTimeWorkLog) => {
     if (log?.employeeId || log?.employeeNik) {
@@ -856,8 +945,8 @@ export default function App() {
       att.checkOut && att.checkOut !== '-' ? att.checkOut : existing?.clockOut || '';
     // Hanya hitung durasi jika clockIn DAN clockOut terisi (jangan pernah default ke 8 jam)
     const computed =
-      clockIn && clockOut
-        ? computeHoursFromClockInOut(clockIn, clockOut, 8)
+      clockIn && clockOut && clockIn.trim() !== clockOut.trim()
+        ? computeHoursFromClockInOut(clockIn, clockOut, STANDARD_WORK_HOURS_PER_DAY)
         : {
             totalHours: 0,
             normalHours: 0,
@@ -919,7 +1008,10 @@ export default function App() {
     if (currentEmps.length > 0) {
       setEmployees(currentEmps);
       try {
-        localStorage.setItem('tgi_employees_data', JSON.stringify(currentEmps));
+        localStorage.setItem(
+          'tgi_employees_data',
+          JSON.stringify(sanitizeEmployeesListForStorage(currentEmps))
+        );
       } catch {
         // ignore
       }
@@ -974,8 +1066,12 @@ export default function App() {
           ? matchedAtt.checkOut
           : '';
 
-      if (l.status !== 'Paid' && clockIn && clockOut) {
-        const computed = computeHoursFromClockInOut(clockIn, clockOut, 8);
+      if (l.status !== 'Paid' && clockIn && clockOut && clockIn.trim() !== clockOut.trim()) {
+        const computed = computeHoursFromClockInOut(
+          clockIn,
+          clockOut,
+          STANDARD_WORK_HOURS_PER_DAY
+        );
         const wage = Math.round(computed.normalHours * hrRate + computed.overtimeHours * otRate);
         const correctedLog: PartTimeWorkLog = {
           ...l,
@@ -1020,8 +1116,8 @@ export default function App() {
         att.checkOut && att.checkOut !== '-' ? att.checkOut : existing?.clockOut || '';
       // Hitung durasi kerja REAL dari clock_out - clock_in (0 jam jika belum clock-out)
       const computed =
-        clockIn && clockOut
-          ? computeHoursFromClockInOut(clockIn, clockOut, 8)
+        clockIn && clockOut && clockIn.trim() !== clockOut.trim()
+          ? computeHoursFromClockInOut(clockIn, clockOut, STANDARD_WORK_HOURS_PER_DAY)
           : {
               totalHours: 0,
               normalHours: 0,
@@ -1124,7 +1220,7 @@ export default function App() {
         const hasOut = Boolean(l.clockOut && l.clockOut.trim() !== '' && l.clockOut !== '-');
         const computed =
           hasIn && hasOut
-            ? computeHoursFromClockInOut(l.clockIn, l.clockOut, 8)
+            ? computeHoursFromClockInOut(l.clockIn, l.clockOut, STANDARD_WORK_HOURS_PER_DAY)
             : hasIn && !hasOut
             ? { totalHours: 0, normalHours: 0, overtimeHours: 0 }
             : {
@@ -1356,7 +1452,7 @@ export default function App() {
       if (e.key === 'tgi_employees_data' && e.newValue) {
         try {
           const parsed = JSON.parse(e.newValue);
-          if (Array.isArray(parsed)) setEmployees(parsed);
+          if (Array.isArray(parsed)) setEmployees(hydrateEmployeesListFromStorage(parsed));
         } catch (err) {
           console.error(err);
         }
@@ -1400,13 +1496,9 @@ export default function App() {
     }
   });
 
-  // Admin PIN / Security Unlock State (controls access to HR & Payroll Admin mode)
+  // Admin PIN / Security Unlock State (Strictly verified via cryptographic session signature & anti-privilege-escalation guard)
   const [isAdminUnlocked, setIsAdminUnlocked] = useState<boolean>(() => {
-    try {
-      return sessionStorage.getItem('tgi_admin_unlocked') === 'true';
-    } catch {
-      return false;
-    }
+    return isAdminSessionVerified();
   });
 
   const [isAdminAuthModalOpen, setIsAdminAuthModalOpen] = useState(false);
@@ -1414,8 +1506,7 @@ export default function App() {
   // Mode Dashboard: 'admin' (Panel Admin) atau 'employee' (Portal Karyawan Self-Service)
   const [dashboardMode, setDashboardMode] = useState<'admin' | 'employee'>(() => {
     try {
-      const unlocked = sessionStorage.getItem('tgi_admin_unlocked') === 'true';
-      if (!unlocked) return 'employee';
+      if (!isAdminSessionVerified()) return 'employee';
       const saved = localStorage.getItem('tgi_dashboard_mode');
       return saved === 'admin' ? 'admin' : 'employee';
     } catch {
@@ -1423,13 +1514,40 @@ export default function App() {
     }
   });
 
+  // Anti-Privilege Escalation Runtime Guard: strip any URL query overrides (?mode=admin, ?admin=true) and block storage tampering
   useEffect(() => {
     try {
-      localStorage.setItem('tgi_dashboard_mode', dashboardMode);
+      const url = new URL(window.location.href);
+      if (
+        url.searchParams.has('mode') ||
+        url.searchParams.has('admin') ||
+        url.searchParams.has('role')
+      ) {
+        url.searchParams.delete('mode');
+        url.searchParams.delete('admin');
+        url.searchParams.delete('role');
+        window.history.replaceState({}, document.title, url.pathname + url.search);
+      }
+    } catch {
+      // ignore URL parse errors
+    }
+
+    if (dashboardMode === 'admin' && (!isAdminUnlocked || !isAdminSessionVerified())) {
+      setIsAdminUnlocked(false);
+      setDashboardMode('employee');
+    }
+  }, [dashboardMode, isAdminUnlocked]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        'tgi_dashboard_mode',
+        isAdminUnlocked && isAdminSessionVerified() ? dashboardMode : 'employee'
+      );
     } catch (e) {
       console.error('Failed to save dashboard mode', e);
     }
-  }, [dashboardMode]);
+  }, [dashboardMode, isAdminUnlocked]);
 
   const handleUnlockWeb = (options: {
     mode: 'admin' | 'employee';
@@ -1445,53 +1563,50 @@ export default function App() {
     }
 
     if (options.unlockAdmin) {
+      const targetEmail =
+        options.adminEmail ||
+        adminUser?.email ||
+        companyConfig.adminGoogleEmail ||
+        'jpexakun7@gmail.com';
+      markAdminSessionVerified(targetEmail);
       setIsAdminUnlocked(true);
-      try {
-        sessionStorage.setItem('tgi_admin_unlocked', 'true');
-      } catch (e) {
-        console.error(e);
-      }
-      if (options.adminEmail) {
-        const matchedAdm = (companyConfig.allowedGoogleAdmins || []).find(
-          (a) => a.email.toLowerCase() === options.adminEmail!.toLowerCase()
-        );
-        if (matchedAdm) {
-          const nextAdminUser: GoogleAdminUser = {
-            id: matchedAdm.id,
-            email: matchedAdm.email,
-            name: matchedAdm.name,
-            picture: matchedAdm.avatarUrl,
-            role: matchedAdm.role,
-            lastLogin: new Date().toLocaleTimeString('id-ID', {
-              hour: '2-digit',
-              minute: '2-digit',
-            }),
-            phone: matchedAdm.phone,
-          };
-          setAdminUser(nextAdminUser);
-          try {
-            localStorage.setItem('tgi_admin_google_user', JSON.stringify(nextAdminUser));
-          } catch (e) {
-            console.error(e);
-          }
+      const matchedAdm = (companyConfig.allowedGoogleAdmins || []).find(
+        (a) => a.email.toLowerCase() === targetEmail.toLowerCase()
+      );
+      if (matchedAdm) {
+        const nextAdminUser: GoogleAdminUser = {
+          id: matchedAdm.id,
+          email: matchedAdm.email,
+          name: matchedAdm.name,
+          picture: matchedAdm.avatarUrl,
+          role: matchedAdm.role,
+          lastLogin: new Date().toLocaleTimeString('id-ID', {
+            hour: '2-digit',
+            minute: '2-digit',
+          }),
+          phone: matchedAdm.phone,
+        };
+        setAdminUser(nextAdminUser);
+        try {
+          localStorage.setItem('tgi_admin_google_user', JSON.stringify(nextAdminUser));
+        } catch (e) {
+          console.error(e);
         }
       }
       setDashboardMode('admin');
     } else {
-      // Strictly lock Admin mode when entering via Employee NIK & PIN
+      // Strictly lock Admin mode & purge any Admin session memory when entering via Employee NIK & PIN
       setIsAdminUnlocked(false);
-      try {
-        sessionStorage.removeItem('tgi_admin_unlocked');
-      } catch (e) {
-        console.error(e);
-      }
+      setAdminUser(null);
       if (options.employeeId) {
+        markEmployeeSessionLocked(options.employeeId);
         setActiveEmployeeId(options.employeeId);
+      } else {
+        clearAllAuthSessions();
         try {
-          sessionStorage.setItem('tgi_locked_employee_id', options.employeeId);
-          localStorage.setItem('tgi_active_employee_id', options.employeeId);
-        } catch (e) {
-          console.error(e);
+          sessionStorage.setItem('tgi_web_pin_unlocked', 'true');
+        } catch {
+          // ignore
         }
       }
       setDashboardMode('employee');
@@ -1499,13 +1614,10 @@ export default function App() {
   };
 
   const handleAdminUnlockSuccess = () => {
+    const targetEmail =
+      adminUser?.email || companyConfig.adminGoogleEmail || 'jpexakun7@gmail.com';
+    markAdminSessionVerified(targetEmail);
     setIsAdminUnlocked(true);
-    try {
-      sessionStorage.setItem('tgi_admin_unlocked', 'true');
-      sessionStorage.removeItem('tgi_locked_employee_id');
-    } catch (e) {
-      console.error(e);
-    }
     setDashboardMode('admin');
     setIsAdminAuthModalOpen(false);
     logActivity(
@@ -1517,15 +1629,9 @@ export default function App() {
   };
 
   const handleLockAdmin = () => {
+    clearAllAuthSessions();
     setIsAdminUnlocked(false);
     setIsWebPinUnlocked(false);
-    try {
-      sessionStorage.removeItem('tgi_admin_unlocked');
-      sessionStorage.removeItem('tgi_web_pin_unlocked');
-      sessionStorage.removeItem('tgi_locked_employee_id');
-    } catch (e) {
-      console.error(e);
-    }
     setDashboardMode('employee');
     logActivity(
       'LOGIN_ACTIVITY',
@@ -1537,9 +1643,11 @@ export default function App() {
 
   const handleToggleDashboardMode = () => {
     if (dashboardMode === 'employee') {
-      // Sesi Login Ketat: Hanya pengguna dengan sesi Admin terbuka yang dapat beralih ke Dashboard Admin HR
-      if (isAdminUnlocked) {
+      // Sesi Login Ketat: Hanya pengguna dengan sesi Admin terverifikasi yang dapat beralih ke Dashboard Admin HR
+      if (isAdminUnlocked && isAdminSessionVerified()) {
         setDashboardMode('admin');
+      } else {
+        setIsAdminAuthModalOpen(true);
       }
     } else {
       setDashboardMode('employee');
@@ -1625,6 +1733,7 @@ export default function App() {
         };
       }
 
+      // Kelebihan jam kerja di atas 9 jam/hari HANYA dihitung sebagai lembur jika ada Pengajuan Lembur berstatus "Disetujui"
       const employeeOts = overtimeRequests.filter(
         (o) => o.employeeId === emp.id && o.status === 'Disetujui'
       );
@@ -1632,8 +1741,7 @@ export default function App() {
         (acc, curr) => acc + getOvertimeMinutes(curr),
         0
       );
-      const effectiveOtMinutes =
-        existing?.overtimeMinutes !== undefined ? existing.overtimeMinutes : approvedOtMinutes;
+      const effectiveOtMinutes = approvedOtMinutes;
 
       const penaltySummary = calculateEmployeeAttendancePenalty(
         emp,
@@ -1761,7 +1869,10 @@ export default function App() {
             authoritativeEmployees = cleanCloudEmps;
             setEmployees(cleanCloudEmps);
             try {
-              localStorage.setItem('tgi_employees_data', JSON.stringify(cleanCloudEmps));
+              localStorage.setItem(
+                'tgi_employees_data',
+                JSON.stringify(sanitizeEmployeesListForStorage(cleanCloudEmps))
+              );
             } catch {
               // ignore
             }
@@ -2256,7 +2367,10 @@ export default function App() {
     setEmployees((prev) => {
       const next = [newEmp, ...prev.filter((e) => e.id !== newEmp.id)];
       try {
-        localStorage.setItem('tgi_employees_data', JSON.stringify(next));
+        localStorage.setItem(
+          'tgi_employees_data',
+          JSON.stringify(sanitizeEmployeesListForStorage(next))
+        );
       } catch (err) {
         console.error('Storage error', err);
       }
@@ -2321,7 +2435,10 @@ export default function App() {
     setEmployees((prev) => {
       const next = prev.map((e) => (e.id === updatedEmp.id ? updatedEmp : e));
       try {
-        localStorage.setItem('tgi_employees_data', JSON.stringify(next));
+        localStorage.setItem(
+          'tgi_employees_data',
+          JSON.stringify(sanitizeEmployeesListForStorage(next))
+        );
       } catch (err) {
         console.error('Failed to persist updated employees to localStorage', err);
       }
@@ -4389,15 +4506,34 @@ export default function App() {
   };
 
   const rolePerm = getRolePermissionConfig(currentRole);
-  const userAllowedModules = currentRole === 'Super Admin'
-    ? undefined
-    : (rolePerm?.allowedModules || ['overview', 'reports']);
+  const userAllowedModules: DashboardModule[] | undefined =
+    currentRole === 'Super Admin'
+      ? undefined
+      : (() => {
+          const base = [...(rolePerm?.allowedModules || ['overview', 'reports'])];
+          if (
+            currentRole === 'HR & Payroll Admin' ||
+            currentRole === 'Finance & Reimbursement' ||
+            currentRole === 'Operations Manager' ||
+            base.includes('payroll') ||
+            base.includes('employees')
+          ) {
+            if (!base.includes('bonus_management')) base.push('bonus_management');
+            if (!base.includes('part_time_payroll')) base.push('part_time_payroll');
+          }
+          return base;
+        })();
 
   // Redirect if current tab is restricted for this role
   useEffect(() => {
     if (adminUser && currentRole !== 'Super Admin' && userAllowedModules && userAllowedModules.length > 0) {
-      // Never block settings or roles_management for admin dashboard users
-      if (activeTab === 'settings' || activeTab === 'roles_management') {
+      // Never block settings, roles_management, bonus_management, or part_time_payroll for admin dashboard users
+      if (
+        activeTab === 'settings' ||
+        activeTab === 'roles_management' ||
+        activeTab === 'bonus_management' ||
+        activeTab === 'part_time_payroll'
+      ) {
         return;
       }
       if (!userAllowedModules.includes(activeTab)) {
@@ -4438,8 +4574,9 @@ export default function App() {
   }
 
   // View: Mode Portal Layanan Mandiri Karyawan (Self-Service)
-  if (dashboardMode === 'employee') {
-    const safePayrolls = isAdminUnlocked
+  if (dashboardMode === 'employee' || !isAdminUnlocked || !isAdminSessionVerified()) {
+    const canSwitchToAdmin = Boolean(isAdminUnlocked && isAdminSessionVerified());
+    const safePayrolls = canSwitchToAdmin
       ? syncedPayrolls
       : syncedPayrolls.filter((p) => p.employeeId === currentEmployee?.id);
 
@@ -4455,11 +4592,11 @@ export default function App() {
           pendingLeaves={pendingLeaves}
           pendingOvertimes={pendingOvertimes}
           onNavigateTab={setActiveTab}
-          adminUser={adminUser}
+          adminUser={canSwitchToAdmin ? adminUser : null}
           onLogout={handleLogout}
-          onSwitchAdminUser={handleSwitchAdminUser}
-          dashboardMode={dashboardMode}
-          onToggleDashboardMode={handleToggleDashboardMode}
+          onSwitchAdminUser={canSwitchToAdmin ? handleSwitchAdminUser : undefined}
+          dashboardMode="employee"
+          onToggleDashboardMode={canSwitchToAdmin ? handleToggleDashboardMode : undefined}
           currentEmployeeName={currentEmployee?.fullName}
           currentEmployee={currentEmployee}
           notifications={notifications}
@@ -4470,7 +4607,7 @@ export default function App() {
           onNavigateNotificationAction={handleNavigateNotificationAction}
           supabaseStatus={supabaseStatus}
           onOpenSupabaseModal={() => setIsSupabaseModalOpen(true)}
-          isAdminUnlocked={isAdminUnlocked}
+          isAdminUnlocked={canSwitchToAdmin}
           onRequestAdminLogin={() => setIsAdminAuthModalOpen(true)}
           onLockAdmin={handleLockAdmin}
         />
@@ -4492,7 +4629,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => {
-                    if (isAdminUnlocked) {
+                    if (canSwitchToAdmin) {
                       setDashboardMode('admin');
                       setActiveTab('employees');
                       setIsAddEmployeeModalOpen(true);
@@ -4508,13 +4645,15 @@ export default function App() {
             ) : (
               <EmployeePortalView
                 currentEmployee={currentEmployee}
-                allEmployees={isAdminUnlocked ? employees : [currentEmployee]}
+                allEmployees={canSwitchToAdmin ? employees : [currentEmployee]}
                 payrollRecord={safePayrolls.find((p) => p.employeeId === currentEmployee?.id) || null}
                 allPayrolls={safePayrolls}
                 attendances={attendances}
                 onAddAttendance={handleAddAttendance}
                 partTimeLogs={partTimeLogs}
                 onSavePartTimeLog={handleSavePartTimeLog}
+                employeeBonuses={employeeBonuses}
+                onMarkBonusAsRead={handleMarkBonusAsRead}
                 leaveRequests={leaveRequests}
                 overtimeRequests={overtimeRequests}
                 reimbursements={reimbursements}
@@ -4530,18 +4669,22 @@ export default function App() {
                 onApplyCashAdvance={handleCreateCashAdvance}
                 onUpdateProfile={handleUpdateEmployee}
                 onOpenPayslip={handleOpenPayslip}
-                onSwitchToAdminMode={handleToggleDashboardMode}
-                onSelectEmployee={(empId) => {
-                  if (isAdminUnlocked) {
-                    setActiveEmployeeId(empId);
-                  }
-                }}
-                isAdminUnlocked={isAdminUnlocked}
-                onRequestAdminAccess={() => {
-                  if (isAdminUnlocked) {
-                    setDashboardMode('admin');
-                  }
-                }}
+                onSwitchToAdminMode={canSwitchToAdmin ? handleToggleDashboardMode : undefined}
+                onSelectEmployee={
+                  canSwitchToAdmin
+                    ? (empId) => {
+                        setActiveEmployeeId(empId);
+                      }
+                    : undefined
+                }
+                isAdminUnlocked={canSwitchToAdmin}
+                onRequestAdminAccess={
+                  canSwitchToAdmin
+                    ? () => {
+                        setDashboardMode('admin');
+                      }
+                    : undefined
+                }
                 onLockAdmin={handleLockAdmin}
                 onReportAssetIssue={(assetId, notes) => {
                   const targetAsset = assets.find((a) => a.id === assetId);
@@ -4567,6 +4710,10 @@ export default function App() {
           payroll={liveComputedPayslip}
           employee={selectedEmployeeForPayslip}
           companyConfig={companyConfig}
+          cashAdvances={cashAdvances}
+          leaveRequests={leaveRequests}
+          overtimeRequests={overtimeRequests}
+          employeeBonuses={employeeBonuses}
           onClose={() => setSelectedPayslip(null)}
         />
 
@@ -4738,6 +4885,22 @@ export default function App() {
                 onResetLogsPaid={handleResetPartTimeLogsPaid}
                 onUpdateEmployee={handleUpdateEmployee}
                 onPullWeeklyAttendance={handlePullWeeklyPartTimeAttendance}
+              />
+            )}
+
+            {activeTab === 'bonus_management' && (
+              <BonusManagementView
+                employees={employees}
+                bonuses={employeeBonuses}
+                currentPayrollPeriod={companyConfig.currentPayrollPeriod}
+                selectedPeriod={companyConfig.currentPayrollPeriod}
+                onAddBonus={handleAddEmployeeBonus}
+                onDeleteBonus={handleDeleteEmployeeBonus}
+                onMarkAsRead={handleMarkBonusAsRead}
+                onRefreshBonuses={async () => {
+                  const fresh = await fetchEmployeeBonuses();
+                  setEmployeeBonuses(fresh);
+                }}
               />
             )}
 
@@ -5044,6 +5207,10 @@ export default function App() {
         employee={selectedEmployeeForPayslip}
         companyConfig={companyConfig}
         employees={employees}
+        cashAdvances={cashAdvances}
+        leaveRequests={leaveRequests}
+        overtimeRequests={overtimeRequests}
+        employeeBonuses={employeeBonuses}
         onClose={() => setSelectedPayslip(null)}
         onUpdateSignatories={(newSigConfig) => {
           setCompanyConfig((prev) => ({

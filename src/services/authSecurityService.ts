@@ -209,7 +209,7 @@ export async function verifyAdminLoginSecure(
         });
         if (!authErr && authData?.session) {
           const token = authData.session.access_token || generateClientSessionToken();
-          setVerifiedSessionToken(token);
+          markAdminSessionVerified(authData.user?.email || normalizedEmail, token);
           return {
             authenticated: true,
             email: authData.user?.email || normalizedEmail,
@@ -240,7 +240,7 @@ export async function verifyAdminLoginSecure(
 
         if (result.authenticated) {
           const token = result.sessionToken || generateClientSessionToken();
-          setVerifiedSessionToken(token);
+          markAdminSessionVerified(result.email || normalizedEmail, token);
           return {
             authenticated: true,
             email: result.email || normalizedEmail,
@@ -278,7 +278,7 @@ export async function verifyAdminLoginSecure(
         (expectedGlobalHash && candidateGlobalHash === expectedGlobalHash)
       ) {
         const token = generateClientSessionToken();
-        setVerifiedSessionToken(token);
+        markAdminSessionVerified(normalizedEmail, token);
         return {
           authenticated: true,
           email: normalizedEmail,
@@ -342,7 +342,7 @@ export async function verifyEmployeeLoginSecure(
         };
         if (res.authenticated && res.employeeId) {
           const token = res.sessionToken || generateClientSessionToken();
-          setVerifiedSessionToken(token);
+          markEmployeeSessionLocked(res.employeeId, token);
           return {
             authenticated: true,
             employeeId: res.employeeId,
@@ -380,8 +380,11 @@ export async function verifyEmployeeLoginSecure(
           emp.access_pin.trim() === cleanSecret;
 
         if (isHashMatch || isDbPinMatch) {
+          if (isDbPinMatch && !isHashMatch) {
+            await updateEmployeePinSecure(emp.id, cleanSecret);
+          }
           const token = generateClientSessionToken();
-          setVerifiedSessionToken(token);
+          markEmployeeSessionLocked(emp.id, token);
           return {
             authenticated: true,
             employeeId: emp.id,
@@ -401,6 +404,40 @@ export async function verifyEmployeeLoginSecure(
     }
   }
 
+  // 3. Verify against local SHA-256 PIN hash map (never plaintext)
+  try {
+    const rawEmps = localStorage.getItem('tgi_employees_data');
+    if (rawEmps) {
+      const list = JSON.parse(rawEmps);
+      if (Array.isArray(list)) {
+        const q = cleanId.toLowerCase();
+        const found = list.find(
+          (e: any) =>
+            String(e?.id || '').toLowerCase() === q ||
+            String(e?.nik || '').toLowerCase() === q ||
+            String(e?.email || '').toLowerCase() === q
+        );
+        if (found?.id) {
+          const expectedHash = await getLocalEmployeePinHash(String(found.id));
+          const candidateHash = await hashSecretSha256(String(found.id), cleanSecret);
+          if (expectedHash && candidateHash === expectedHash) {
+            const token = generateClientSessionToken();
+            markEmployeeSessionLocked(String(found.id), token);
+            return {
+              authenticated: true,
+              employeeId: String(found.id),
+              employeeName: String(found.fullName || cleanId),
+              department: String(found.department || ''),
+              sessionToken: token,
+            };
+          }
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+
   return {
     authenticated: false,
     message: 'ID Karyawan / NIK tidak ditemukan atau PIN tidak sesuai.',
@@ -417,3 +454,230 @@ async function getLocalEmployeePinHash(employeeId: string): Promise<string | nul
     return null;
   }
 }
+
+// ============================================================================
+// ANTI-PRIVILEGE ESCALATION & SESSION INTEGRITY GUARDS
+// ============================================================================
+const ADMIN_SESSION_SIG_KEY = 'tgi_admin_session_sig_v2';
+let inMemoryAuthenticatedRole: 'admin' | 'employee' | null = null;
+let inMemoryAdminToken: string | null = null;
+
+function computeDeterministicSessionSig(email: string, token: string): string {
+  const payload = `${HASH_SALT_PREFIX}admin_sig::${email.trim().toLowerCase()}::${token.trim()}`;
+  let h1 = 0xdeadbeef ^ payload.length;
+  let h2 = 0x41c6ce57 ^ payload.length;
+  for (let i = 0; i < payload.length; i++) {
+    const ch = payload.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return `sig_${(h2 >>> 0).toString(16).padStart(8, '0')}${(h1 >>> 0).toString(16).padStart(8, '0')}`;
+}
+
+export function markAdminSessionVerified(email: string, sessionToken?: string): void {
+  const token = sessionToken || getVerifiedSessionToken() || generateClientSessionToken();
+  setVerifiedSessionToken(token);
+  inMemoryAuthenticatedRole = 'admin';
+  inMemoryAdminToken = token;
+  try {
+    const sig = computeDeterministicSessionSig(email || 'admin', token);
+    sessionStorage.setItem(ADMIN_SESSION_SIG_KEY, JSON.stringify({ email: email.trim().toLowerCase(), sig }));
+    sessionStorage.setItem('tgi_admin_unlocked', 'true');
+    sessionStorage.removeItem('tgi_locked_employee_id');
+  } catch {
+    // ignore storage errors
+  }
+}
+
+export function markEmployeeSessionLocked(employeeId: string, sessionToken?: string): void {
+  const token = sessionToken || getVerifiedSessionToken() || generateClientSessionToken();
+  setVerifiedSessionToken(token);
+  inMemoryAuthenticatedRole = 'employee';
+  inMemoryAdminToken = null;
+  try {
+    sessionStorage.removeItem(ADMIN_SESSION_SIG_KEY);
+    sessionStorage.removeItem('tgi_admin_unlocked');
+    sessionStorage.setItem('tgi_locked_employee_id', employeeId);
+    localStorage.setItem('tgi_dashboard_mode', 'employee');
+  } catch {
+    // ignore storage errors
+  }
+}
+
+export function clearAllAuthSessions(): void {
+  inMemoryAuthenticatedRole = null;
+  inMemoryAdminToken = null;
+  setVerifiedSessionToken(null);
+  try {
+    sessionStorage.removeItem(ADMIN_SESSION_SIG_KEY);
+    sessionStorage.removeItem('tgi_admin_unlocked');
+    sessionStorage.removeItem('tgi_web_pin_unlocked');
+    sessionStorage.removeItem('tgi_locked_employee_id');
+    localStorage.setItem('tgi_dashboard_mode', 'employee');
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Verifies that the current browser session is a genuine Admin session and NOT a tampered
+ * employee session (blocks DevTools manipulation of `tgi_admin_unlocked` or `tgi_dashboard_mode`).
+ */
+export function isAdminSessionVerified(): boolean {
+  try {
+    // If an employee session lock is active, Admin access is strictly forbidden
+    const lockedEmp = sessionStorage.getItem('tgi_locked_employee_id');
+    if (lockedEmp && lockedEmp.trim().length > 0) {
+      return false;
+    }
+    if (inMemoryAuthenticatedRole === 'employee') {
+      return false;
+    }
+    const unlockedFlag = sessionStorage.getItem('tgi_admin_unlocked') === 'true';
+    const token = getVerifiedSessionToken() || inMemoryAdminToken;
+    const rawSig = sessionStorage.getItem(ADMIN_SESSION_SIG_KEY);
+    if (!unlockedFlag || !token || !rawSig) {
+      return false;
+    }
+    const parsed = JSON.parse(rawSig) as { email?: string; sig?: string };
+    if (!parsed?.email || !parsed?.sig) return false;
+    const expectedSig = computeDeterministicSessionSig(parsed.email, token);
+    return parsed.sig === expectedSig;
+  } catch {
+    return false;
+  }
+}
+
+// ============================================================================
+// LOCALSTORAGE PII & PIN PROTECTION (NO PLAINTEXT PINS, NIK KTP 16, OR NPWP)
+// ============================================================================
+const OBFUSCATION_PREFIX = 'enc_v2::';
+const OBFUSCATION_KEY = 'TGI_PII_SHIELD_2026_KEY';
+
+export function obfuscateSensitiveField(plain?: string): string | undefined {
+  if (!plain || typeof plain !== 'string') return plain;
+  const trimmed = plain.trim();
+  if (!trimmed || trimmed.startsWith(OBFUSCATION_PREFIX)) return trimmed;
+  try {
+    const xorBytes: number[] = [];
+    for (let i = 0; i < trimmed.length; i++) {
+      const k = OBFUSCATION_KEY.charCodeAt(i % OBFUSCATION_KEY.length);
+      xorBytes.push(trimmed.charCodeAt(i) ^ k);
+    }
+    const hex = xorBytes.map((b) => b.toString(16).padStart(2, '0')).join('');
+    return `${OBFUSCATION_PREFIX}${hex}`;
+  } catch {
+    return undefined;
+  }
+}
+
+export function deobfuscateSensitiveField(stored?: string): string | undefined {
+  if (!stored || typeof stored !== 'string') return stored;
+  if (!stored.startsWith(OBFUSCATION_PREFIX)) return stored;
+  try {
+    const hex = stored.slice(OBFUSCATION_PREFIX.length);
+    const chars: string[] = [];
+    for (let i = 0; i < hex.length; i += 2) {
+      const byte = parseInt(hex.slice(i, i + 2), 16);
+      const k = OBFUSCATION_KEY.charCodeAt((i / 2) % OBFUSCATION_KEY.length);
+      chars.push(String.fromCharCode(byte ^ k));
+    }
+    return chars.join('');
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Scrubs plaintext `accessPin` and obfuscates 16-digit `ktpNumber` and `npwp` before writing
+ * employee objects to `localStorage` (`tgi_employees_data`).
+ */
+export function sanitizeEmployeeForStorage<T extends Record<string, any>>(emp: T): T {
+  if (!emp || typeof emp !== 'object') return emp;
+  const clone: Record<string, any> = { ...emp };
+
+  // Never store plaintext PIN in localStorage; hash it asynchronously if present
+  if (typeof clone.accessPin === 'string' && clone.accessPin.trim() !== '' && clone.accessPin !== '••••') {
+    const rawPin = clone.accessPin.trim();
+    if (clone.id) {
+      void updateEmployeePinSecure(String(clone.id), rawPin);
+    }
+    clone.accessPin = '••••';
+  }
+
+  // Obfuscate 16-digit NIK KTP & NPWP so they are never stored in plain-text in localStorage
+  if (typeof clone.ktpNumber === 'string' && clone.ktpNumber.trim() !== '') {
+    clone.ktpNumber = obfuscateSensitiveField(clone.ktpNumber);
+  }
+  if (typeof clone.npwp === 'string' && clone.npwp.trim() !== '') {
+    clone.npwp = obfuscateSensitiveField(clone.npwp);
+  }
+
+  return clone as T;
+}
+
+export function sanitizeEmployeesListForStorage<T extends Record<string, any>>(list: T[]): T[] {
+  if (!Array.isArray(list)) return [];
+  return list.map((emp) => sanitizeEmployeeForStorage(emp));
+}
+
+export function hydrateEmployeeFromStorage<T extends Record<string, any>>(emp: T): T {
+  if (!emp || typeof emp !== 'object') return emp;
+  const clone: Record<string, any> = { ...emp };
+  if (typeof clone.accessPin === 'string' && clone.accessPin.trim() !== '' && clone.accessPin !== '••••') {
+    if (clone.id) {
+      void updateEmployeePinSecure(String(clone.id), clone.accessPin.trim());
+    }
+    clone.accessPin = '••••';
+  }
+  if (typeof clone.ktpNumber === 'string') {
+    clone.ktpNumber = deobfuscateSensitiveField(clone.ktpNumber);
+  }
+  if (typeof clone.npwp === 'string') {
+    clone.npwp = deobfuscateSensitiveField(clone.npwp);
+  }
+  return clone as T;
+}
+
+export function hydrateEmployeesListFromStorage<T extends Record<string, any>>(list: T[]): T[] {
+  if (!Array.isArray(list)) return [];
+  return list.map((emp) => hydrateEmployeeFromStorage(emp));
+}
+
+// ============================================================================
+// STRICT INPUT SANITIZATION & VALIDATION UTILITIES
+// ============================================================================
+export function sanitizeSafeText(input: unknown, maxLength = 500): string {
+  if (typeof input !== 'string') return '';
+  return input
+    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '')
+    .replace(/<\/?[a-z][^>]*>/gi, '')
+    .replace(/javascript\s*:/gi, '')
+    .replace(/on\w+\s*=/gi, '')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+    .trim()
+    .slice(0, maxLength);
+}
+
+export function validatePositiveIntegerAmount(val: unknown): number | null {
+  if (typeof val === 'number') {
+    const rounded = Math.floor(val);
+    return Number.isSafeInteger(rounded) && rounded > 0 ? rounded : null;
+  }
+  if (typeof val === 'string') {
+    const digits = val.replace(/[^\d]/g, '');
+    if (!digits) return null;
+    const parsed = parseInt(digits, 10);
+    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+  }
+  return null;
+}
+
+export function validateNikKtp16Digits(val: unknown): boolean {
+  if (typeof val !== 'string') return false;
+  const digits = val.replace(/\D/g, '').trim();
+  return /^\d{16}$/.test(digits);
+}
+

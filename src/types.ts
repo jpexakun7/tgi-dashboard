@@ -156,7 +156,10 @@ export interface DailyWorkWageItem {
   date: string;
   checkIn: string;
   checkOut: string;
-  workHours: number;
+  workHours: number; // Jam kerja normal aktual setelah dibatasi maksimal 9 jam/hari (0 jika belum Clock-Out)
+  rawDurationHours?: number; // Durasi mentah (clockOut - clockIn) sebelum dibatasi maksimal 9 jam
+  isCappedToMax?: boolean; // true apabila durasi aktual > batas maksimal jam kerja harian (9 jam)
+  isMissingClockOut?: boolean; // true apabila belum Clock-Out atau Jam Masuk === Jam Pulang
   dailyWage: number;
   status: string;
 }
@@ -347,6 +350,7 @@ export type DashboardModule =
   | 'employees'
   | 'payroll'
   | 'part_time_payroll'
+  | 'bonus_management'
   | 'attendance'
   | 'work_shifts'
   | 'leave'
@@ -924,6 +928,16 @@ export interface PartTimeWeeklyPayout {
   createdAt?: string;
 }
 
-
-
-
+export interface EmployeeBonus {
+  id: string;
+  employee_id: string;
+  employee_nik: string;
+  employee_name: string;
+  amount: number;
+  reason_note: string; // Catatan pencapaian/pekerjaan
+  period_month: string; // Format YYYY-MM
+  date_awarded: string; // ISO date string
+  is_read: boolean;
+  department?: string;
+  role?: string;
+}

@@ -1437,10 +1437,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </label>
                 <div className="relative">
                   <input
-                    type="text"
-                    maxLength={8}
-                    required
-                    value={formData.securitySettings?.webAccessPin || formData.securitySettings?.adminPin || '2026'}
+                    type="password"
+                    maxLength={12}
+                    value={formData.securitySettings?.webAccessPin || ''}
                     onChange={(e) =>
                       setFormData({
                         ...formData,
@@ -1451,12 +1450,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       })
                     }
                     className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-mono text-sm font-bold text-slate-900 tracking-wider"
-                    placeholder="2026"
+                    placeholder="••••••"
                   />
                   <KeyRound className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                 </div>
                 <span className="text-[10px] text-slate-500 mt-1 block">
-                  PIN standar masuk web: <code className="font-mono text-purple-700">2026</code> (atau 123456).
+                  Kredensial PIN dienkripsi (SHA-256 / Bcrypt RPC) dan tidak disimpan dalam bentuk plaintext.
                 </span>
               </div>
 
@@ -1466,10 +1465,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </label>
                 <div className="relative">
                   <input
-                    type="text"
-                    maxLength={8}
-                    required
-                    value={formData.securitySettings?.adminPin || '2026'}
+                    type="password"
+                    maxLength={12}
+                    value={formData.securitySettings?.adminPin || ''}
                     onChange={(e) =>
                       setFormData({
                         ...formData,
@@ -1480,12 +1478,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       })
                     }
                     className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl font-mono text-sm font-bold text-slate-900 tracking-wider"
-                    placeholder="2026"
+                    placeholder="••••••"
                   />
                   <KeyRound className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                 </div>
                 <span className="text-[10px] text-slate-500 mt-1 block">
-                  PIN khusus pembuka menu Admin HR & Penggajian: <code className="font-mono text-purple-700">2026</code>.
+                  Atur PIN baru untuk memperbarui hash keamanan pembuka Panel Admin HR & Penggajian.
                 </span>
               </div>
             </div>

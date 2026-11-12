@@ -104,6 +104,22 @@ export const ALL_DASHBOARD_MODULES: ModuleDefinition[] = [
     sensitive: true,
   },
   {
+    id: 'part_time_payroll',
+    label: 'Payroll Part-Time (Mingguan)',
+    category: 'Penggajian & Keuangan',
+    icon: Clock,
+    description: 'Rekapitulasi jam kerja harian staf Part-Time dan pencairan gaji mingguan setiap hari Minggu.',
+    sensitive: true,
+  },
+  {
+    id: 'bonus_management',
+    label: 'Manajemen Bonus & Apresiasi',
+    category: 'Penggajian & Keuangan',
+    icon: Award,
+    description: 'Pemberian bonus pencapaian karyawan yang terhubung otomatis ke Portal Karyawan dan Slip Gaji.',
+    sensitive: true,
+  },
+  {
     id: 'tax_bpjs',
     label: 'Pajak PPh 21 & Iuran BPJS',
     category: 'Penggajian & Keuangan',

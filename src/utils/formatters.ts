@@ -12,6 +12,7 @@ import {
   DecemberPPh21ReconciliationResult,
   DailyWorkWageItem,
   LiveStreamSalesRecord,
+  EmployeeBonus,
 } from '../types';
 
 export function formatRupiah(amount: number): string {
@@ -44,6 +45,17 @@ export function formatIndoDate(dateString: string): string {
   }
 }
 
+export function formatAccountingRupiah(amount?: number | null): string {
+  const num = Number(amount);
+  if (!num || isNaN(num) || Math.round(num) <= 0) {
+    return 'Rp -';
+  }
+  return `Rp ${new Intl.NumberFormat('id-ID', {
+    maximumFractionDigits: 0,
+    minimumFractionDigits: 0,
+  }).format(Math.round(num))}`;
+}
+
 // Terbilang Rupiah untuk Slip Gaji Resmi
 export function terbilang(angka: number): string {
   const bilangan = [
@@ -51,7 +63,7 @@ export function terbilang(angka: number): string {
     'Sepuluh', 'Sebelas'
   ];
 
-  const n = Math.floor(Math.abs(angka));
+  const n = Math.floor(Math.abs(Number(angka) || 0));
 
   if (n < 12) {
     return bilangan[n];
@@ -71,13 +83,16 @@ export function terbilang(angka: number): string {
     return terbilang(Math.floor(n / 1000000)) + ' Juta ' + terbilang(n % 1000000);
   } else if (n < 1000000000000) {
     return terbilang(Math.floor(n / 1000000000)) + ' Miliar ' + terbilang(n % 1000000000);
+  } else if (n < 1000000000000000) {
+    return terbilang(Math.floor(n / 1000000000000)) + ' Triliun ' + terbilang(n % 1000000000000);
   }
   return n.toString();
 }
 
-export function terbilangRupiah(amount: number): string {
-  if (amount === 0) return 'Nol Rupiah';
-  const clean = terbilang(amount).replace(/\s+/g, ' ').trim();
+export function terbilangRupiah(angka: number): string {
+  const safeNum = Math.round(Number(angka) || 0);
+  if (safeNum <= 0) return 'Nol Rupiah';
+  const clean = terbilang(safeNum).replace(/\s+/g, ' ').trim();
   return `${clean} Rupiah`;
 }
 
@@ -834,7 +849,9 @@ export function calculateActualWorkHoursFromClock(
   if (!clockIn || !clockOut) return 0;
   const cleanIn = clockIn.trim();
   const cleanOut = clockOut.trim();
-  if (!cleanIn || !cleanOut || cleanIn === '-' || cleanOut === '-') return 0;
+  if (!cleanIn || !cleanOut || cleanIn === '-' || cleanOut === '-' || cleanIn === cleanOut) {
+    return 0;
+  }
 
   const inParts = cleanIn.split(':').map(Number);
   const outParts = cleanOut.split(':').map(Number);
@@ -861,8 +878,78 @@ export function calculateActualWorkHoursFromClock(
   }
 
   const diffInMinutes = (clockOutTime.getTime() - clockInTime.getTime()) / (1000 * 60);
+  if (diffInMinutes <= 0) return 0;
   const actualHours = Number((diffInMinutes / 60).toFixed(2));
   return Math.max(0, actualHours);
+}
+
+export interface CappedDailyWorkHoursResult {
+  rawDurationHours: number; // Durasi mentah dari clockOut - clockIn
+  cappedWorkHours: number; // Jam kerja normal setelah dibatasi maksimal 9 jam/hari (0 jika belum Clock-Out)
+  excessHours: number; // Kelebihan jam di atas batas maksimal 9 jam/hari
+  isCappedToMax: boolean; // true jika rawDurationHours > maxNormalHoursPerDay
+  isMissingClockOut: boolean; // true jika belum Clock-Out atau clockIn === clockOut
+}
+
+// Hitung jam kerja normal harian dengan batas maksimal (cap) 9 jam/hari:
+// - Masuk 09:00, Pulang 18:00 = 9 Jam
+// - Masuk 09:00, Pulang 19:30 = raw 10.5 Jam -> dibatasi maksimal 9 Jam (isCappedToMax: true)
+// - Masuk 10:30, Pulang 18:00 = 7.5 Jam
+// - Jika Jam Masuk dan Jam Pulang sama atau belum Clock-Out = 0 Jam (isMissingClockOut: true)
+export function calculateCappedDailyWorkHours(
+  clockIn?: string | null,
+  clockOut?: string | null,
+  fallbackWorkHours: number = 0,
+  maxNormalHoursPerDay: number = STANDARD_WORK_HOURS_PER_DAY
+): CappedDailyWorkHoursResult {
+  const maxCap = Math.max(1, Number(maxNormalHoursPerDay) || STANDARD_WORK_HOURS_PER_DAY);
+  const cleanIn = (clockIn || '').trim();
+  const cleanOut = (clockOut || '').trim();
+  const hasClockIn = Boolean(cleanIn && cleanIn !== '-' && cleanIn.includes(':'));
+  const hasClockOut = Boolean(cleanOut && cleanOut !== '-' && cleanOut.includes(':'));
+
+  if (hasClockIn && (!hasClockOut || cleanIn === cleanOut)) {
+    return {
+      rawDurationHours: 0,
+      cappedWorkHours: 0,
+      excessHours: 0,
+      isCappedToMax: false,
+      isMissingClockOut: true,
+    };
+  }
+
+  if (hasClockIn && hasClockOut) {
+    const raw = calculateActualWorkHoursFromClock(cleanIn, cleanOut);
+    if (raw <= 0) {
+      return {
+        rawDurationHours: 0,
+        cappedWorkHours: 0,
+        excessHours: 0,
+        isCappedToMax: false,
+        isMissingClockOut: true,
+      };
+    }
+    const capped = Number(Math.min(maxCap, raw).toFixed(2));
+    const excess = Number(Math.max(0, raw - maxCap).toFixed(2));
+    return {
+      rawDurationHours: raw,
+      cappedWorkHours: capped,
+      excessHours: excess,
+      isCappedToMax: raw > maxCap,
+      isMissingClockOut: false,
+    };
+  }
+
+  const fallbackRaw = Math.max(0, Number(fallbackWorkHours) || 0);
+  const cappedFallback = Number(Math.min(maxCap, fallbackRaw).toFixed(2));
+  const excessFallback = Number(Math.max(0, fallbackRaw - maxCap).toFixed(2));
+  return {
+    rawDurationHours: fallbackRaw,
+    cappedWorkHours: cappedFallback,
+    excessHours: excessFallback,
+    isCappedToMax: fallbackRaw > maxCap,
+    isMissingClockOut: fallbackRaw <= 0,
+  };
 }
 
 // Daftar Shift Default apabila belum dikonfigurasi
@@ -1057,12 +1144,19 @@ export function evaluateAttendanceAgainstShift(
   if (
     cleanCheckOut !== '' &&
     cleanCheckOut !== '-' &&
+    cleanCheckOut !== (checkIn || '').trim() &&
     !isNaN(ch) &&
     !isNaN(cm) &&
     !isNaN(outH) &&
     !isNaN(outM)
   ) {
-    workHours = calculateActualWorkHoursFromClock(checkIn, cleanCheckOut);
+    const cappedRes = calculateCappedDailyWorkHours(
+      checkIn,
+      cleanCheckOut,
+      0,
+      STANDARD_WORK_HOURS_PER_DAY
+    );
+    workHours = cappedRes.cappedWorkHours;
 
     // Check early leave against scheduledEnd
     let normalizedOut = outH * 60 + outM;
@@ -1073,7 +1167,7 @@ export function evaluateAttendanceAgainstShift(
       earlyLeaveMinutes = Math.max(0, scheduledEnd - normalizedOut);
     }
   } else {
-    // Jika clock_out belum diisi (baru Clock-In), actualHours = 0 sampai karyawan melakukan Clock-Out
+    // Jika clock_out belum diisi (baru Clock-In) atau sama dengan clock_in, actualHours = 0
     workHours = 0;
   }
 
@@ -1209,7 +1303,14 @@ export function deduplicateDailyAttendances(
         checkOut: isNonPresentStatus ? '-' : mergedCheckOut,
         lateMinutes: 0,
         earlyLeaveMinutes: 0,
-        workHours: isNonPresentStatus ? 0 : primary.workHours || 0,
+        workHours: isNonPresentStatus
+          ? 0
+          : calculateCappedDailyWorkHours(
+              primary.checkIn,
+              mergedCheckOut,
+              primary.workHours,
+              STANDARD_WORK_HOURS_PER_DAY
+            ).cappedWorkHours,
       });
     }
   });
@@ -1325,40 +1426,44 @@ export function calculateEmployeeAttendancePenalty(
       presentDaysCount += 1;
       lateFrequency += 1;
       totalLateMinutes += Math.max(0, Math.round(rec.lateMinutes || 0));
-      const hasClockIn = Boolean(rec.checkIn && rec.checkIn.trim() !== '' && rec.checkIn !== '-');
-      const hasClockOut = Boolean(rec.checkOut && rec.checkOut.trim() !== '' && rec.checkOut !== '-');
-      const actualHours =
-        hasClockIn && hasClockOut
-          ? calculateActualWorkHoursFromClock(rec.checkIn, rec.checkOut)
-          : hasClockIn && !hasClockOut
-          ? 0
-          : Math.max(0, Number(rec.workHours) || 0);
+      const cappedRes = calculateCappedDailyWorkHours(
+        rec.checkIn,
+        rec.checkOut,
+        rec.workHours,
+        standardWorkHoursPerDay
+      );
+      const actualHours = cappedRes.cappedWorkHours;
       totalActualWorkHours = Number((totalActualWorkHours + actualHours).toFixed(2));
       dailyWorkBreakdown.push({
         date: rec.date,
         checkIn: rec.checkIn || '-',
         checkOut: rec.checkOut || '-',
         workHours: actualHours,
+        rawDurationHours: cappedRes.rawDurationHours,
+        isCappedToMax: cappedRes.isCappedToMax,
+        isMissingClockOut: cappedRes.isMissingClockOut,
         dailyWage: Math.round(actualHours * hourlyRate),
         status: rec.status,
       });
     } else if (rec.status === 'Hadir Tepat Waktu') {
       presentDaysCount += 1;
       onTimeDaysCount += 1;
-      const hasClockIn = Boolean(rec.checkIn && rec.checkIn.trim() !== '' && rec.checkIn !== '-');
-      const hasClockOut = Boolean(rec.checkOut && rec.checkOut.trim() !== '' && rec.checkOut !== '-');
-      const actualHours =
-        hasClockIn && hasClockOut
-          ? calculateActualWorkHoursFromClock(rec.checkIn, rec.checkOut)
-          : hasClockIn && !hasClockOut
-          ? 0
-          : Math.max(0, Number(rec.workHours) || 0);
+      const cappedRes = calculateCappedDailyWorkHours(
+        rec.checkIn,
+        rec.checkOut,
+        rec.workHours,
+        standardWorkHoursPerDay
+      );
+      const actualHours = cappedRes.cappedWorkHours;
       totalActualWorkHours = Number((totalActualWorkHours + actualHours).toFixed(2));
       dailyWorkBreakdown.push({
         date: rec.date,
         checkIn: rec.checkIn || '-',
         checkOut: rec.checkOut || '-',
         workHours: actualHours,
+        rawDurationHours: cappedRes.rawDurationHours,
+        isCappedToMax: cappedRes.isCappedToMax,
+        isMissingClockOut: cappedRes.isMissingClockOut,
         dailyWage: Math.round(actualHours * hourlyRate),
         status: rec.status,
       });
@@ -1494,12 +1599,66 @@ export function calculatePayroll(
     ? Math.max(0, Math.round(attendancePenaltyMeta!.presentDaysCount!))
     : Math.max(0, standardWorkingDays - resolvedAlphaDays);
 
+  // Normalisasi rincian jam kerja harian agar setiap hari dibatasi maksimal 9 jam (standardWorkHoursPerDay)
+  // dan 0 jam jika belum Clock-Out atau Clock-In === Clock-Out
+  const rawBreakdown = Array.isArray(attendancePenaltyMeta?.dailyWorkBreakdown)
+    ? attendancePenaltyMeta!.dailyWorkBreakdown!
+    : [];
+  const normalizedDailyBreakdown: DailyWorkWageItem[] = rawBreakdown.map((item) => {
+    const isNonPresent =
+      item.status === 'Alpa' ||
+      item.status === 'Sakit' ||
+      item.status === 'Izin' ||
+      item.status === 'Cuti';
+    if (isNonPresent) {
+      return {
+        ...item,
+        workHours: 0,
+        rawDurationHours: 0,
+        isCappedToMax: false,
+        isMissingClockOut: false,
+        dailyWage: 0,
+      };
+    }
+    const cappedRes = calculateCappedDailyWorkHours(
+      item.checkIn,
+      item.checkOut,
+      item.workHours,
+      standardWorkHoursPerDay
+    );
+    return {
+      ...item,
+      workHours: cappedRes.cappedWorkHours,
+      rawDurationHours: cappedRes.rawDurationHours,
+      isCappedToMax: cappedRes.isCappedToMax,
+      isMissingClockOut: cappedRes.isMissingClockOut,
+      dailyWage: Math.round(cappedRes.cappedWorkHours * hourlyRate),
+    };
+  });
+
+  const sumFromNormalizedBreakdown =
+    normalizedDailyBreakdown.length > 0
+      ? Number(
+          normalizedDailyBreakdown
+            .reduce((sum, item) => sum + (Number(item.workHours) || 0), 0)
+            .toFixed(2)
+        )
+      : undefined;
+
   const resolvedActualWorkHours =
-    attendancePenaltyMeta?.totalActualWorkHours !== undefined
-      ? Math.max(0, Number(attendancePenaltyMeta.totalActualWorkHours))
+    sumFromNormalizedBreakdown !== undefined
+      ? sumFromNormalizedBreakdown
+      : attendancePenaltyMeta?.totalActualWorkHours !== undefined
+      ? Math.max(
+          0,
+          Math.min(
+            resolvedPresentDays * standardWorkHoursPerDay,
+            Number(attendancePenaltyMeta.totalActualWorkHours)
+          )
+        )
       : Number((resolvedPresentDays * standardWorkHoursPerDay).toFixed(2));
 
-  // Kalkulasi Real-Time Gaji Pokok Bulanan = Akumulasi Jam Kerja Riil Seluruh Hari Masuk × Tarif Gaji Per Jam
+  // Kalkulasi Real-Time Gaji Pokok Bulanan = Akumulasi Jam Kerja Riil (Maks 9 Jam/Hari) × Tarif Gaji Per Jam
   const baseSalary = Math.round(resolvedActualWorkHours * hourlyRate);
 
   const allowances = employee.allowances || {
@@ -1690,7 +1849,7 @@ export function calculatePayroll(
     hourlyRate,
     totalActualWorkHours: resolvedActualWorkHours,
     standardWorkHoursPerDay,
-    dailyWorkBreakdown: attendancePenaltyMeta?.dailyWorkBreakdown || [],
+    dailyWorkBreakdown: normalizedDailyBreakdown,
     dailySalary,
     presentDaysCount: resolvedPresentDays,
     standardWorkingDays,
@@ -2070,15 +2229,15 @@ export const AVAILABLE_PAYROLL_PERIODS: string[] = [
 export const PAYROLL_SIGNATORIES_STORAGE_KEY = 'tgi_payroll_signatories_config_v2';
 
 export const DEFAULT_PAYROLL_SIGNATORIES: PayrollSignatoriesConfig = {
-  city: 'Jakarta',
+  city: 'Tangerang',
   customDateText: '',
   companyStampDataUrl: '',
-  showAllThreeOnPayslip: true,
+  showAllThreeOnPayslip: false,
   preparedBy: {
-    headerLabel: 'Disiapkan Oleh,',
-    topSubtitle: 'Staff HR & Payroll Admin',
-    name: '',
-    jobTitle: 'HR Department',
+    headerLabel: 'Prepared by Accounting,',
+    topSubtitle: 'Accounting & Payroll Staff',
+    name: 'Siti Rahma Ramadany, S.KM',
+    jobTitle: 'Accounting & HR Department',
     signatureDataUrl: '',
     stampDataUrl: '',
     showStamp: false,
@@ -2127,10 +2286,13 @@ export function getPayrollSignatoriesConfig(
 
   const base = savedLocal || companyConfig?.payrollSignatories || DEFAULT_PAYROLL_SIGNATORIES;
 
-  const sanitizeName = (val?: string) => {
-    if (!val) return '';
+  const sanitizeName = (val?: string, fallbackName = '') => {
+    if (!val) return fallbackName;
     const trimmed = val.trim();
-    return LEGACY_DUMMY_SIGNATORY_NAMES.has(trimmed) ? '' : val;
+    if (!trimmed || LEGACY_DUMMY_SIGNATORY_NAMES.has(trimmed)) {
+      return fallbackName;
+    }
+    return trimmed;
   };
 
   const mergeItem = (
@@ -2139,20 +2301,25 @@ export function getPayrollSignatoriesConfig(
   ): SignatoryItemConfig => ({
     headerLabel: item?.headerLabel ?? fallback.headerLabel,
     topSubtitle: item?.topSubtitle ?? fallback.topSubtitle,
-    name: sanitizeName(item?.name ?? fallback.name),
+    name: sanitizeName(item?.name, fallback.name),
     jobTitle: item?.jobTitle ?? fallback.jobTitle,
     signatureDataUrl: item?.signatureDataUrl ?? fallback.signatureDataUrl ?? '',
     stampDataUrl: item?.stampDataUrl ?? fallback.stampDataUrl ?? '',
     showStamp: item?.showStamp ?? fallback.showStamp ?? false,
   });
 
+  const resolvedCity =
+    base.city && base.city.trim() && base.city.trim().toLowerCase() !== 'jakarta'
+      ? base.city.trim()
+      : DEFAULT_PAYROLL_SIGNATORIES.city;
+
   return {
-    city: base.city ?? DEFAULT_PAYROLL_SIGNATORIES.city,
+    city: resolvedCity,
     customDateText: base.customDateText ?? DEFAULT_PAYROLL_SIGNATORIES.customDateText ?? '',
     companyStampDataUrl:
       base.companyStampDataUrl ?? DEFAULT_PAYROLL_SIGNATORIES.companyStampDataUrl ?? '',
     showAllThreeOnPayslip:
-      base.showAllThreeOnPayslip ?? DEFAULT_PAYROLL_SIGNATORIES.showAllThreeOnPayslip ?? true,
+      base.showAllThreeOnPayslip ?? DEFAULT_PAYROLL_SIGNATORIES.showAllThreeOnPayslip ?? false,
     preparedBy: mergeItem(base.preparedBy, DEFAULT_PAYROLL_SIGNATORIES.preparedBy),
     verifiedBy: mergeItem(base.verifiedBy, DEFAULT_PAYROLL_SIGNATORIES.verifiedBy),
     approvedBy: mergeItem(base.approvedBy, DEFAULT_PAYROLL_SIGNATORIES.approvedBy),
@@ -2275,4 +2442,191 @@ export function generateOfficialCompanyStampDataUrl(
   ctx.fillText('★ JAKARTA - INDONESIA ★', cx, cy + 80);
 
   return canvas.toDataURL('image/png');
+}
+
+const INDO_MONTH_NAME_TO_NUM: Record<string, string> = {
+  januari: '01',
+  jan: '01',
+  februari: '02',
+  feb: '02',
+  maret: '03',
+  mar: '03',
+  april: '04',
+  apr: '04',
+  mei: '05',
+  may: '05',
+  juni: '06',
+  jun: '06',
+  juli: '07',
+  jul: '07',
+  agustus: '08',
+  agu: '08',
+  aug: '08',
+  september: '09',
+  sep: '09',
+  oktober: '10',
+  okt: '10',
+  oct: '10',
+  november: '11',
+  nov: '11',
+  desember: '12',
+  des: '12',
+  dec: '12',
+};
+
+const NUM_TO_INDO_MONTH_NAME: Record<string, string> = {
+  '01': 'Januari',
+  '02': 'Februari',
+  '03': 'Maret',
+  '04': 'April',
+  '05': 'Mei',
+  '06': 'Juni',
+  '07': 'Juli',
+  '08': 'Agustus',
+  '09': 'September',
+  '10': 'Oktober',
+  '11': 'November',
+  '12': 'Desember',
+};
+
+export function normalizePeriodToYearMonth(periodStr?: string | null): string {
+  if (!periodStr || typeof periodStr !== 'string') return '';
+  const trimmed = periodStr.trim();
+  const isoMatch = trimmed.match(/^(\d{4})-(\d{2})/);
+  if (isoMatch) {
+    return `${isoMatch[1]}-${isoMatch[2]}`;
+  }
+  const lower = trimmed.toLowerCase();
+  const yearMatch = lower.match(/\b(20\d{2})\b/);
+  const year = yearMatch ? yearMatch[1] : String(new Date().getFullYear());
+  for (const [mName, mNum] of Object.entries(INDO_MONTH_NAME_TO_NUM)) {
+    if (lower.includes(mName)) {
+      return `${year}-${mNum}`;
+    }
+  }
+  return '';
+}
+
+export function formatYearMonthToIndo(yearMonth?: string | null): string {
+  if (!yearMonth) return '-';
+  const norm = normalizePeriodToYearMonth(yearMonth);
+  if (!norm) return yearMonth;
+  const [y, m] = norm.split('-');
+  const monthLabel = NUM_TO_INDO_MONTH_NAME[m] || m;
+  return `${monthLabel} ${y}`;
+}
+
+export function formatCutOffPeriodRange(
+  periodStr?: string | null,
+  cutOffStartDay: number = 26,
+  cutOffEndDay: number = 25
+): string {
+  if (!periodStr) return '26 Oktober - 25 November 2026';
+  const trimmed = periodStr.trim();
+  if (trimmed.includes('-') && /\d+\s+[A-Za-z]+\s*-\s*\d+\s+[A-Za-z]+/.test(trimmed)) {
+    return trimmed;
+  }
+  const norm = normalizePeriodToYearMonth(trimmed) || '2026-11';
+  const [yearRaw, monthRaw] = norm.split('-');
+  const parsedYear = parseInt(yearRaw, 10);
+  const year = !isNaN(parsedYear) && parsedYear >= 2020 ? parsedYear : 2026;
+  const month = parseInt(monthRaw, 10) || 11;
+
+  const prevMonthNum = month === 1 ? 12 : month - 1;
+  const prevYear = month === 1 ? year - 1 : year;
+  const prevMonthKey = String(prevMonthNum).padStart(2, '0');
+  const currMonthKey = String(month).padStart(2, '0');
+
+  const prevMonthName = NUM_TO_INDO_MONTH_NAME[prevMonthKey] || 'Oktober';
+  const currMonthName = NUM_TO_INDO_MONTH_NAME[currMonthKey] || 'November';
+  const startDay = Math.max(1, Math.min(28, Number(cutOffStartDay) || 26));
+  const endDay = Math.max(1, Math.min(31, Number(cutOffEndDay) || 25));
+
+  if (prevYear !== year) {
+    return `${startDay} ${prevMonthName} ${prevYear} - ${endDay} ${currMonthName} ${year}`;
+  }
+  return `${startDay} ${prevMonthName} - ${endDay} ${currMonthName} ${year}`;
+}
+
+export function formatEndOfPeriodPrintDate(
+  periodStr?: string | null,
+  customDateText?: string | null
+): string {
+  if (customDateText && customDateText.trim() && !customDateText.includes('1900')) {
+    return customDateText.trim();
+  }
+  const norm = normalizePeriodToYearMonth(periodStr) || '2026-11';
+  const [yearRaw, monthRaw] = norm.split('-');
+  const parsedYear = parseInt(yearRaw, 10);
+  const year = !isNaN(parsedYear) && parsedYear >= 2020 ? parsedYear : 2026;
+  const month = parseInt(monthRaw, 10) || 11;
+  const lastDay = new Date(year, month, 0).getDate();
+  const monthKey = String(month).padStart(2, '0');
+  const monthName = NUM_TO_INDO_MONTH_NAME[monthKey] || 'November';
+  return `${lastDay} ${monthName} ${year}`;
+}
+
+export function doesEmployeeMatchBonus(
+  bonus: EmployeeBonus,
+  employee?: { id?: string; nik?: string; fullName?: string } | null
+): boolean {
+  if (!bonus || !employee) return false;
+  if (employee.id && bonus.employee_id && String(bonus.employee_id).trim() === String(employee.id).trim()) {
+    return true;
+  }
+  if (
+    employee.nik &&
+    bonus.employee_nik &&
+    String(bonus.employee_nik).trim().toLowerCase() === String(employee.nik).trim().toLowerCase()
+  ) {
+    return true;
+  }
+  return false;
+}
+
+export function getEmployeeBonusesForPeriod(
+  allBonuses: EmployeeBonus[],
+  employee?: { id?: string; nik?: string; fullName?: string } | null,
+  periodOrDate?: string | null,
+  allowCurrentMonthFallback = true
+): {
+  bonuses: EmployeeBonus[];
+  totalAmount: number;
+  combinedNotes: string;
+} {
+  if (!Array.isArray(allBonuses) || !employee) {
+    return { bonuses: [], totalAmount: 0, combinedNotes: '' };
+  }
+
+  const empBonuses = allBonuses.filter((b) => doesEmployeeMatchBonus(b, employee));
+  if (empBonuses.length === 0) {
+    return { bonuses: [], totalAmount: 0, combinedNotes: '' };
+  }
+
+  const targetYm = normalizePeriodToYearMonth(periodOrDate);
+  let matched = targetYm
+    ? empBonuses.filter((b) => normalizePeriodToYearMonth(b.period_month) === targetYm)
+    : empBonuses;
+
+  // Fallback: if the payslip is for a default period (e.g. "Oktober 2026") and the Admin awarded a bonus in the current month (e.g. "2026-11")
+  // or if no bonus matched the exact label but allowCurrentMonthFallback is enabled, include the employee's bonuses so it shows on their active payslip.
+  if (matched.length === 0 && allowCurrentMonthFallback) {
+    const currentYm = new Date().toISOString().slice(0, 7);
+    const currentMonthBonuses = empBonuses.filter(
+      (b) => normalizePeriodToYearMonth(b.period_month) === currentYm
+    );
+    matched = currentMonthBonuses.length > 0 ? currentMonthBonuses : empBonuses;
+  }
+
+  const totalAmount = matched.reduce((sum, b) => sum + Math.max(0, Math.round(Number(b.amount) || 0)), 0);
+  const combinedNotes = matched
+    .map((b) => (b.reason_note || '').trim())
+    .filter(Boolean)
+    .join(' • ');
+
+  return {
+    bonuses: matched,
+    totalAmount,
+    combinedNotes,
+  };
 }
