@@ -43,6 +43,8 @@ import {
   PartTimeWorkLog,
   PartTimeWeeklyPayout,
   EmployeeBonus,
+  EmployeeAdjustment,
+  PayrollDeductionRecord,
   DashboardModule,
 } from './types';
 import {
@@ -57,9 +59,12 @@ import {
   getEmployeeShift,
   evaluateAttendanceAgainstShift,
   getEmployeeHourlyRate,
+  getEmployeeStandardDailyHours,
   STANDARD_WORK_HOURS_PER_DAY,
   isEmployeePartTime,
   normalizeEmploymentType,
+  getEmployeeAdjustmentForPeriod,
+  getEmployeePayrollDeductionForPeriod,
 } from './utils/formatters';
 import { computeHoursFromClockInOut } from './components/PartTimeLogs';
 import { Sidebar, ActiveTab } from './components/Sidebar';
@@ -70,61 +75,26 @@ import { SupabaseSyncModal } from './components/SupabaseSyncModal';
 import { AdminPinAuthModal } from './components/AdminPinAuthModal';
 import { WebPinGatekeeper } from './components/WebPinGatekeeper';
 
-// Lazy-loaded feature modules to optimize initial login bundle size
-const DashboardOverview = lazy(() =>
-  import('./components/DashboardOverview').then((m) => ({ default: m.DashboardOverview }))
-);
-const EmployeeManagement = lazy(() =>
-  import('./components/EmployeeManagement').then((m) => ({ default: m.EmployeeManagement }))
-);
-const PayrollManagement = lazy(() =>
-  import('./components/PayrollManagement').then((m) => ({ default: m.PayrollManagement }))
-);
-const AttendanceView = lazy(() =>
-  import('./components/AttendanceView').then((m) => ({ default: m.AttendanceView }))
-);
-const LeaveAndOvertime = lazy(() =>
-  import('./components/LeaveAndOvertime').then((m) => ({ default: m.LeaveAndOvertime }))
-);
-const ReimbursementView = lazy(() =>
-  import('./components/ReimbursementView').then((m) => ({ default: m.ReimbursementView }))
-);
-const CashAdvanceView = lazy(() =>
-  import('./components/CashAdvanceView').then((m) => ({ default: m.CashAdvanceView }))
-);
-const AssetManagementView = lazy(() =>
-  import('./components/AssetManagementView').then((m) => ({ default: m.AssetManagementView }))
-);
-const PerformanceReviewView = lazy(() =>
-  import('./components/PerformanceReviewView').then((m) => ({ default: m.PerformanceReviewView }))
-);
-const TaxAndBpjsView = lazy(() =>
-  import('./components/TaxAndBpjsView').then((m) => ({ default: m.TaxAndBpjsView }))
-);
-const DepartmentKpiView = lazy(() =>
-  import('./components/DepartmentKpiView').then((m) => ({ default: m.DepartmentKpiView }))
-);
-const ReportsView = lazy(() =>
-  import('./components/ReportsView').then((m) => ({ default: m.ReportsView }))
-);
-const SettingsView = lazy(() =>
-  import('./components/SettingsView').then((m) => ({ default: m.SettingsView }))
-);
-const AuditLogsView = lazy(() =>
-  import('./components/AuditLogsView').then((m) => ({ default: m.AuditLogsView }))
-);
-const EmployeePortalView = lazy(() =>
-  import('./components/EmployeePortalView').then((m) => ({ default: m.EmployeePortalView }))
-);
-const RoleManagementView = lazy(() =>
-  import('./components/RoleManagementView').then((m) => ({ default: m.RoleManagementView }))
-);
-const PartTimePayrollSummary = lazy(() =>
-  import('./components/PartTimePayrollSummary').then((m) => ({ default: m.PartTimePayrollSummary }))
-);
-const BonusManagementView = lazy(() =>
-  import('./components/BonusManagementView').then((m) => ({ default: m.BonusManagementView }))
-);
+import { DashboardOverview } from './components/DashboardOverview';
+import { EmployeeManagement } from './components/EmployeeManagement';
+import { PayrollManagement } from './components/PayrollManagement';
+import { AttendanceView } from './components/AttendanceView';
+import { LeaveAndOvertime } from './components/LeaveAndOvertime';
+import { ReimbursementView } from './components/ReimbursementView';
+import { CashAdvanceView } from './components/CashAdvanceView';
+import { AssetManagementView } from './components/AssetManagementView';
+import { PerformanceReviewView } from './components/PerformanceReviewView';
+import { TaxAndBpjsView } from './components/TaxAndBpjsView';
+import { DepartmentKpiView } from './components/DepartmentKpiView';
+import { ReportsView } from './components/ReportsView';
+import { SettingsView } from './components/SettingsView';
+import { AuditLogsView } from './components/AuditLogsView';
+import { EmployeePortalView } from './components/EmployeePortalView';
+import { RoleManagementView } from './components/RoleManagementView';
+import { PartTimePayrollSummary } from './components/PartTimePayrollSummary';
+import { BonusManagementView } from './components/BonusManagementView';
+import { PayrollAdjustmentPanel } from './components/PayrollAdjustmentPanel';
+import { PayrollDeductionPanel } from './components/PayrollDeductionPanel';
 
 import {
   checkSupabaseStatus,
@@ -180,6 +150,14 @@ import {
   addEmployeeBonus,
   markBonusAsRead,
   deleteEmployeeBonus,
+  getSavedEmployeeAdjustments,
+  fetchEmployeeAdjustments,
+  upsertEmployeeAdjustment,
+  deleteEmployeeAdjustment,
+  getSavedPayrollDeductions,
+  fetchPayrollDeductions,
+  upsertPayrollDeduction,
+  deletePayrollDeduction,
 } from './services/supabaseService';
 import {
   isAdminSessionVerified,
@@ -709,6 +687,24 @@ export default function App() {
               ) {
                 roleConf.allowedModules.push('bonus_management');
               }
+              if (
+                (key === 'Super Admin' ||
+                  key === 'HR & Payroll Admin' ||
+                  key === 'Finance & Reimbursement' ||
+                  key === 'Operations Manager') &&
+                !roleConf.allowedModules.includes('payroll_adjustments')
+              ) {
+                roleConf.allowedModules.push('payroll_adjustments');
+              }
+              if (
+                (key === 'Super Admin' ||
+                  key === 'HR & Payroll Admin' ||
+                  key === 'Finance & Reimbursement' ||
+                  key === 'Operations Manager') &&
+                !roleConf.allowedModules.includes('payroll_deductions')
+              ) {
+                roleConf.allowedModules.push('payroll_deductions');
+              }
             }
           });
         }
@@ -850,6 +846,12 @@ export default function App() {
   const [employeeBonuses, setEmployeeBonuses] = useState<EmployeeBonus[]>(() =>
     getSavedEmployeeBonuses()
   );
+  const [employeeAdjustments, setEmployeeAdjustments] = useState<EmployeeAdjustment[]>(() =>
+    getSavedEmployeeAdjustments()
+  );
+  const [payrollDeductions, setPayrollDeductions] = useState<PayrollDeductionRecord[]>(() =>
+    getSavedPayrollDeductions()
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -861,21 +863,57 @@ export default function App() {
       })
       .catch(() => {});
 
+    fetchEmployeeAdjustments()
+      .then((adjustments) => {
+        if (mounted && Array.isArray(adjustments)) {
+          setEmployeeAdjustments(adjustments);
+        }
+      })
+      .catch(() => {});
+
+    fetchPayrollDeductions()
+      .then((deductions) => {
+        if (mounted && Array.isArray(deductions)) {
+          setPayrollDeductions(deductions);
+        }
+      })
+      .catch(() => {});
+
     const handleBonusesUpdated = () => {
       if (mounted) {
         setEmployeeBonuses(getSavedEmployeeBonuses());
+      }
+    };
+    const handleAdjustmentsUpdated = () => {
+      if (mounted) {
+        setEmployeeAdjustments(getSavedEmployeeAdjustments());
+      }
+    };
+    const handleDeductionsUpdated = () => {
+      if (mounted) {
+        setPayrollDeductions(getSavedPayrollDeductions());
       }
     };
     const handleStorage = (e: StorageEvent) => {
       if (e.key === 'tgi_employee_bonuses' && mounted) {
         setEmployeeBonuses(getSavedEmployeeBonuses());
       }
+      if (e.key === 'tgi_employee_adjustments' && mounted) {
+        setEmployeeAdjustments(getSavedEmployeeAdjustments());
+      }
+      if (e.key === 'tgi_payroll_deductions' && mounted) {
+        setPayrollDeductions(getSavedPayrollDeductions());
+      }
     };
     window.addEventListener('tgi_employee_bonuses_updated', handleBonusesUpdated);
+    window.addEventListener('tgi_employee_adjustments_updated', handleAdjustmentsUpdated);
+    window.addEventListener('tgi_payroll_deductions_updated', handleDeductionsUpdated);
     window.addEventListener('storage', handleStorage);
     return () => {
       mounted = false;
       window.removeEventListener('tgi_employee_bonuses_updated', handleBonusesUpdated);
+      window.removeEventListener('tgi_employee_adjustments_updated', handleAdjustmentsUpdated);
+      window.removeEventListener('tgi_payroll_deductions_updated', handleDeductionsUpdated);
       window.removeEventListener('storage', handleStorage);
     };
   }, []);
@@ -900,6 +938,39 @@ export default function App() {
   const handleMarkBonusAsRead = async (bonusId: string) => {
     await markBonusAsRead(bonusId);
     setEmployeeBonuses(getSavedEmployeeBonuses());
+  };
+
+  const handleSaveEmployeeAdjustment = async (
+    payload: Omit<EmployeeAdjustment, 'id' | 'updated_at'> & {
+      id?: string;
+      updated_at?: string;
+    }
+  ): Promise<EmployeeAdjustment> => {
+    const saved = await upsertEmployeeAdjustment(payload);
+    setEmployeeAdjustments(getSavedEmployeeAdjustments());
+    return saved;
+  };
+
+  const handleDeleteEmployeeAdjustment = async (adjustmentId: string) => {
+    await deleteEmployeeAdjustment(adjustmentId);
+    setEmployeeAdjustments(getSavedEmployeeAdjustments());
+  };
+
+  const handleSavePayrollDeduction = async (
+    payload: Omit<PayrollDeductionRecord, 'id' | 'updated_at' | 'sisa_kasbon_depan'> & {
+      id?: string;
+      sisa_kasbon_depan?: number;
+      updated_at?: string;
+    }
+  ): Promise<PayrollDeductionRecord> => {
+    const saved = await upsertPayrollDeduction(payload);
+    setPayrollDeductions(getSavedPayrollDeductions());
+    return saved;
+  };
+
+  const handleDeletePayrollDeduction = async (deductionId: string) => {
+    await deletePayrollDeduction(deductionId);
+    setPayrollDeductions(getSavedPayrollDeductions());
   };
 
   const handleSavePartTimeLog = (log: PartTimeWorkLog) => {
@@ -944,9 +1015,10 @@ export default function App() {
     const clockOut =
       att.checkOut && att.checkOut !== '-' ? att.checkOut : existing?.clockOut || '';
     // Hanya hitung durasi jika clockIn DAN clockOut terisi (jangan pernah default ke 8 jam)
+    const empStdHours = getEmployeeStandardDailyHours(emp, STANDARD_WORK_HOURS_PER_DAY);
     const computed =
       clockIn && clockOut && clockIn.trim() !== clockOut.trim()
-        ? computeHoursFromClockInOut(clockIn, clockOut, STANDARD_WORK_HOURS_PER_DAY)
+        ? computeHoursFromClockInOut(clockIn, clockOut, empStdHours)
         : {
             totalHours: 0,
             normalHours: 0,
@@ -954,7 +1026,7 @@ export default function App() {
           };
     const hrRate =
       Number(emp.hourlyRate ?? emp.hourly_rate) ||
-      getEmployeeHourlyRate(emp, STANDARD_WORK_HOURS_PER_DAY, 25);
+      getEmployeeHourlyRate(emp, empStdHours, 25);
     const otRate =
       Number(emp.overtimeRate ?? emp.overtime_rate) || Math.round(hrRate * 1.5);
     const wage = Math.round(computed.normalHours * hrRate + computed.overtimeHours * otRate);
@@ -1042,11 +1114,12 @@ export default function App() {
       if (!emp || !isEmployeePartTime(emp)) continue;
       const key = `${l.employeeId}_${l.date}`;
       const matchedAtt = attByKey.get(key);
+      const empStdHours = getEmployeeStandardDailyHours(emp, STANDARD_WORK_HOURS_PER_DAY);
       const hrRate =
         Number(l.hourlyRate ?? l.hourlyRateSnapshot ?? l.hourly_rate) ||
         (emp
           ? Number(emp.hourlyRate ?? emp.hourly_rate) ||
-            getEmployeeHourlyRate(emp, STANDARD_WORK_HOURS_PER_DAY, 25)
+            getEmployeeHourlyRate(emp, empStdHours, 25)
           : 0);
       const otRate =
         Number(l.overtimeRate ?? l.overtime_rate) ||
@@ -1070,7 +1143,7 @@ export default function App() {
         const computed = computeHoursFromClockInOut(
           clockIn,
           clockOut,
-          STANDARD_WORK_HOURS_PER_DAY
+          empStdHours
         );
         const wage = Math.round(computed.normalHours * hrRate + computed.overtimeHours * otRate);
         const correctedLog: PartTimeWorkLog = {
@@ -1115,9 +1188,10 @@ export default function App() {
       const clockOut =
         att.checkOut && att.checkOut !== '-' ? att.checkOut : existing?.clockOut || '';
       // Hitung durasi kerja REAL dari clock_out - clock_in (0 jam jika belum clock-out)
+      const empStdHours = getEmployeeStandardDailyHours(emp, STANDARD_WORK_HOURS_PER_DAY);
       const computed =
         clockIn && clockOut && clockIn.trim() !== clockOut.trim()
-          ? computeHoursFromClockInOut(clockIn, clockOut, STANDARD_WORK_HOURS_PER_DAY)
+          ? computeHoursFromClockInOut(clockIn, clockOut, empStdHours)
           : {
               totalHours: 0,
               normalHours: 0,
@@ -1125,7 +1199,7 @@ export default function App() {
             };
       const hrRate =
         Number(emp.hourlyRate ?? emp.hourly_rate) ||
-        getEmployeeHourlyRate(emp, STANDARD_WORK_HOURS_PER_DAY, 25);
+        getEmployeeHourlyRate(emp, empStdHours, 25);
       const otRate =
         Number(emp.overtimeRate ?? emp.overtime_rate) || Math.round(hrRate * 1.5);
       const wage = Math.round(computed.normalHours * hrRate + computed.overtimeHours * otRate);
@@ -1756,6 +1830,17 @@ export default function App() {
           : waivedIdsForPeriod.includes(emp.id)
       );
 
+      const empAdjustment = getEmployeeAdjustmentForPeriod(
+        employeeAdjustments,
+        emp,
+        currentPeriod
+      );
+      const empDeduction = getEmployeePayrollDeductionForPeriod(
+        payrollDeductions,
+        emp,
+        currentPeriod
+      );
+
       const computed = calculatePayroll(
         emp,
         currentPeriod,
@@ -1782,6 +1867,9 @@ export default function App() {
           isLocked: isPeriodLocked,
           lockedAt: existing?.lockedAt,
           penaltyPolicy: companyConfig.attendancePenaltyPolicy,
+          employeeAdjustment: empAdjustment,
+          payrollDeduction: empDeduction,
+          leaveRequests,
         }
       );
 
@@ -1802,6 +1890,9 @@ export default function App() {
     payrolls,
     overtimeRequests,
     attendances,
+    leaveRequests,
+    employeeAdjustments,
+    payrollDeductions,
     companyConfig.currentPayrollPeriod,
     companyConfig.lockedPayrollPeriods,
     companyConfig.waivedLateEmployeeIds,
@@ -2422,7 +2513,7 @@ export default function App() {
       {
         targetId: newEmp.id,
         targetName: `${newEmp.fullName} (NIK: ${newEmp.nik})`,
-        newValue: `Tarif Per Jam: Rp ${(newEmp.hourlyRate || Math.round((newEmp.dailySalary || Math.round(newEmp.baseSalary / 25)) / 9)).toLocaleString('id-ID')}/jam, Gaji Harian (9 Jam): Rp ${(newEmp.dailySalary || Math.round(newEmp.baseSalary / 25)).toLocaleString('id-ID')}, Status: ${newEmp.employmentStatus}`,
+        newValue: `Tarif Per Jam: Rp ${(newEmp.hourlyRate || Math.round((newEmp.dailySalary || Math.round(newEmp.baseSalary / 25)) / getEmployeeStandardDailyHours(newEmp))).toLocaleString('id-ID')}/jam, Gaji Harian (${getEmployeeStandardDailyHours(newEmp)} Jam): Rp ${(newEmp.dailySalary || Math.round(newEmp.baseSalary / 25)).toLocaleString('id-ID')}, Status: ${newEmp.employmentStatus}`,
         severity: 'success',
       }
     );
@@ -3017,6 +3108,7 @@ export default function App() {
   // Handlers for Attendance & Work Shifts (Enforcing Anti-Duplicate 1x Check-In & 1x Check-Out per Shift/Day + Automatic Late Minutes Calculation)
   const handleAddAttendance = (att: AttendanceRecord) => {
     const emp = employees.find((e) => e.id === att.employeeId);
+    const empStdHours = getEmployeeStandardDailyHours(emp, STANDARD_WORK_HOURS_PER_DAY);
     const empShift = getEmployeeShift(emp, companyConfig.workShifts);
     const policy = getAttendancePenaltyPolicy(companyConfig.attendancePenaltyPolicy);
     const effectiveGrace = policy.useShiftGracePeriod
@@ -3031,7 +3123,13 @@ export default function App() {
 
     const evaluatedInput =
       !isNonPresent && att.checkIn && att.checkIn !== '-' && att.checkIn.includes(':')
-        ? evaluateAttendanceAgainstShift(att.checkIn, att.checkOut, empShift, effectiveGrace)
+        ? evaluateAttendanceAgainstShift(
+            att.checkIn,
+            att.checkOut,
+            empShift,
+            effectiveGrace,
+            empStdHours
+          )
         : null;
 
     const normalizedAtt: AttendanceRecord = evaluatedInput
@@ -3085,7 +3183,8 @@ export default function App() {
                 finalCheckIn,
                 finalCheckOut,
                 empShift,
-                effectiveGrace
+                effectiveGrace,
+                empStdHours
               )
             : null;
 
@@ -3139,6 +3238,7 @@ export default function App() {
 
   const handleUpdateAttendance = (updatedAtt: AttendanceRecord) => {
     const emp = employees.find((e) => e.id === updatedAtt.employeeId);
+    const empStdHours = getEmployeeStandardDailyHours(emp, STANDARD_WORK_HOURS_PER_DAY);
     const empShift = getEmployeeShift(emp, companyConfig.workShifts);
     const policy = getAttendancePenaltyPolicy(companyConfig.attendancePenaltyPolicy);
     const effectiveGrace = policy.useShiftGracePeriod
@@ -3160,7 +3260,8 @@ export default function App() {
           updatedAtt.checkIn,
           updatedAtt.checkOut,
           empShift,
-          effectiveGrace
+          effectiveGrace,
+          empStdHours
         )
       : null;
 
@@ -4519,6 +4620,8 @@ export default function App() {
             base.includes('employees')
           ) {
             if (!base.includes('bonus_management')) base.push('bonus_management');
+            if (!base.includes('payroll_adjustments')) base.push('payroll_adjustments');
+            if (!base.includes('payroll_deductions')) base.push('payroll_deductions');
             if (!base.includes('part_time_payroll')) base.push('part_time_payroll');
           }
           return base;
@@ -4527,11 +4630,13 @@ export default function App() {
   // Redirect if current tab is restricted for this role
   useEffect(() => {
     if (adminUser && currentRole !== 'Super Admin' && userAllowedModules && userAllowedModules.length > 0) {
-      // Never block settings, roles_management, bonus_management, or part_time_payroll for admin dashboard users
+      // Never block settings, roles_management, bonus_management, payroll_adjustments, payroll_deductions, or part_time_payroll for admin dashboard users
       if (
         activeTab === 'settings' ||
         activeTab === 'roles_management' ||
         activeTab === 'bonus_management' ||
+        activeTab === 'payroll_adjustments' ||
+        activeTab === 'payroll_deductions' ||
         activeTab === 'part_time_payroll'
       ) {
         return;
@@ -4653,6 +4758,8 @@ export default function App() {
                 partTimeLogs={partTimeLogs}
                 onSavePartTimeLog={handleSavePartTimeLog}
                 employeeBonuses={employeeBonuses}
+                employeeAdjustments={employeeAdjustments}
+                payrollDeductions={payrollDeductions}
                 onMarkBonusAsRead={handleMarkBonusAsRead}
                 leaveRequests={leaveRequests}
                 overtimeRequests={overtimeRequests}
@@ -4714,6 +4821,8 @@ export default function App() {
           leaveRequests={leaveRequests}
           overtimeRequests={overtimeRequests}
           employeeBonuses={employeeBonuses}
+          employeeAdjustments={employeeAdjustments}
+          payrollDeductions={payrollDeductions}
           onClose={() => setSelectedPayslip(null)}
         />
 
@@ -4885,6 +4994,48 @@ export default function App() {
                 onResetLogsPaid={handleResetPartTimeLogsPaid}
                 onUpdateEmployee={handleUpdateEmployee}
                 onPullWeeklyAttendance={handlePullWeeklyPartTimeAttendance}
+              />
+            )}
+
+            {activeTab === 'payroll_adjustments' && (
+              <PayrollAdjustmentPanel
+                employees={employees}
+                adjustments={employeeAdjustments}
+                currentPayrollPeriod={companyConfig.currentPayrollPeriod}
+                onSaveAdjustment={handleSaveEmployeeAdjustment}
+                onDeleteAdjustment={handleDeleteEmployeeAdjustment}
+                onOpenPayslipByEmployeeId={(empId) => {
+                  const payRec = syncedPayrolls.find((p) => p.employeeId === empId);
+                  if (payRec) {
+                    handleOpenPayslip(payRec);
+                  }
+                }}
+                onRefreshAdjustments={async () => {
+                  const fresh = await fetchEmployeeAdjustments();
+                  setEmployeeAdjustments(fresh);
+                }}
+              />
+            )}
+
+            {activeTab === 'payroll_deductions' && (
+              <PayrollDeductionPanel
+                employees={employees}
+                deductions={payrollDeductions}
+                leaveRequests={leaveRequests}
+                cashAdvances={cashAdvances}
+                currentPayrollPeriod={companyConfig.currentPayrollPeriod}
+                onSaveDeduction={handleSavePayrollDeduction}
+                onDeleteDeduction={handleDeletePayrollDeduction}
+                onOpenPayslipByEmployeeId={(empId) => {
+                  const payRec = syncedPayrolls.find((p) => p.employeeId === empId);
+                  if (payRec) {
+                    handleOpenPayslip(payRec);
+                  }
+                }}
+                onRefreshDeductions={async () => {
+                  const fresh = await fetchPayrollDeductions();
+                  setPayrollDeductions(fresh);
+                }}
               />
             )}
 
@@ -5211,6 +5362,8 @@ export default function App() {
         leaveRequests={leaveRequests}
         overtimeRequests={overtimeRequests}
         employeeBonuses={employeeBonuses}
+        employeeAdjustments={employeeAdjustments}
+        payrollDeductions={payrollDeductions}
         onClose={() => setSelectedPayslip(null)}
         onUpdateSignatories={(newSigConfig) => {
           setCompanyConfig((prev) => ({

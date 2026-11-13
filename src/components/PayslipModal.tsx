@@ -5,6 +5,8 @@ import {
   CompanyConfig,
   PayrollSignatoriesConfig,
   EmployeeBonus,
+  EmployeeAdjustment,
+  PayrollDeductionRecord,
   CashAdvance,
   LeaveRequest,
   OvertimeRequest,
@@ -26,9 +28,13 @@ import {
   savePayrollSignatoriesConfig,
   getEmployeeDailySalary,
   getEmployeeHourlyRate,
+  getEmployeeStandardDailyHours,
   STANDARD_WORK_HOURS_PER_DAY,
   calculateEmployeeLiveSalesCommission,
   getEmployeeBonusesForPeriod,
+  getEmployeeAdjustmentForPeriod,
+  getEmployeePayrollDeductionForPeriod,
+  getApprovedSickLeaveSummaryForPeriod,
 } from '../utils/formatters';
 import { getPayslipWhatsAppUrl, getPayslipEmailUrl } from '../utils/notificationHelper';
 import {
@@ -46,6 +52,10 @@ import {
   fetchEmployeeByIdFromSupabase,
   getSavedEmployeeBonuses,
   fetchEmployeeBonuses,
+  getSavedEmployeeAdjustments,
+  fetchEmployeeAdjustments,
+  getSavedPayrollDeductions,
+  fetchPayrollDeductions,
 } from '../services/supabaseService';
 
 export interface OfficialPayslipComputedData {
@@ -89,12 +99,16 @@ export interface OfficialPayslipComputedData {
   subtotalGajiTidakTetap: number;
   // 3. Pengurangan
   alphaDays: number;
+  alphaRate: number;
   alphaDeductionTotal: number;
   izinJamMinutes: number;
+  izinJamRate: number;
   izinJamDeduction: number;
   izinHariDays: number;
+  izinHariRate: number;
   izinHariDeduction: number;
   sakitDays: number;
+  sakitRate: number;
   sakitDeduction: number;
   lateRatePerMinute: number;
   totalLateMinutes: number;
@@ -102,6 +116,8 @@ export interface OfficialPayslipComputedData {
   kesalahanRate: number;
   kesalahanQty: number;
   kesalahanTotal: number;
+  catatanKesalahan?: string;
+  catatanPotongan?: string;
   // Kasbon
   sisaKasbonBulanLalu: number;
   pembayaranKasbonBulanIni: number;
@@ -170,6 +186,8 @@ export function computeOfficialPayslipData(params: {
   employee: Employee;
   companyConfig: CompanyConfig;
   employeeBonuses?: EmployeeBonus[];
+  employeeAdjustments?: EmployeeAdjustment[];
+  payrollDeductions?: PayrollDeductionRecord[];
   cashAdvances?: CashAdvance[];
   leaveRequests?: LeaveRequest[];
   overtimeRequests?: OvertimeRequest[];
@@ -180,6 +198,8 @@ export function computeOfficialPayslipData(params: {
     employee,
     companyConfig,
     employeeBonuses = [],
+    employeeAdjustments,
+    payrollDeductions,
     cashAdvances,
     leaveRequests,
     overtimeRequests,
@@ -218,9 +238,9 @@ export function computeOfficialPayslipData(params: {
   }
   const positionLines = rawRoleParts.length > 0 ? rawRoleParts : [employee.role || '-'];
 
-  // 1. GAJI TETAP (Batas Maksimal Jam Kerja Normal = 9 Jam/Hari, Total Jam Kerja Aktual × Tarif Per Jam)
-  const maxNormalHoursPerDay = Math.max(
-    1,
+  // 1. GAJI TETAP (Batas Maksimal Jam Kerja Normal = employee.standard_daily_hours || 9 Jam/Hari, Total Jam Kerja Aktual × Tarif Per Jam)
+  const maxNormalHoursPerDay = getEmployeeStandardDailyHours(
+    employee,
     Number(payroll.standardWorkHoursPerDay) || STANDARD_WORK_HOURS_PER_DAY
   );
   const hourlyRate = Math.max(
@@ -233,8 +253,8 @@ export function computeOfficialPayslipData(params: {
   const dailySalaryRate = Math.max(
     0,
     Math.round(
-      Number(payroll.dailySalary) ||
-        hourlyRate * maxNormalHoursPerDay ||
+      hourlyRate * maxNormalHoursPerDay ||
+        Number(payroll.dailySalary) ||
         getEmployeeDailySalary(employee, payroll.standardWorkingDays || 25, maxNormalHoursPerDay)
     )
   );
@@ -317,20 +337,40 @@ export function computeOfficialPayslipData(params: {
   const tunjanganJabatanTotal = tunjanganJabatanRate;
   const subtotalGajiTetap = gajiPokokTotal + tunjanganJabatanTotal;
 
-  // 2. GAJI TIDAK TETAP
-  const tunjanganKerajinanRate = Math.max(
-    0,
-    Math.round(
-      (Number(payroll.allowanceTransport ?? employee.allowances?.transport) || 0) +
-        (Number(payroll.allowanceCommunication ?? employee.allowances?.communication) || 0)
-    )
+  // 2. GAJI TIDAK TETAP (Sinkronisasi dengan Tunjangan & Kedisiplinan / EmployeeAdjustment)
+  const resolvedAdjustmentsList =
+    Array.isArray(employeeAdjustments) && employeeAdjustments.length > 0
+      ? employeeAdjustments
+      : getSavedEmployeeAdjustments();
+  const periodAdjustment = getEmployeeAdjustmentForPeriod(
+    resolvedAdjustmentsList,
+    employee,
+    periodStr
   );
+
+  const tunjanganKerajinanRate =
+    periodAdjustment && periodAdjustment.tunjangan_kerajinan !== undefined
+      ? Math.max(0, Math.round(Number(periodAdjustment.tunjangan_kerajinan) || 0))
+      : payroll.tunjanganKerajinan !== undefined
+      ? Math.max(0, Math.round(Number(payroll.tunjanganKerajinan) || 0))
+      : Math.max(
+          0,
+          Math.round(
+            (Number(payroll.allowanceTransport ?? employee.allowances?.transport) || 0) +
+              (Number(payroll.allowanceCommunication ?? employee.allowances?.communication) || 0)
+          )
+        );
   const tunjanganKerajinanTotal = tunjanganKerajinanRate;
 
-  const tunjanganKedisiplinanRate = Math.max(
-    0,
-    Math.round(Number(payroll.allowanceMeal ?? employee.allowances?.meal) || 0)
-  );
+  const tunjanganKedisiplinanRate =
+    periodAdjustment && periodAdjustment.tunjangan_kedisiplinan !== undefined
+      ? Math.max(0, Math.round(Number(periodAdjustment.tunjangan_kedisiplinan) || 0))
+      : payroll.tunjanganKedisiplinan !== undefined
+      ? Math.max(0, Math.round(Number(payroll.tunjanganKedisiplinan) || 0))
+      : Math.max(
+          0,
+          Math.round(Number(payroll.allowanceMeal ?? employee.allowances?.meal) || 0)
+        );
   const tunjanganKedisiplinanTotal = tunjanganKedisiplinanRate;
 
   // Kelebihan jam kerja hanya dihitung jika ada Pengajuan Lembur yang berstatus "Disetujui" (Approved)
@@ -431,56 +471,142 @@ export function computeOfficialPayslipData(params: {
     totalTambahanLainnya +
     salesCommissionAmount;
 
-  // 3. PENGURANGAN
-  const alphaDays = Math.max(0, Math.round(Number(payroll.alphaDaysCount) || 0));
-  const rawAlphaPenalty = Math.max(0, Math.round(Number(payroll.alphaPenaltyAmount) || 0));
-  const alphaDeductionTotal = payroll.isLateFeeWaived
+  // 3. PENGURANGAN (Sinkronisasi Penuh dengan PayrollDeductionRecord & Panel Cuti/Izin)
+  const resolvedDeductionsList =
+    Array.isArray(payrollDeductions) && payrollDeductions.length > 0
+      ? payrollDeductions
+      : getSavedPayrollDeductions();
+  const periodDeduction = getEmployeePayrollDeductionForPeriod(
+    resolvedDeductionsList,
+    employee,
+    periodStr
+  );
+
+  // 3.1 Tanpa Keterangan (Alpa)
+  const rawAlphaDaysFromPayroll = Math.max(0, Math.round(Number(payroll.alphaDaysCount) || 0));
+  const rawAlphaPenaltyFromPayroll = Math.max(
+    0,
+    Math.round(Number(payroll.alphaPenaltyAmount) || 0)
+  );
+  const alphaDays = periodDeduction
+    ? Math.max(0, Number(periodDeduction.tanpa_keterangan_hari) || 0)
+    : payroll.tanpaKeteranganHari !== undefined
+    ? Math.max(0, Number(payroll.tanpaKeteranganHari) || 0)
+    : rawAlphaDaysFromPayroll;
+  const alphaRate =
+    periodDeduction && periodDeduction.tanpa_keterangan_rate > 0
+      ? Math.max(0, Math.round(Number(periodDeduction.tanpa_keterangan_rate) || 0))
+      : payroll.tanpaKeteranganRate && payroll.tanpaKeteranganRate > 0
+      ? Math.max(0, Math.round(Number(payroll.tanpaKeteranganRate) || 0))
+      : dailySalaryRate;
+  const alphaDeductionTotal = periodDeduction
+    ? Math.round(alphaDays * alphaRate)
+    : payroll.tanpaKeteranganHari !== undefined
+    ? Math.round(alphaDays * alphaRate)
+    : payroll.isLateFeeWaived
     ? 0
-    : rawAlphaPenalty > 0
-    ? rawAlphaPenalty
+    : rawAlphaPenaltyFromPayroll > 0
+    ? rawAlphaPenaltyFromPayroll
     : alphaDays > 0
-    ? alphaDays * dailySalaryRate
+    ? Math.round(alphaDays * alphaRate)
     : 0;
 
+  // 3.2 Izin (Jam / Menit)
+  const defaultPerMinuteRate = Math.max(0, Math.round(hourlyRate / 60));
+  const izinJamMinutes = periodDeduction
+    ? Math.max(0, Math.round(Number(periodDeduction.izin_jam_menit) || 0))
+    : payroll.izinJamMenit !== undefined
+    ? Math.max(0, Math.round(Number(payroll.izinJamMenit) || 0))
+    : 0;
+  const izinJamRate =
+    periodDeduction && periodDeduction.izin_jam_rate > 0
+      ? Math.max(0, Math.round(Number(periodDeduction.izin_jam_rate) || 0))
+      : payroll.izinJamRate && payroll.izinJamRate > 0
+      ? Math.max(0, Math.round(Number(payroll.izinJamRate) || 0))
+      : defaultPerMinuteRate;
+  const izinJamDeduction = Math.round(izinJamMinutes * izinJamRate);
+
+  // 3.3 Izin (Hari) & 3.4 Sakit (Otomatis dari Panel Cuti & Izin berstatus Disetujui)
   const empLeaves = leaveRequests
     ? leaveRequests.filter((l) => l.employeeId === employee.id && l.status === 'Disetujui')
     : getLocalLeavesForEmployee(employee.id);
-  const izinHariDays = empLeaves
+  const approvedIzinPribadiDays = empLeaves
     .filter((l) => l.type === 'Izin Pribadi')
     .reduce((sum, l) => sum + Math.max(0, Number(l.totalDays) || 0), 0);
-  const sakitDays = empLeaves
-    .filter((l) => l.type === 'Cuti Sakit')
-    .reduce((sum, l) => sum + Math.max(0, Number(l.totalDays) || 0), 0);
 
-  const izinJamMinutes = 0;
-  const izinJamDeduction = 0;
-  const izinHariDeduction = 0;
-  const sakitDeduction = 0;
+  const izinHariDays = periodDeduction
+    ? Math.max(0, Number(periodDeduction.izin_hari_jumlah) || 0)
+    : payroll.izinHariJumlah !== undefined
+    ? Math.max(0, Number(payroll.izinHariJumlah) || 0)
+    : approvedIzinPribadiDays;
+  const izinHariRate =
+    periodDeduction && periodDeduction.izin_hari_rate > 0
+      ? Math.max(0, Math.round(Number(periodDeduction.izin_hari_rate) || 0))
+      : payroll.izinHariRate && payroll.izinHariRate > 0
+      ? Math.max(0, Math.round(Number(payroll.izinHariRate) || 0))
+      : dailySalaryRate;
+  const izinHariDeduction =
+    periodDeduction || payroll.izinHariJumlah !== undefined
+      ? Math.round(izinHariDays * izinHariRate)
+      : 0;
 
+  const sickSummary = getApprovedSickLeaveSummaryForPeriod(
+    empLeaves,
+    employee,
+    periodStr,
+    dailySalaryRate
+  );
+  const sakitDays = sickSummary.sickDays;
+  const sakitRate = sickSummary.sickRatePerDay > 0 ? sickSummary.sickRatePerDay : dailySalaryRate;
+  const sakitDeduction = sickSummary.sickDeductionTotal;
+
+  // 3.5 Keterlambatan (Sinkron dari log absensi)
   const totalLateMinutes = Math.max(0, Math.round(Number(payroll.totalLateMinutes) || 0));
   const rawTotalLateAndAlpha = payroll.isLateFeeWaived
     ? 0
     : Math.max(0, Math.round(Number(payroll.lateDeduction) || 0));
-  const lateDeductionTotal = Math.max(0, rawTotalLateAndAlpha - alphaDeductionTotal);
+  const lateDeductionTotal = Math.max(
+    0,
+    rawTotalLateAndAlpha - (periodDeduction ? 0 : rawAlphaPenaltyFromPayroll)
+  );
   const lateRatePerMinute =
     totalLateMinutes > 0 && lateDeductionTotal > 0
       ? Math.round(lateDeductionTotal / totalLateMinutes)
       : Number(companyConfig.attendancePenaltyPolicy?.flatLatePenaltyAmount) || 1000;
 
-  const kesalahanTotal = Math.max(0, Math.round(Number(payroll.otherDeductions) || 0));
-  const kesalahanQty = kesalahanTotal > 0 ? 1 : 0;
-  const kesalahanRate = kesalahanTotal;
+  // 3.6 Kesalahan (Sinkron dari panel Tunjangan & Kedisiplinan)
+  const kesalahanQty = periodAdjustment
+    ? Math.max(0, Math.round(Number(periodAdjustment.kesalahan_count) || 0))
+    : payroll.kesalahanCount !== undefined
+    ? Math.max(0, Math.round(Number(payroll.kesalahanCount) || 0))
+    : 0;
+  const kesalahanRate = periodAdjustment
+    ? periodAdjustment.kesalahan_rate !== undefined && !isNaN(Number(periodAdjustment.kesalahan_rate))
+      ? Math.max(0, Math.round(Number(periodAdjustment.kesalahan_rate)))
+      : 10000
+    : payroll.kesalahanRate !== undefined
+    ? Math.max(0, Math.round(Number(payroll.kesalahanRate) || 0))
+    : 10000;
+  const kesalahanTotal = Math.round(kesalahanQty * kesalahanRate);
+  const catatanKesalahan = (
+    periodAdjustment?.catatan_kesalahan ??
+    payroll.catatanKesalahan ??
+    ''
+  ).trim();
+  const catatanPotongan = (
+    periodDeduction?.catatan_potongan ??
+    payroll.catatanPotongan ??
+    ''
+  ).trim();
 
-  // Rincian Kasbon (Sinkron dengan modul Kasbon & Pinjaman)
-  const empCashAdvances = (
-    cashAdvances
-      ? cashAdvances.filter(
-          (c) =>
-            c.employeeId === employee.id &&
-            (c.status === 'disbursed' || c.status === 'approved' || c.status === 'paid')
-        )
-      : getLocalCashAdvancesForEmployee(employee.id)
-  );
+  // 3.7 - 3.9 Rincian Kasbon 3 Tahap (Sinkron dari Panel Potongan Absensi & Kasbon + Modul Kasbon)
+  const empCashAdvances = cashAdvances
+    ? cashAdvances.filter(
+        (c) =>
+          c.employeeId === employee.id &&
+          (c.status === 'disbursed' || c.status === 'approved' || c.status === 'paid')
+      )
+    : getLocalCashAdvancesForEmployee(employee.id);
 
   const activeCaRemaining = empCashAdvances
     .filter((c) => c.status === 'disbursed' || c.status === 'approved')
@@ -489,30 +615,53 @@ export function computeOfficialPayslipData(params: {
     .filter((c) => c.status === 'disbursed' || c.status === 'approved')
     .reduce((sum, c) => sum + Math.max(0, Math.round(Number(c.monthlyInstallment) || 0)), 0);
 
-  const pembayaranKasbonBulanIni = Math.max(
-    0,
-    Math.round(Number(payroll.cashAdvanceDeduction) || activeCaMonthlyInstallment || 0)
-  );
+  let sisaKasbonBulanLalu = 0;
+  let pembayaranKasbonBulanIni = 0;
+  let sisaKasbonBulanDepan = 0;
 
-  const sisaKasbonBulanLalu =
-    activeCaRemaining > 0
-      ? activeCaRemaining >= pembayaranKasbonBulanIni
-        ? activeCaRemaining
-        : activeCaRemaining + pembayaranKasbonBulanIni
-      : pembayaranKasbonBulanIni;
+  if (periodDeduction) {
+    sisaKasbonBulanLalu = Math.max(0, Math.round(Number(periodDeduction.sisa_kasbon_lalu) || 0));
+    const rawCicilan = Math.max(
+      0,
+      Math.round(Number(periodDeduction.cicilan_kasbon_bulan_ini) || 0)
+    );
+    pembayaranKasbonBulanIni =
+      sisaKasbonBulanLalu > 0 ? Math.min(sisaKasbonBulanLalu, rawCicilan) : rawCicilan;
+    sisaKasbonBulanDepan = Math.max(0, sisaKasbonBulanLalu - pembayaranKasbonBulanIni);
+  } else if (payroll.sisaKasbonLalu !== undefined || payroll.cicilanKasbonBulanIni !== undefined) {
+    sisaKasbonBulanLalu = Math.max(0, Math.round(Number(payroll.sisaKasbonLalu) || 0));
+    const rawCicilan = Math.max(0, Math.round(Number(payroll.cicilanKasbonBulanIni) || 0));
+    pembayaranKasbonBulanIni =
+      sisaKasbonBulanLalu > 0 ? Math.min(sisaKasbonBulanLalu, rawCicilan) : rawCicilan;
+    sisaKasbonBulanDepan = Math.max(0, sisaKasbonBulanLalu - pembayaranKasbonBulanIni);
+  } else {
+    pembayaranKasbonBulanIni = Math.max(
+      0,
+      Math.round(Number(payroll.cashAdvanceDeduction) || activeCaMonthlyInstallment || 0)
+    );
+    sisaKasbonBulanLalu =
+      activeCaRemaining > 0
+        ? activeCaRemaining >= pembayaranKasbonBulanIni
+          ? activeCaRemaining
+          : activeCaRemaining + pembayaranKasbonBulanIni
+        : pembayaranKasbonBulanIni;
+    sisaKasbonBulanDepan = Math.max(0, sisaKasbonBulanLalu - pembayaranKasbonBulanIni);
+  }
 
-  const sisaKasbonBulanDepan = Math.max(0, sisaKasbonBulanLalu - pembayaranKasbonBulanIni);
-
-  // BPJS & PPh 21
-  const bpjsBaseSalary = subtotalGajiTetap > 0 ? subtotalGajiTetap : Math.round(Number(employee.baseSalary) || 0);
-  const bpjsTkEmployeeTotal = Math.max(
-    0,
-    Math.round((Number(payroll.bpjsJhtEmployee) || 0) + (Number(payroll.bpjsJpEmployee) || 0))
-  );
-  const bpjsTkPct = 3; // JHT 2% + JP 1%
-  const bpjsKesEmployeeTotal = Math.max(0, Math.round(Number(payroll.bpjsKesehatanEmployee) || 0));
-  const bpjsKesPct = 1; // 1% Ditanggung karyawan
-  const pph21Total = Math.max(0, Math.round(Number(payroll.pph21TER) || 0));
+  // BPJS & PPh 21 (Input Manual per Karyawan dari Panel "Potongan Absensi & Kasbon", Default Rp 0)
+  const bpjsBaseSalary =
+    subtotalGajiTetap > 0 ? subtotalGajiTetap : Math.round(Number(employee.baseSalary) || 0);
+  const bpjsTkEmployeeTotal = periodDeduction
+    ? Math.max(0, Math.round(Number(periodDeduction.bpjs_tk_manual) || 0))
+    : Math.max(0, Math.round(Number(payroll.bpjs_tk_manual) || 0));
+  const bpjsTkPct = 0;
+  const bpjsKesEmployeeTotal = periodDeduction
+    ? Math.max(0, Math.round(Number(periodDeduction.bpjs_kesehatan_manual) || 0))
+    : Math.max(0, Math.round(Number(payroll.bpjs_kesehatan_manual) || 0));
+  const bpjsKesPct = 0;
+  const pph21Total = periodDeduction
+    ? Math.max(0, Math.round(Number(periodDeduction.pph21_manual) || 0))
+    : Math.max(0, Math.round(Number(payroll.pph21_manual) || 0));
 
   // Subtotal Pengurangan (Sisa Kasbon bulan lalu & bulan depan TIDAK dijumlahkan)
   const subtotalPengurangan =
@@ -528,7 +677,10 @@ export function computeOfficialPayslipData(params: {
     pph21Total;
 
   // 4. JUMLAH BERSIH
-  const jumlahBersih = Math.max(0, subtotalGajiTetap + subtotalGajiTidakTetap - subtotalPengurangan);
+  const jumlahBersih = Math.max(
+    0,
+    subtotalGajiTetap + subtotalGajiTidakTetap - subtotalPengurangan
+  );
   const terbilangText = terbilangRupiah(jumlahBersih);
 
   return {
@@ -564,12 +716,16 @@ export function computeOfficialPayslipData(params: {
     salesCommissionAmount,
     subtotalGajiTidakTetap,
     alphaDays,
+    alphaRate,
     alphaDeductionTotal,
     izinJamMinutes,
+    izinJamRate,
     izinJamDeduction,
     izinHariDays,
+    izinHariRate,
     izinHariDeduction,
     sakitDays,
+    sakitRate,
     sakitDeduction,
     lateRatePerMinute,
     totalLateMinutes,
@@ -577,6 +733,8 @@ export function computeOfficialPayslipData(params: {
     kesalahanRate,
     kesalahanQty,
     kesalahanTotal,
+    catatanKesalahan,
+    catatanPotongan,
     sisaKasbonBulanLalu,
     pembayaranKasbonBulanIni,
     sisaKasbonBulanDepan,
@@ -745,7 +903,7 @@ export const OfficialPayslipDocument: React.FC<OfficialPayslipDocumentProps> = (
               <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
                 <div>Gaji Pokok</div>
                 <div className="text-[10px] text-slate-500">
-                  Akumulasi Jam Kerja Aktual (Maks. {data.maxNormalHoursPerDay} Jam/Hari • {formatAccountingRupiah(data.dailySalaryRate)}/hari)
+                  Jam kerja standar adalah {data.maxNormalHoursPerDay} jam/hari (Maks. {data.maxNormalHoursPerDay} Jam/Hari • {formatAccountingRupiah(data.dailySalaryRate)}/hari)
                 </div>
               </td>
               <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
@@ -927,7 +1085,7 @@ export const OfficialPayslipDocument: React.FC<OfficialPayslipDocumentProps> = (
                 Tanpa Keterangan
               </td>
               <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
-                {formatAccountingRupiah(data.alphaDays > 0 ? data.dailySalaryRate : 0)}
+                {formatAccountingRupiah(data.alphaDays > 0 ? data.alphaRate : 0)}
               </td>
               <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
                 × {data.alphaDays} Hari
@@ -941,7 +1099,7 @@ export const OfficialPayslipDocument: React.FC<OfficialPayslipDocumentProps> = (
                 Izin (Jam)
               </td>
               <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
-                {formatAccountingRupiah(data.izinJamMinutes > 0 ? hourlyRateRef : 0)}
+                {formatAccountingRupiah(data.izinJamMinutes > 0 ? data.izinJamRate : 0)}
               </td>
               <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
                 × {data.izinJamMinutes} Menit
@@ -955,7 +1113,9 @@ export const OfficialPayslipDocument: React.FC<OfficialPayslipDocumentProps> = (
                 Izin (Hari)
               </td>
               <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
-                {formatAccountingRupiah(data.izinHariDeduction > 0 ? data.dailySalaryRate : 0)}
+                {formatAccountingRupiah(
+                  data.izinHariDeduction > 0 || data.izinHariDays > 0 ? data.izinHariRate : 0
+                )}
               </td>
               <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
                 × {data.izinHariDays} Hari
@@ -969,7 +1129,7 @@ export const OfficialPayslipDocument: React.FC<OfficialPayslipDocumentProps> = (
                 Sakit
               </td>
               <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
-                {formatAccountingRupiah(data.sakitDeduction > 0 ? data.dailySalaryRate : 0)}
+                {formatAccountingRupiah(data.sakitDeduction > 0 ? data.sakitRate : 0)}
               </td>
               <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
                 × {data.sakitDays} Hari
@@ -997,10 +1157,13 @@ export const OfficialPayslipDocument: React.FC<OfficialPayslipDocumentProps> = (
                 Kesalahan
               </td>
               <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
-                {formatAccountingRupiah(data.kesalahanRate)}
+                {formatAccountingRupiah(data.kesalahanQty > 0 ? data.kesalahanRate : 0)}
               </td>
               <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
                 × {data.kesalahanQty} Kesalahan / Bulan
+                {Boolean(data.catatanKesalahan) && (
+                  <span className="text-slate-600 italic"> ({data.catatanKesalahan})</span>
+                )}
               </td>
               <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
                 {formatAccountingRupiah(data.kesalahanTotal)}
@@ -1051,16 +1214,16 @@ export const OfficialPayslipDocument: React.FC<OfficialPayslipDocumentProps> = (
               </td>
             </tr>
 
-            {/* Potongan Wajib */}
+            {/* Potongan Pajak & BPJS (Input Manual / Default Rp 0) */}
             <tr>
               <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
                 **BPJS Ketenagakerjaan
               </td>
               <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
-                {formatAccountingRupiah(data.bpjsTkEmployeeTotal > 0 ? data.bpjsBaseSalary : 0)}
+                {formatAccountingRupiah(data.bpjsTkEmployeeTotal)}
               </td>
               <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
-                × {data.bpjsTkPct}% Ditanggung karyawan
+                {data.bpjsTkEmployeeTotal > 0 ? 'Potongan Manual' : '-'}
               </td>
               <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
                 {formatAccountingRupiah(data.bpjsTkEmployeeTotal)}
@@ -1071,10 +1234,10 @@ export const OfficialPayslipDocument: React.FC<OfficialPayslipDocumentProps> = (
                 **BPJS Kesehatan
               </td>
               <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
-                {formatAccountingRupiah(data.bpjsKesEmployeeTotal > 0 ? data.bpjsBaseSalary : 0)}
+                {formatAccountingRupiah(data.bpjsKesEmployeeTotal)}
               </td>
               <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
-                × {data.bpjsKesPct}% Ditanggung karyawan
+                {data.bpjsKesEmployeeTotal > 0 ? 'Potongan Manual' : '-'}
               </td>
               <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
                 {formatAccountingRupiah(data.bpjsKesEmployeeTotal)}
@@ -1088,7 +1251,7 @@ export const OfficialPayslipDocument: React.FC<OfficialPayslipDocumentProps> = (
                 {formatAccountingRupiah(data.pph21Total)}
               </td>
               <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
-                × 100% Ditanggung karyawan
+                {data.pph21Total > 0 ? 'Potongan Manual' : '-'}
               </td>
               <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
                 {formatAccountingRupiah(data.pph21Total)}
@@ -1198,6 +1361,8 @@ interface PayslipModalProps {
   leaveRequests?: LeaveRequest[];
   overtimeRequests?: OvertimeRequest[];
   employeeBonuses?: EmployeeBonus[];
+  employeeAdjustments?: EmployeeAdjustment[];
+  payrollDeductions?: PayrollDeductionRecord[];
   onClose: () => void;
   onUpdateSignatories?: (config: PayrollSignatoriesConfig) => void;
 }
@@ -1211,6 +1376,8 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
   leaveRequests,
   overtimeRequests,
   employeeBonuses: propEmployeeBonuses = [],
+  employeeAdjustments: propEmployeeAdjustments = [],
+  payrollDeductions: propPayrollDeductions = [],
   onClose,
   onUpdateSignatories,
 }) => {
@@ -1223,6 +1390,12 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
   const [syncedEmployeeData, setSyncedEmployeeData] = useState<Partial<Employee> | null>(null);
   const [employeeBonuses, setEmployeeBonuses] = useState<EmployeeBonus[]>(() =>
     getSavedEmployeeBonuses()
+  );
+  const [employeeAdjustments, setEmployeeAdjustments] = useState<EmployeeAdjustment[]>(() =>
+    getSavedEmployeeAdjustments()
+  );
+  const [payrollDeductions, setPayrollDeductions] = useState<PayrollDeductionRecord[]>(() =>
+    getSavedPayrollDeductions()
   );
 
   useEffect(() => {
@@ -1242,11 +1415,14 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
     let isMounted = true;
 
     const loadLiveCommissionData = async () => {
-      const [sessions, empFromDb, bonusesFromDb] = await Promise.all([
-        fetchLivestreamSessionsFromSupabase(employee.id, payroll?.period),
-        fetchEmployeeByIdFromSupabase(employee.id),
-        fetchEmployeeBonuses(),
-      ]);
+      const [sessions, empFromDb, bonusesFromDb, adjustmentsFromDb, deductionsFromDb] =
+        await Promise.all([
+          fetchLivestreamSessionsFromSupabase(employee.id, payroll?.period),
+          fetchEmployeeByIdFromSupabase(employee.id),
+          fetchEmployeeBonuses(),
+          fetchEmployeeAdjustments(),
+          fetchPayrollDeductions(),
+        ]);
       if (!isMounted) return;
       if (Array.isArray(sessions) && sessions.length > 0) {
         setCloudLiveSessions(sessions);
@@ -1256,6 +1432,12 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
       }
       if (Array.isArray(bonusesFromDb)) {
         setEmployeeBonuses(bonusesFromDb);
+      }
+      if (Array.isArray(adjustmentsFromDb)) {
+        setEmployeeAdjustments(adjustmentsFromDb);
+      }
+      if (Array.isArray(deductionsFromDb)) {
+        setPayrollDeductions(deductionsFromDb);
       }
     };
 
@@ -1273,14 +1455,26 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
       setEmployeeBonuses(getSavedEmployeeBonuses());
     };
 
+    const handleAdjustmentsUpdated = () => {
+      setEmployeeAdjustments(getSavedEmployeeAdjustments());
+    };
+
+    const handleDeductionsUpdated = () => {
+      setPayrollDeductions(getSavedPayrollDeductions());
+    };
+
     window.addEventListener('tgi_employee_live_updated', handleLiveUpdated);
     window.addEventListener('tgi_livestream_sessions_updated', handleLiveUpdated);
     window.addEventListener('tgi_employee_bonuses_updated', handleBonusesUpdated);
+    window.addEventListener('tgi_employee_adjustments_updated', handleAdjustmentsUpdated);
+    window.addEventListener('tgi_payroll_deductions_updated', handleDeductionsUpdated);
     return () => {
       isMounted = false;
       window.removeEventListener('tgi_employee_live_updated', handleLiveUpdated);
       window.removeEventListener('tgi_livestream_sessions_updated', handleLiveUpdated);
       window.removeEventListener('tgi_employee_bonuses_updated', handleBonusesUpdated);
+      window.removeEventListener('tgi_employee_adjustments_updated', handleAdjustmentsUpdated);
+      window.removeEventListener('tgi_payroll_deductions_updated', handleDeductionsUpdated);
     };
   }, [employee?.id, payroll?.period]);
 
@@ -1336,6 +1530,22 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
     return Array.from(map.values());
   }, [employeeBonuses, propEmployeeBonuses]);
 
+  const combinedAdjustments = useMemo(() => {
+    const map = new Map<string, EmployeeAdjustment>();
+    for (const a of [...employeeAdjustments, ...propEmployeeAdjustments]) {
+      if (a?.id) map.set(a.id, a);
+    }
+    return Array.from(map.values());
+  }, [employeeAdjustments, propEmployeeAdjustments]);
+
+  const combinedDeductions = useMemo(() => {
+    const map = new Map<string, PayrollDeductionRecord>();
+    for (const d of [...payrollDeductions, ...propPayrollDeductions]) {
+      if (d?.id) map.set(d.id, d);
+    }
+    return Array.from(map.values());
+  }, [payrollDeductions, propPayrollDeductions]);
+
   const computedData = useMemo(() => {
     if (!payroll || !effectiveEmployee) return null;
     return computeOfficialPayslipData({
@@ -1343,6 +1553,8 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
       employee: effectiveEmployee,
       companyConfig,
       employeeBonuses: combinedBonuses,
+      employeeAdjustments: combinedAdjustments,
+      payrollDeductions: combinedDeductions,
       cashAdvances,
       leaveRequests,
       overtimeRequests,
@@ -1353,6 +1565,8 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
     effectiveEmployee,
     companyConfig,
     combinedBonuses,
+    combinedAdjustments,
+    combinedDeductions,
     cashAdvances,
     leaveRequests,
     overtimeRequests,

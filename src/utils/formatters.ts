@@ -13,6 +13,9 @@ import {
   DailyWorkWageItem,
   LiveStreamSalesRecord,
   EmployeeBonus,
+  EmployeeAdjustment,
+  PayrollDeductionRecord,
+  LeaveRequest,
 } from '../types';
 
 export function formatRupiah(amount: number): string {
@@ -299,17 +302,34 @@ export function calculateDecemberPPh21Reconciliation(params: {
   };
 }
 
-// Standar Jam Kerja Harian Tas Grosir Import = 9 Jam / Hari
+// Standar Jam Kerja Harian Default Tas Grosir Import = 9 Jam / Hari
 export const STANDARD_WORK_HOURS_PER_DAY = 9;
 
-// Ambil Tarif Gaji Per Jam (hourly_rate) Karyawan (otomatis fallback ke dailySalary / 9 jam atau baseSalary / (25 hari × 9 jam))
+// Ambil Standar Jam Kerja Harian per Karyawan (default 9 jam/hari jika belum diatur)
+export function getEmployeeStandardDailyHours(
+  employee?: Partial<Employee> | null,
+  fallbackHours: number = STANDARD_WORK_HOURS_PER_DAY
+): number {
+  const raw = Number(
+    employee?.standard_daily_hours ??
+      employee?.standardDailyHours ??
+      (employee as any)?.allowances?._standardDailyHours
+  );
+  if (!isNaN(raw) && raw > 0 && raw <= 24) {
+    return Number(raw.toFixed(2));
+  }
+  const fb = Number(fallbackHours);
+  return !isNaN(fb) && fb > 0 && fb <= 24 ? Number(fb.toFixed(2)) : STANDARD_WORK_HOURS_PER_DAY;
+}
+
+// Ambil Tarif Gaji Per Jam (hourly_rate) Karyawan (otomatis fallback ke dailySalary / stdHours atau baseSalary / (25 hari × stdHours))
 export function getEmployeeHourlyRate(
   employee?: Partial<Employee> | null,
   standardWorkHoursPerDay: number = STANDARD_WORK_HOURS_PER_DAY,
   standardWorkingDays: number = 25
 ): number {
   if (!employee) return 0;
-  const hoursPerDay = Math.max(1, Number(standardWorkHoursPerDay) || STANDARD_WORK_HOURS_PER_DAY);
+  const hoursPerDay = getEmployeeStandardDailyHours(employee, standardWorkHoursPerDay);
   const explicitHourly = Number(employee.hourlyRate ?? employee.hourly_rate);
   if (!isNaN(explicitHourly) && explicitHourly > 0) {
     return Math.round(explicitHourly);
@@ -323,14 +343,14 @@ export function getEmployeeHourlyRate(
   return monthlyBase > 0 ? Math.round(monthlyBase / (divisorDays * hoursPerDay)) : 0;
 }
 
-// Ambil Tarif Gaji Per Hari (daily_salary = 9 Jam × Tarif Gaji Per Jam)
+// Ambil Tarif Gaji Per Hari (daily_salary = (employee.standard_daily_hours || 9) × Tarif Gaji Per Jam)
 export function getEmployeeDailySalary(
   employee?: Partial<Employee> | null,
   standardWorkingDays: number = 25,
   standardWorkHoursPerDay: number = STANDARD_WORK_HOURS_PER_DAY
 ): number {
   if (!employee) return 0;
-  const hoursPerDay = Math.max(1, Number(standardWorkHoursPerDay) || STANDARD_WORK_HOURS_PER_DAY);
+  const hoursPerDay = getEmployeeStandardDailyHours(employee, standardWorkHoursPerDay);
   const explicitHourly = Number(employee.hourlyRate ?? employee.hourly_rate);
   if (!isNaN(explicitHourly) && explicitHourly > 0) {
     return Math.round(explicitHourly * hoursPerDay);
@@ -1091,7 +1111,8 @@ export function evaluateAttendanceAgainstShift(
   checkIn: string,
   checkOut: string,
   shift: WorkShift,
-  overrideGracePeriodMinutes?: number
+  overrideGracePeriodMinutes?: number,
+  maxNormalHoursPerDay: number = STANDARD_WORK_HOURS_PER_DAY
 ): {
   status: 'Hadir Tepat Waktu' | 'Terlambat';
   lateMinutes: number;
@@ -1140,6 +1161,10 @@ export function evaluateAttendanceAgainstShift(
   const [outH, outM] = cleanCheckOut.split(':').map(Number);
   let earlyLeaveMinutes = 0;
   let workHours = 0;
+  const resolvedMaxNormalHours = Math.max(
+    1,
+    Number(maxNormalHoursPerDay) || STANDARD_WORK_HOURS_PER_DAY
+  );
 
   if (
     cleanCheckOut !== '' &&
@@ -1154,7 +1179,7 @@ export function evaluateAttendanceAgainstShift(
       checkIn,
       cleanCheckOut,
       0,
-      STANDARD_WORK_HOURS_PER_DAY
+      resolvedMaxNormalHours
     );
     workHours = cappedRes.cappedWorkHours;
 
@@ -1242,6 +1267,7 @@ export function deduplicateDailyAttendances(
     }
 
     const emp = empMap.get(primary.employeeId);
+    const empStdHours = getEmployeeStandardDailyHours(emp);
     const empShift = getEmployeeShift(emp, shifts);
     const scheduledIn = empShift.checkInTime || primary.scheduledCheckIn || '09:00';
     const scheduledOut = empShift.checkOutTime || primary.scheduledCheckOut || '17:30';
@@ -1269,7 +1295,8 @@ export function deduplicateDailyAttendances(
         primary.checkIn,
         mergedCheckOut,
         effectiveShift,
-        effectiveGrace
+        effectiveGrace,
+        empStdHours
       );
 
       const finalStatus = primary.isManualStatus ? primary.status : evalRes.status;
@@ -1309,7 +1336,7 @@ export function deduplicateDailyAttendances(
               primary.checkIn,
               mergedCheckOut,
               primary.workHours,
-              STANDARD_WORK_HOURS_PER_DAY
+              empStdHours
             ).cappedWorkHours,
       });
     }
@@ -1387,7 +1414,7 @@ export function calculateEmployeeAttendancePenalty(
   const deduped = deduplicateDailyAttendances(empAttendances, [employee], shifts, policy);
 
   const divisor = Math.max(1, policy.alphaWorkingDaysDivisor || 25);
-  const standardWorkHoursPerDay = STANDARD_WORK_HOURS_PER_DAY; // 9 jam / hari
+  const standardWorkHoursPerDay = getEmployeeStandardDailyHours(employee);
   const hourlyRate = getEmployeeHourlyRate(employee, standardWorkHoursPerDay, divisor);
   const dailySalary = Math.round(hourlyRate * standardWorkHoursPerDay);
 
@@ -1568,6 +1595,9 @@ export interface PayrollAttendancePenaltyMeta {
   isLocked?: boolean;
   lockedAt?: string;
   penaltyPolicy?: Partial<AttendancePenaltyPolicy> | null;
+  employeeAdjustment?: EmployeeAdjustment | null;
+  payrollDeduction?: PayrollDeductionRecord | null;
+  leaveRequests?: LeaveRequest[];
 }
 
 // Hitung Payroll Karyawan Lengkap berbasis Gaji Per Jam (Total Gaji Pokok = Akumulasi Jam Kerja Riil × Tarif Gaji Per Jam)
@@ -1583,8 +1613,10 @@ export function calculatePayroll(
 ): PayrollRecord {
   const policy = getAttendancePenaltyPolicy(attendancePenaltyMeta?.penaltyPolicy);
   const standardWorkingDays = Math.max(1, policy.alphaWorkingDaysDivisor || 25);
-  const standardWorkHoursPerDay =
-    attendancePenaltyMeta?.standardWorkHoursPerDay || STANDARD_WORK_HOURS_PER_DAY; // 9 jam / hari
+  const standardWorkHoursPerDay = getEmployeeStandardDailyHours(
+    employee,
+    attendancePenaltyMeta?.standardWorkHoursPerDay || STANDARD_WORK_HOURS_PER_DAY
+  );
 
   const hourlyRate =
     attendancePenaltyMeta?.hourlyRate !== undefined && attendancePenaltyMeta.hourlyRate > 0
@@ -1668,9 +1700,30 @@ export function calculatePayroll(
     communication: 0,
   };
   const position = Number(allowances.position) || 0;
-  const transport = Number(allowances.transport) || 0;
-  const meal = Number(allowances.meal) || 0;
-  const communication = Number(allowances.communication) || 0;
+  const rawTransport = Number(allowances.transport) || 0;
+  const rawMeal = Number(allowances.meal) || 0;
+  const rawCommunication = Number(allowances.communication) || 0;
+
+  const adj = attendancePenaltyMeta?.employeeAdjustment || null;
+  const hasExplicitKerajinan =
+    adj !== null &&
+    adj.tunjangan_kerajinan !== undefined &&
+    !isNaN(Number(adj.tunjangan_kerajinan));
+  const hasExplicitKedisiplinan =
+    adj !== null &&
+    adj.tunjangan_kedisiplinan !== undefined &&
+    !isNaN(Number(adj.tunjangan_kedisiplinan));
+
+  const tunjanganKerajinan = hasExplicitKerajinan
+    ? Math.max(0, Math.round(Number(adj!.tunjangan_kerajinan) || 0))
+    : rawTransport + rawCommunication;
+  const tunjanganKedisiplinan = hasExplicitKedisiplinan
+    ? Math.max(0, Math.round(Number(adj!.tunjangan_kedisiplinan) || 0))
+    : rawMeal;
+
+  const transport = hasExplicitKerajinan ? tunjanganKerajinan : rawTransport;
+  const communication = hasExplicitKerajinan ? 0 : rawCommunication;
+  const meal = hasExplicitKedisiplinan ? tunjanganKedisiplinan : rawMeal;
 
   // Hitungan Lembur Sesuai UU Ketenagakerjaan (PP 35/2021):
   // Jam ke-1 (60 menit pertama) = 1.5x, Jam ke-2 dst (menit > 60) = 2.0x dari (Gaji Pokok + Tunjangan Jabatan) / 173
@@ -1686,9 +1739,8 @@ export function calculatePayroll(
   const totalGrossSalary =
     baseSalary +
     position +
-    transport +
-    meal +
-    communication +
+    tunjanganKerajinan +
+    tunjanganKedisiplinan +
     overtimePay +
     bonus +
     salesCommission;
@@ -1785,57 +1837,106 @@ export function calculatePayroll(
     }
   }
 
-  // BPJS Kesehatan: Max batas atas Rp 12.000.000
-  const bpjsKesBase = Math.min(baseSalary + position, 12000000);
-  const bpjsKesehatanEmployee = Math.round(bpjsKesBase * 0.01); // 1% potong gaji
-  const bpjsKesehatanEmployer = Math.round(bpjsKesBase * 0.04); // 4% ditanggung perusahaan (Objek PPh 21)
+  const dedRec = attendancePenaltyMeta?.payrollDeduction || null;
+  const bpjsTkManual = dedRec
+    ? Math.max(0, Math.round(Number(dedRec.bpjs_tk_manual) || 0))
+    : 0;
+  const bpjsKesehatanManual = dedRec
+    ? Math.max(0, Math.round(Number(dedRec.bpjs_kesehatan_manual) || 0))
+    : 0;
+  const pph21Manual = dedRec
+    ? Math.max(0, Math.round(Number(dedRec.pph21_manual) || 0))
+    : 0;
 
-  // BPJS Ketenagakerjaan: JHT (Jaminan Hari Tua)
-  const bpjsJhtBase = baseSalary + position;
-  const bpjsJhtEmployee = Math.round(bpjsJhtBase * 0.02); // 2% potong gaji (Pengurang Bruto Pasal 17)
-  const bpjsJhtEmployer = Math.round(bpjsJhtBase * 0.037); // 3.7% perusahaan (Bukan Objek PPh 21 saat dibayar)
+  // Potongan BPJS & PPh 21: MATIKAN rumus persentase otomatis (Default Rp 0).
+  // Hanya gunakan nilai input manual dari Panel "Potongan Absensi & Kasbon" (payrollDeduction).
+  const bpjsKesehatanEmployee = bpjsKesehatanManual;
+  const bpjsKesehatanEmployer = 0;
 
-  // BPJS Ketenagakerjaan: JP (Jaminan Pensiun) - Plafon 2026: Rp 10.600.000
-  const bpjsJpBase = Math.min(baseSalary + position, 10600000);
-  const bpjsJpEmployee = Math.round(bpjsJpBase * 0.01); // 1% potong gaji (Pengurang Bruto Pasal 17)
-  const bpjsJpEmployer = Math.round(bpjsJpBase * 0.02); // 2% perusahaan (Bukan Objek PPh 21 saat dibayar)
+  const bpjsJhtEmployee = bpjsTkManual;
+  const bpjsJhtEmployer = 0;
 
-  // JKK & JKM (Ditanggung perusahaan seluruhnya & merupakan Objek PPh 21 Bruto)
-  const bpjsJkkEmployer = Math.round(bpjsJhtBase * 0.0024); // 0.24% risiko rendah
-  const bpjsJkmEmployer = Math.round(bpjsJhtBase * 0.003); // 0.30%
+  const bpjsJpEmployee = 0;
+  const bpjsJpEmployer = 0;
 
-  // Komponen Premi BPJS Pemberi Kerja yang menambah Penghasilan Bruto Pajak (PP 58/2023 & PMK 168/2023):
-  // BPJS Kesehatan Perusahaan (4%) + JKK (0.24%) + JKM (0.30%)
-  const employerBpjsTaxableAllowance =
-    bpjsKesehatanEmployer + bpjsJkkEmployer + bpjsJkmEmployer;
-  const taxableGrossSalary = totalGrossSalary + employerBpjsTaxableAllowance;
+  const bpjsJkkEmployer = 0;
+  const bpjsJkmEmployer = 0;
 
-  // Cek apakah periode adalah bulan Desember (Masa Pajak Terakhir - Rekonsiliasi Tahunan Form 1721-A1)
+  const employerBpjsTaxableAllowance = 0;
+  const taxableGrossSalary = totalGrossSalary;
+
   const isDecemberReconciliation = (period || '').trim().toLowerCase().startsWith('desember');
-  const category = getTERCategory(employee.ptkpStatus);
-  const terRate = getTERRate(category, taxableGrossSalary);
+  const pph21TER = pph21Manual;
+  const annualPph21Summary: DecemberPPh21ReconciliationResult | undefined = undefined;
 
-  let pph21TER = Math.round(taxableGrossSalary * terRate);
-  let annualPph21Summary: DecemberPPh21ReconciliationResult | undefined;
+  const kesalahanCount = adj ? Math.max(0, Math.round(Number(adj.kesalahan_count) || 0)) : 0;
+  const kesalahanRate =
+    adj && adj.kesalahan_rate !== undefined
+      ? Math.max(0, Math.round(Number(adj.kesalahan_rate) || 0))
+      : 10000;
+  const kesalahanDeduction = Math.round(kesalahanCount * kesalahanRate);
+  const catatanKesalahan = adj?.catatan_kesalahan || '';
 
-  if (isDecemberReconciliation) {
-    annualPph21Summary = calculateDecemberPPh21Reconciliation({
-      monthlyTaxableGross: taxableGrossSalary,
-      bpjsJhtEmployeeMonthly: bpjsJhtEmployee,
-      bpjsJpEmployeeMonthly: bpjsJpEmployee,
-      ptkpStatus: employee.ptkpStatus,
-      monthsWorked: 12,
-    });
-    pph21TER = annualPph21Summary.decemberPph21Payable;
-  }
+  const tanpaKeteranganHari = dedRec
+    ? Math.max(0, Number(dedRec.tanpa_keterangan_hari) || 0)
+    : resolvedAlphaDays;
+  const tanpaKeteranganRate =
+    dedRec && dedRec.tanpa_keterangan_rate > 0
+      ? Math.max(0, Math.round(Number(dedRec.tanpa_keterangan_rate) || 0))
+      : dailySalary;
+  const manualAlphaDeduction = dedRec
+    ? Math.round(tanpaKeteranganHari * tanpaKeteranganRate)
+    : isLateFeeWaived
+    ? 0
+    : alphaPenaltyAmount;
+
+  const izinJamMenit = dedRec ? Math.max(0, Math.round(Number(dedRec.izin_jam_menit) || 0)) : 0;
+  const izinJamRate =
+    dedRec && dedRec.izin_jam_rate > 0
+      ? Math.max(0, Math.round(Number(dedRec.izin_jam_rate) || 0))
+      : Math.max(0, Math.round(hourlyRate / 60));
+  const izinJamDeduction = Math.round(izinJamMenit * izinJamRate);
+
+  const izinHariJumlah = dedRec ? Math.max(0, Number(dedRec.izin_hari_jumlah) || 0) : 0;
+  const izinHariRate =
+    dedRec && dedRec.izin_hari_rate > 0
+      ? Math.max(0, Math.round(Number(dedRec.izin_hari_rate) || 0))
+      : dailySalary;
+  const izinHariDeduction = Math.round(izinHariJumlah * izinHariRate);
+
+  const sickSummary = getApprovedSickLeaveSummaryForPeriod(
+    attendancePenaltyMeta?.leaveRequests || [],
+    employee,
+    period,
+    dailySalary
+  );
+  const sakitHariJumlah = sickSummary.sickDays;
+  const sakitHariRate = sickSummary.sickRatePerDay;
+  const sakitDeduction = sickSummary.sickDeductionTotal;
+
+  const sisaKasbonLalu = dedRec
+    ? Math.max(0, Math.round(Number(dedRec.sisa_kasbon_lalu) || 0))
+    : Math.max(0, Math.round(Number(cashAdvanceDeduction) || 0));
+  const rawCicilanKasbon = dedRec
+    ? Math.max(0, Math.round(Number(dedRec.cicilan_kasbon_bulan_ini) || 0))
+    : Math.max(0, Math.round(Number(cashAdvanceDeduction) || 0));
+  const cicilanKasbonBulanIni =
+    sisaKasbonLalu > 0 ? Math.min(sisaKasbonLalu, rawCicilanKasbon) : rawCicilanKasbon;
+  const sisaKasbonDepan = Math.max(0, sisaKasbonLalu - cicilanKasbonBulanIni);
+  const catatanPotongan = dedRec?.catatan_potongan || '';
+
+  const otherDeductions =
+    kesalahanDeduction + izinJamDeduction + izinHariDeduction + sakitDeduction;
 
   const totalDeductions =
     lateDeduction +
+    manualAlphaDeduction +
+    otherDeductions +
     bpjsKesehatanEmployee +
     bpjsJhtEmployee +
     bpjsJpEmployee +
     pph21TER +
-    (cashAdvanceDeduction || 0);
+    cicilanKasbonBulanIni;
   const takeHomePay = Math.max(0, totalGrossSalary - totalDeductions);
 
   const cleanPeriod = period.replace(/\s+/g, '').toUpperCase();
@@ -1900,8 +2001,28 @@ export function calculatePayroll(
     pph21TER,
     isDecemberReconciliation,
     annualPph21Summary,
-    otherDeductions: 0,
-    cashAdvanceDeduction: cashAdvanceDeduction || 0,
+    otherDeductions,
+    tunjanganKerajinan,
+    tunjanganKedisiplinan,
+    kesalahanCount,
+    kesalahanRate,
+    catatanKesalahan,
+    tanpaKeteranganHari,
+    tanpaKeteranganRate,
+    izinJamMenit,
+    izinJamRate,
+    izinHariJumlah,
+    izinHariRate,
+    sakitHariJumlah,
+    sakitHariRate,
+    sisaKasbonLalu,
+    cicilanKasbonBulanIni,
+    sisaKasbonDepan,
+    bpjs_tk_manual: bpjsTkManual,
+    bpjs_kesehatan_manual: bpjsKesehatanManual,
+    pph21_manual: pph21Manual,
+    catatanPotongan,
+    cashAdvanceDeduction: cicilanKasbonBulanIni,
     cashAdvanceNotes,
     totalDeductions,
     takeHomePay,
@@ -2630,3 +2751,196 @@ export function getEmployeeBonusesForPeriod(
     combinedNotes,
   };
 }
+
+export function doesEmployeeMatchAdjustment(
+  adj: EmployeeAdjustment | null | undefined,
+  employee: Partial<Employee> | null | undefined
+): boolean {
+  if (!adj || !employee) return false;
+  if (employee.id && adj.employee_id && adj.employee_id === employee.id) {
+    return true;
+  }
+  const empNik = (employee.nik || '').trim().toLowerCase();
+  const adjNik = (adj.employee_nik || '').trim().toLowerCase();
+  if (empNik && adjNik && empNik === adjNik) {
+    return true;
+  }
+  const empName = (employee.fullName || '').trim().toLowerCase();
+  const adjName = (adj.employee_name || '').trim().toLowerCase();
+  if (empName && adjName && empName === adjName) {
+    return true;
+  }
+  return false;
+}
+
+export function getEmployeeAdjustmentForPeriod(
+  allAdjustments: EmployeeAdjustment[] | null | undefined,
+  employee: Partial<Employee> | null | undefined,
+  periodOrDate?: string,
+  allowCurrentMonthFallback: boolean = true
+): EmployeeAdjustment | null {
+  if (!Array.isArray(allAdjustments) || !employee) return null;
+
+  const empAdjustments = allAdjustments
+    .filter((a) => doesEmployeeMatchAdjustment(a, employee))
+    .sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || ''));
+
+  if (empAdjustments.length === 0) return null;
+
+  const targetYm = normalizePeriodToYearMonth(periodOrDate);
+  if (targetYm) {
+    const exactMatch = empAdjustments.find(
+      (a) => normalizePeriodToYearMonth(a.period_month) === targetYm
+    );
+    if (exactMatch) return exactMatch;
+  }
+
+  if (allowCurrentMonthFallback) {
+    const currentYm = new Date().toISOString().slice(0, 7);
+    const currentMonthMatch = empAdjustments.find(
+      (a) => normalizePeriodToYearMonth(a.period_month) === currentYm
+    );
+    if (currentMonthMatch) return currentMonthMatch;
+    return empAdjustments[0];
+  }
+
+  return null;
+}
+
+export function doesEmployeeMatchPayrollDeduction(
+  ded: PayrollDeductionRecord | null | undefined,
+  employee: Partial<Employee> | null | undefined
+): boolean {
+  if (!ded || !employee) return false;
+  if (employee.id && ded.employee_id && ded.employee_id === employee.id) {
+    return true;
+  }
+  const empNik = (employee.nik || '').trim().toLowerCase();
+  const dedNik = (ded.employee_nik || '').trim().toLowerCase();
+  if (empNik && dedNik && empNik === dedNik) {
+    return true;
+  }
+  const empName = (employee.fullName || '').trim().toLowerCase();
+  const dedName = (ded.employee_name || '').trim().toLowerCase();
+  if (empName && dedName && empName === dedName) {
+    return true;
+  }
+  return false;
+}
+
+export function getEmployeePayrollDeductionForPeriod(
+  allDeductions: PayrollDeductionRecord[] | null | undefined,
+  employee: Partial<Employee> | null | undefined,
+  periodOrDate?: string,
+  allowCurrentMonthFallback: boolean = true
+): PayrollDeductionRecord | null {
+  if (!Array.isArray(allDeductions) || !employee) return null;
+
+  const empDeductions = allDeductions
+    .filter((d) => doesEmployeeMatchPayrollDeduction(d, employee))
+    .sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || ''));
+
+  if (empDeductions.length === 0) return null;
+
+  const targetYm = normalizePeriodToYearMonth(periodOrDate);
+  if (targetYm) {
+    const exactMatch = empDeductions.find(
+      (d) => normalizePeriodToYearMonth(d.period_month) === targetYm
+    );
+    if (exactMatch) return exactMatch;
+  }
+
+  if (allowCurrentMonthFallback) {
+    const currentYm = new Date().toISOString().slice(0, 7);
+    const currentMonthMatch = empDeductions.find(
+      (d) => normalizePeriodToYearMonth(d.period_month) === currentYm
+    );
+    if (currentMonthMatch) return currentMonthMatch;
+    return empDeductions[0];
+  }
+
+  return null;
+}
+
+export function getApprovedSickLeaveSummaryForPeriod(
+  allLeaves: LeaveRequest[] | null | undefined,
+  employee: Partial<Employee> | null | undefined,
+  periodOrDate?: string,
+  dailySalaryRate: number = 0
+): {
+  sickDays: number;
+  sickRatePerDay: number;
+  sickDeductionTotal: number;
+  sickNotes: string;
+} {
+  if (!Array.isArray(allLeaves) || !employee) {
+    return {
+      sickDays: 0,
+      sickRatePerDay: 0,
+      sickDeductionTotal: 0,
+      sickNotes: '',
+    };
+  }
+
+  const empSickLeaves = allLeaves.filter(
+    (l) =>
+      l &&
+      l.employeeId === employee.id &&
+      l.status === 'Disetujui' &&
+      (l.type === 'Cuti Sakit' || (l.type || '').toLowerCase().includes('sakit'))
+  );
+
+  if (empSickLeaves.length === 0) {
+    return {
+      sickDays: 0,
+      sickRatePerDay: 0,
+      sickDeductionTotal: 0,
+      sickNotes: '',
+    };
+  }
+
+  const targetYm = normalizePeriodToYearMonth(periodOrDate);
+  const periodMatched = targetYm
+    ? empSickLeaves.filter((l) => {
+        const startYm = normalizePeriodToYearMonth(l.startDate);
+        const endYm = normalizePeriodToYearMonth(l.endDate);
+        return startYm === targetYm || endYm === targetYm;
+      })
+    : empSickLeaves;
+
+  const effectiveList = periodMatched.length > 0 ? periodMatched : empSickLeaves;
+
+  let sickDays = 0;
+  let unpaidSickDays = 0;
+  const notesArr: string[] = [];
+
+  for (const item of effectiveList) {
+    const days = Math.max(0, Number(item.totalDays) || 0);
+    sickDays += days;
+    const reasonText = (item.reason || '').toLowerCase();
+    // Jika ada keterangan sakit tanpa surat dokter / potong gaji, dihitung potong gaji harian; jika dengan surat dokter / normal maka Rp 0 (dibayar penuh)
+    if (
+      reasonText.includes('tanpa surat dokter') ||
+      reasonText.includes('potong gaji') ||
+      reasonText.includes('unpaid')
+    ) {
+      unpaidSickDays += days;
+    }
+    if (item.reason) {
+      notesArr.push(item.reason.trim());
+    }
+  }
+
+  const sickDeductionTotal =
+    unpaidSickDays > 0 ? Math.round(unpaidSickDays * Math.max(0, dailySalaryRate)) : 0;
+  const sickRatePerDay = sickDeductionTotal > 0 ? Math.max(0, Math.round(dailySalaryRate)) : 0;
+
+  return {
+    sickDays,
+    sickRatePerDay,
+    sickDeductionTotal,
+    sickNotes: notesArr.join(' • '),
+  };
+}
+
+

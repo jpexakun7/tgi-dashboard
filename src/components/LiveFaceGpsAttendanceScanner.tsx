@@ -21,7 +21,10 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { Employee, WorkShift, AttendanceRecord } from '../types';
-import { evaluateAttendanceAgainstShift } from '../utils/formatters';
+import {
+  evaluateAttendanceAgainstShift,
+  getEmployeeStandardDailyHours,
+} from '../utils/formatters';
 
 interface LiveFaceGpsAttendanceScannerProps {
   currentEmployee: Employee;
@@ -931,10 +934,17 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
       formatFullIndonesianDateTime(nowDate);
     const fullTimestampLabel = `${dayDateStr} • ${timeWithSecondsStr}`;
 
+    const empStdHours = getEmployeeStandardDailyHours(currentEmployee);
     if (mode === 'check_in') {
       const targetInTime = useCustomClockTime ? customClockInTime : shortHourMinStr;
       const targetOutTime = todayAttendance?.checkOut || '';
-      const evalRes = evaluateAttendanceAgainstShift(targetInTime, targetOutTime, activeShift);
+      const evalRes = evaluateAttendanceAgainstShift(
+        targetInTime,
+        targetOutTime,
+        activeShift,
+        undefined,
+        empStdHours
+      );
 
       const watermarkedPhoto = captureWatermarkedFacePhoto(
         'ABSEN MASUK',
@@ -990,7 +1000,9 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
       const evalRes = evaluateAttendanceAgainstShift(
         todayAttendance.checkIn,
         targetOutTime,
-        activeShift
+        activeShift,
+        undefined,
+        empStdHours
       );
 
       const watermarkedPhoto = captureWatermarkedFacePhoto(
@@ -1044,7 +1056,9 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
   const liveEvalCheckIn = evaluateAttendanceAgainstShift(
     checkInPreviewTime,
     todayAttendance?.checkOut || activeShift.checkOutTime,
-    activeShift
+    activeShift,
+    undefined,
+    getEmployeeStandardDailyHours(currentEmployee)
   );
 
   return (

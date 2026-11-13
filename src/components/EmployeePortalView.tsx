@@ -74,12 +74,16 @@ import {
   AttendanceRecord,
   PartTimeWorkLog,
   EmployeeBonus,
+  EmployeeAdjustment,
+  PayrollDeductionRecord,
 } from '../types';
 import {
   formatCurrency,
   formatIDR,
   formatRupiah,
   formatIndoDate,
+  normalizePeriodToYearMonth,
+  doesEmployeeMatchPayrollDeduction,
   getOvertimeRatePerMinute,
   calculateOvertimePayByMinutes,
   getOvertimeMinutes,
@@ -95,6 +99,7 @@ import {
   getContractValidityInfo,
   getEmployeeDailySalary,
   getEmployeeHourlyRate,
+  getEmployeeStandardDailyHours,
   STANDARD_WORK_HOURS_PER_DAY,
   calculateCappedDailyWorkHours,
   calculateEmployeeLiveSalesCommission,
@@ -116,6 +121,10 @@ import {
   getSavedEmployeeBonuses,
   fetchEmployeeBonuses,
   markBonusAsRead,
+  getSavedEmployeeAdjustments,
+  fetchEmployeeAdjustments,
+  getSavedPayrollDeductions,
+  fetchPayrollDeductions,
 } from '../services/supabaseService';
 import {
   verifyEmployeeLoginSecure,
@@ -166,6 +175,8 @@ interface EmployeePortalViewProps {
     >
   ) => void;
   employeeBonuses?: EmployeeBonus[];
+  employeeAdjustments?: EmployeeAdjustment[];
+  payrollDeductions?: PayrollDeductionRecord[];
   onMarkBonusAsRead?: (bonusId: string) => void;
 }
 
@@ -221,6 +232,8 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
   cashAdvances = [],
   onApplyCashAdvance,
   employeeBonuses = [],
+  employeeAdjustments = [],
+  payrollDeductions = [],
   onMarkBonusAsRead,
 }) => {
   const [activePortalTab, setActivePortalTab] = useState<'home' | 'payroll' | 'attendance' | 'leave' | 'claims' | 'cash_advance' | 'assets' | 'performance' | 'profile' | 'live_commission' | 'my_bonuses'>('home');
@@ -237,6 +250,12 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
   const [syncedDbPartTimeLogs, setSyncedDbPartTimeLogs] = useState<PartTimeWorkLog[]>([]);
   const [syncedEmployeeBonuses, setSyncedEmployeeBonuses] = useState<EmployeeBonus[]>(() =>
     getSavedEmployeeBonuses()
+  );
+  const [syncedEmployeeAdjustments, setSyncedEmployeeAdjustments] = useState<EmployeeAdjustment[]>(
+    () => getSavedEmployeeAdjustments()
+  );
+  const [syncedPayrollDeductions, setSyncedPayrollDeductions] = useState<PayrollDeductionRecord[]>(
+    () => getSavedPayrollDeductions()
   );
 
   // Kasbon (Cash Advance) Form State
@@ -256,6 +275,8 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     setLiveSyncedSessions([]);
     setLocalCapturedAttendances([]);
     setSyncedEmployeeBonuses(getSavedEmployeeBonuses());
+    setSyncedEmployeeAdjustments(getSavedEmployeeAdjustments());
+    setSyncedPayrollDeductions(getSavedPayrollDeductions());
   }, [currentEmployee.id]);
 
   React.useEffect(() => {
@@ -263,13 +284,15 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     let isMounted = true;
 
     const refreshLiveRoleAndSessions = async () => {
-      const [dbEmp, dbSessions, dbBonuses] = await Promise.all([
+      const [dbEmp, dbSessions, dbBonuses, dbAdjustments, dbDeductions] = await Promise.all([
         fetchEmployeeByIdFromSupabase(currentEmployee.id),
         fetchLivestreamSessionsFromSupabase(
           currentEmployee.id,
           companyConfig.currentPayrollPeriod
         ),
         fetchEmployeeBonuses(),
+        fetchEmployeeAdjustments(),
+        fetchPayrollDeductions(),
       ]);
       if (!isMounted) return;
       if (dbEmp) {
@@ -280,6 +303,12 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       }
       if (Array.isArray(dbBonuses)) {
         setSyncedEmployeeBonuses(dbBonuses);
+      }
+      if (Array.isArray(dbAdjustments)) {
+        setSyncedEmployeeAdjustments(dbAdjustments);
+      }
+      if (Array.isArray(dbDeductions)) {
+        setSyncedPayrollDeductions(dbDeductions);
       }
     };
 
@@ -297,14 +326,26 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       setSyncedEmployeeBonuses(getSavedEmployeeBonuses());
     };
 
+    const handleAdjustmentsUpdated = () => {
+      setSyncedEmployeeAdjustments(getSavedEmployeeAdjustments());
+    };
+
+    const handleDeductionsUpdated = () => {
+      setSyncedPayrollDeductions(getSavedPayrollDeductions());
+    };
+
     const handleStorageOrFocus = () => {
       setSyncedEmployeeBonuses(getSavedEmployeeBonuses());
+      setSyncedEmployeeAdjustments(getSavedEmployeeAdjustments());
+      setSyncedPayrollDeductions(getSavedPayrollDeductions());
       refreshLiveRoleAndSessions();
     };
 
     window.addEventListener('tgi_employee_live_updated', handleLiveUpdated);
     window.addEventListener('tgi_livestream_sessions_updated', handleLiveUpdated);
     window.addEventListener('tgi_employee_bonuses_updated', handleBonusesUpdated);
+    window.addEventListener('tgi_employee_adjustments_updated', handleAdjustmentsUpdated);
+    window.addEventListener('tgi_payroll_deductions_updated', handleDeductionsUpdated);
     window.addEventListener('storage', handleStorageOrFocus);
     window.addEventListener('focus', handleStorageOrFocus);
 
@@ -336,6 +377,9 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       isMounted = false;
       window.removeEventListener('tgi_employee_live_updated', handleLiveUpdated);
       window.removeEventListener('tgi_livestream_sessions_updated', handleLiveUpdated);
+      window.removeEventListener('tgi_employee_bonuses_updated', handleBonusesUpdated);
+      window.removeEventListener('tgi_employee_adjustments_updated', handleAdjustmentsUpdated);
+      window.removeEventListener('tgi_payroll_deductions_updated', handleDeductionsUpdated);
       window.removeEventListener('storage', handleStorageOrFocus);
       window.removeEventListener('focus', handleStorageOrFocus);
       supabase.removeChannel(channel);
@@ -469,12 +513,17 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     [effectivePortalEmployee]
   );
 
+  const myStandardDailyHours = useMemo(
+    () => getEmployeeStandardDailyHours(effectivePortalEmployee, STANDARD_WORK_HOURS_PER_DAY),
+    [effectivePortalEmployee]
+  );
+
   const myPartTimeHourlyRate = useMemo(() => {
     return (
       Number(effectivePortalEmployee.hourlyRate ?? effectivePortalEmployee.hourly_rate) ||
-      getEmployeeHourlyRate(effectivePortalEmployee, STANDARD_WORK_HOURS_PER_DAY, 25)
+      getEmployeeHourlyRate(effectivePortalEmployee, myStandardDailyHours, 25)
     );
-  }, [effectivePortalEmployee]);
+  }, [effectivePortalEmployee, myStandardDailyHours]);
 
   const myPartTimeOvertimeRate = useMemo(() => {
     return (
@@ -532,7 +581,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
           cIn,
           cOut,
           Number(ptLog.hoursWorked ?? ptLog.hours_worked) || 0,
-          STANDARD_WORK_HOURS_PER_DAY
+          myStandardDailyHours
         );
         byDate.set(ptLog.date, {
           id: `att-pt-${ptLog.id}`,
@@ -651,7 +700,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
 
     const computed =
       hasValidIn && hasValidOut
-        ? computeHoursFromClockInOut(cleanIn, cleanOut, STANDARD_WORK_HOURS_PER_DAY)
+        ? computeHoursFromClockInOut(cleanIn, cleanOut, myStandardDailyHours)
         : {
             totalHours: 0,
             normalHours: 0,
@@ -712,7 +761,13 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     const effectiveGrace = penaltyPolicy.useShiftGracePeriod
       ? myShift.gracePeriodMinutes
       : penaltyPolicy.gracePeriodMinutes;
-    return evaluateAttendanceAgainstShift(targetIn, targetOut, myShift, effectiveGrace);
+    return evaluateAttendanceAgainstShift(
+      targetIn,
+      targetOut,
+      myShift,
+      effectiveGrace,
+      myStandardDailyHours
+    );
   }, [
     isAdminSimulationActive,
     customClockInTime,
@@ -720,6 +775,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     todayAttendance,
     myShift,
     penaltyPolicy,
+    myStandardDailyHours,
   ]);
 
   // Count unread performance / bonus notifications for this employee
@@ -1419,14 +1475,14 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     }
   };
 
-  // Calculate current employee hourly rate, daily salary (9 hours), and real-time monthly gross/THP
-  // Jam Kerja Normal dibatasi maksimal 9 jam/hari (STANDARD_WORK_HOURS_PER_DAY) dan 0 jam jika belum Clock-Out / Clock-In === Clock-Out
+  // Calculate current employee hourly rate, daily salary (standard_daily_hours || 9), and real-time monthly gross/THP
+  // Jam Kerja Normal dibatasi maksimal sesuai employee.standard_daily_hours || 9 jam/hari dan 0 jam jika belum Clock-Out / Clock-In === Clock-Out
   const currentPay = payrollRecord || allPayrolls.find((p) => p.employeeId === currentEmployee.id);
   const myHourlyRate = isPartTimeEmployee
     ? myPartTimeHourlyRate
     : currentPay?.hourlyRate ||
-      getEmployeeHourlyRate(effectivePortalEmployee, STANDARD_WORK_HOURS_PER_DAY, 25);
-  const myDailySalary = Math.round(myHourlyRate * STANDARD_WORK_HOURS_PER_DAY);
+      getEmployeeHourlyRate(effectivePortalEmployee, myStandardDailyHours, 25);
+  const myDailySalary = Math.round(myHourlyRate * myStandardDailyHours);
 
   const myDailyWorkBreakdown = useMemo(() => {
     const rawList =
@@ -1454,7 +1510,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
         item.checkIn,
         item.checkOut,
         item.workHours,
-        STANDARD_WORK_HOURS_PER_DAY
+        myStandardDailyHours
       );
       return {
         ...item,
@@ -1465,7 +1521,12 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
         dailyWage: Math.round(cappedRes.cappedWorkHours * myHourlyRate),
       };
     });
-  }, [myPenaltySummary.dailyWorkBreakdown, currentPay?.dailyWorkBreakdown, myHourlyRate]);
+  }, [
+    myPenaltySummary.dailyWorkBreakdown,
+    currentPay?.dailyWorkBreakdown,
+    myHourlyRate,
+    myStandardDailyHours,
+  ]);
 
   const myPresentDaysCount = useMemo(() => {
     if (myDailyWorkBreakdown.length > 0) {
@@ -1495,16 +1556,17 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
         ? Number(currentPay.totalActualWorkHours)
         : myPenaltySummary.totalActualWorkHours;
     return Number(
-      Math.max(0, Math.min(myPresentDaysCount * STANDARD_WORK_HOURS_PER_DAY, rawTotal)).toFixed(2)
+      Math.max(0, Math.min(myPresentDaysCount * myStandardDailyHours, rawTotal)).toFixed(2)
     );
   }, [
     myDailyWorkBreakdown,
     currentPay?.totalActualWorkHours,
     myPenaltySummary.totalActualWorkHours,
     myPresentDaysCount,
+    myStandardDailyHours,
   ]);
 
-  // Gaji Pokok selalu 100% sinkron: Total Jam Kerja Aktual (Maks. 9 Jam/Hari) × Tarif Per Jam
+  // Gaji Pokok selalu 100% sinkron: Total Jam Kerja Aktual (Maks. myStandardDailyHours Jam/Hari) × Tarif Per Jam
   const baseSal = Math.round(myTotalActualWorkHours * myHourlyRate);
   const posAllow = currentEmployee.allowances?.position || 0;
   const transAllow = currentEmployee.allowances?.transport || 0;
@@ -1589,6 +1651,50 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
   const salesCommissionPay =
     canAccessLiveCommissionPanel || rawCommissionPay > 0 ? rawCommissionPay : 0;
 
+  const allCombinedAdjustments = useMemo(() => {
+    const map = new Map<string, EmployeeAdjustment>();
+    for (const a of [...syncedEmployeeAdjustments, ...employeeAdjustments]) {
+      if (a?.id) map.set(a.id, a);
+    }
+    return Array.from(map.values());
+  }, [syncedEmployeeAdjustments, employeeAdjustments]);
+
+  const allCombinedDeductions = useMemo(() => {
+    const map = new Map<string, PayrollDeductionRecord>();
+    for (const d of [...syncedPayrollDeductions, ...payrollDeductions]) {
+      if (d?.id) map.set(d.id, d);
+    }
+    return Array.from(map.values());
+  }, [syncedPayrollDeductions, payrollDeductions]);
+
+  const myPeriodDeduction = useMemo(() => {
+    const targetPeriodYm =
+      normalizePeriodToYearMonth(currentPay?.period || companyConfig.currentPayrollPeriod) ||
+      new Date().toISOString().slice(0, 7);
+    return (
+      allCombinedDeductions.find(
+        (d) =>
+          normalizePeriodToYearMonth(d.period_month) === targetPeriodYm &&
+          doesEmployeeMatchPayrollDeduction(d, effectivePortalEmployee)
+      ) || null
+    );
+  }, [
+    allCombinedDeductions,
+    currentPay?.period,
+    companyConfig.currentPayrollPeriod,
+    effectivePortalEmployee,
+  ]);
+
+  const manualBpjsTk = myPeriodDeduction
+    ? Math.max(0, Math.round(Number(myPeriodDeduction.bpjs_tk_manual) || 0))
+    : Math.max(0, Math.round(Number(currentPay?.bpjs_tk_manual) || 0));
+  const manualBpjsKesehatan = myPeriodDeduction
+    ? Math.max(0, Math.round(Number(myPeriodDeduction.bpjs_kesehatan_manual) || 0))
+    : Math.max(0, Math.round(Number(currentPay?.bpjs_kesehatan_manual) || 0));
+  const manualPph21 = myPeriodDeduction
+    ? Math.max(0, Math.round(Number(myPeriodDeduction.pph21_manual) || 0))
+    : Math.max(0, Math.round(Number(currentPay?.pph21_manual) || 0));
+
   const fallbackPayRecord: PayrollRecord = useMemo(
     () => ({
       id: currentPay?.id || `pay-portal-${effectivePortalEmployee.id}`,
@@ -1598,7 +1704,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       baseSalary: baseSal,
       dailySalary: myDailySalary,
       hourlyRate: myHourlyRate,
-      standardWorkHoursPerDay: STANDARD_WORK_HOURS_PER_DAY,
+      standardWorkHoursPerDay: myStandardDailyHours,
       totalActualWorkHours: myTotalActualWorkHours,
       presentDaysCount: myPresentDaysCount,
       standardWorkingDays: currentPay?.standardWorkingDays || 25,
@@ -1620,15 +1726,18 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
         bonusPay +
         salesCommissionPay +
         additionalBonusPay,
-      bpjsKesehatanEmployer: currentPay?.bpjsKesehatanEmployer || Math.round(baseSal * 0.04),
-      bpjsKesehatanEmployee: currentPay?.bpjsKesehatanEmployee || Math.round(baseSal * 0.01),
-      bpjsJhtEmployer: currentPay?.bpjsJhtEmployer || Math.round(baseSal * 0.037),
-      bpjsJhtEmployee: currentPay?.bpjsJhtEmployee || Math.round(baseSal * 0.02),
-      bpjsJpEmployer: currentPay?.bpjsJpEmployer || Math.round(baseSal * 0.02),
-      bpjsJpEmployee: currentPay?.bpjsJpEmployee || Math.round(baseSal * 0.01),
-      bpjsJkkEmployer: currentPay?.bpjsJkkEmployer || Math.round(baseSal * 0.0024),
-      bpjsJkmEmployer: currentPay?.bpjsJkmEmployer || Math.round(baseSal * 0.003),
-      pph21TER: currentPay?.pph21TER || Math.round(baseSal * 0.025),
+      bpjsKesehatanEmployer: 0,
+      bpjsKesehatanEmployee: manualBpjsKesehatan,
+      bpjsJhtEmployer: 0,
+      bpjsJhtEmployee: manualBpjsTk,
+      bpjsJpEmployer: 0,
+      bpjsJpEmployee: 0,
+      bpjsJkkEmployer: 0,
+      bpjsJkmEmployer: 0,
+      pph21TER: manualPph21,
+      bpjs_tk_manual: manualBpjsTk,
+      bpjs_kesehatan_manual: manualBpjsKesehatan,
+      pph21_manual: manualPph21,
       lateDeduction: currentPay?.lateDeduction ?? myPenaltySummary.totalDeductionAmount,
       lateFrequency: currentPay?.lateFrequency ?? myPenaltySummary.lateFrequency,
       totalLateMinutes: currentPay?.totalLateMinutes ?? myPenaltySummary.totalLateMinutes,
@@ -1654,6 +1763,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       baseSal,
       myDailySalary,
       myHourlyRate,
+      myStandardDailyHours,
       myTotalActualWorkHours,
       myPresentDaysCount,
       myDailyWorkBreakdown,
@@ -1670,6 +1780,9 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       bonusPay,
       additionalBonusPay,
       myPenaltySummary,
+      manualBpjsTk,
+      manualBpjsKesehatan,
+      manualPph21,
     ]
   );
 
@@ -1685,6 +1798,8 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
         employee: effectivePortalEmployee,
         companyConfig,
         employeeBonuses: allCombinedBonuses,
+        employeeAdjustments: allCombinedAdjustments,
+        payrollDeductions: allCombinedDeductions,
         cashAdvances: myCashAdvances,
         leaveRequests: myLeaveRequests,
         overtimeRequests: myOvertimeRequests,
@@ -1695,6 +1810,8 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       effectivePortalEmployee,
       companyConfig,
       allCombinedBonuses,
+      allCombinedAdjustments,
+      allCombinedDeductions,
       myCashAdvances,
       myLeaveRequests,
       myOvertimeRequests,
@@ -1749,7 +1866,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   {currentEmployee.employmentStatus}
                 </span>
                 <span className="px-2.5 py-0.5 rounded-full text-[10px] sm:text-xs font-extrabold bg-amber-300 text-slate-950 border border-amber-200 shadow-2xs">
-                  Tarif Gaji: {formatRupiah(myHourlyRate)} / jam (Std {STANDARD_WORK_HOURS_PER_DAY} Jam/Hari)
+                  Tarif Gaji: {formatRupiah(myHourlyRate)} / jam (Std {myStandardDailyHours} Jam/Hari)
                 </span>
                 {canAccessLiveCommissionPanel && (
                   <button
@@ -2686,7 +2803,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   - {formatCurrency(totalDeduct)}
                 </h3>
                 <p className="text-xs text-slate-500 mt-1">
-                  Iuran BPJS TK, BPJS Kesehatan & PPh 21 TER
+                  Potongan Absensi, Kasbon &amp; Pajak/BPJS (Input Manual Admin)
                 </p>
               </div>
               <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-600">
@@ -2749,7 +2866,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                     <span>Transparansi Kalkulasi Gaji Per Jam &amp; Jam Kerja Harian Riil</span>
                   </h4>
                   <p className="text-[11px] text-emerald-800 mt-0.5">
-                    Jam kerja standar adalah <strong>{STANDARD_WORK_HOURS_PER_DAY} jam/hari</strong>. Gaji Harian dihitung dari <strong>Jam Kerja Aktual Hari Tersebut × Tarif Per Jam ({formatRupiah(myHourlyRate)}/jam)</strong>.
+                    Jam kerja standar adalah <strong>{myStandardDailyHours} jam/hari</strong>. Gaji Harian dihitung dari <strong>Jam Kerja Aktual Hari Tersebut × Tarif Per Jam ({formatRupiah(myHourlyRate)}/jam)</strong>.
                   </p>
                 </div>
                 <span className="px-3 py-1 rounded-xl bg-white border border-emerald-300 text-emerald-900 text-xs font-extrabold shrink-0">
@@ -2765,7 +2882,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   </span>
                 </div>
                 <div className="bg-white p-3 rounded-xl border border-emerald-200">
-                  <span className="text-[10px] text-slate-500 block">Gaji Harian ({STANDARD_WORK_HOURS_PER_DAY} Jam)</span>
+                  <span className="text-[10px] text-slate-500 block">Gaji Harian ({myStandardDailyHours} Jam)</span>
                   <span className="font-bold text-slate-900 text-sm block mt-0.5">
                     {formatRupiah(myDailySalary)} / hari
                   </span>
@@ -2806,7 +2923,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                         );
                         const isCapped = Boolean(
                           item.isCappedToMax ||
-                            (Number(item.rawDurationHours) || 0) > STANDARD_WORK_HOURS_PER_DAY
+                            (Number(item.rawDurationHours) || 0) > myStandardDailyHours
                         );
                         return (
                           <tr key={item.date} className="hover:bg-emerald-50/40">
@@ -2826,10 +2943,10 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                                 {Boolean(isCapped) && (
                                   <span
                                     className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 font-bold text-[10px]"
-                                    title={`Durasi presensi aktual ${item.rawDurationHours} Jam dibatasi maksimal ${STANDARD_WORK_HOURS_PER_DAY} Jam kerja normal`}
+                                    title={`Durasi presensi aktual ${item.rawDurationHours} Jam dibatasi maksimal ${myStandardDailyHours} Jam/Hari kerja normal`}
                                   >
-                                    Maks. {STANDARD_WORK_HOURS_PER_DAY} Jam
-                                    {Boolean(item.rawDurationHours && item.rawDurationHours > STANDARD_WORK_HOURS_PER_DAY)
+                                    Maks. {myStandardDailyHours} Jam/Hari
+                                    {Boolean(item.rawDurationHours && item.rawDurationHours > myStandardDailyHours)
                                       ? ` (Aktual ${item.rawDurationHours}j)`
                                       : ''}
                                   </span>
@@ -3167,7 +3284,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                     setAttendanceNotice(
                       `Berhasil Absen Pulang dengan Foto Wajah & GPS HP pukul ${record.checkOut} WIB (${
                         record.checkOutFullTimestamp || ''
-                      }) • Jam Kerja Aktual: ${record.workHours} Jam (Maks. ${STANDARD_WORK_HOURS_PER_DAY} Jam/Hari)${
+                      }) • Jam Kerja Aktual: ${record.workHours} Jam (Maks. ${myStandardDailyHours} Jam/Hari)${
                         isPartTimeEmployee ? ' • Tersinkron ke Log Presensi & Slip Gaji Part-Time!' : '!'
                       }`
                     );
@@ -5691,7 +5808,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   </span>
                 </div>
                 <div className="p-2 bg-emerald-50/60 border border-emerald-200 rounded-lg">
-                  <span className="text-slate-600 font-semibold block text-[10px]">Gaji Harian (Std {STANDARD_WORK_HOURS_PER_DAY} Jam):</span>
+                  <span className="text-slate-600 font-semibold block text-[10px]">Gaji Harian (Std {myStandardDailyHours} Jam):</span>
                   <span className="font-bold text-slate-900 text-xs">
                     {formatRupiah(myDailySalary)} / hari
                   </span>

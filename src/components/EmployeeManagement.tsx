@@ -59,6 +59,7 @@ import {
   evaluateBankAccountValidity,
   getEmployeeDailySalary,
   getEmployeeHourlyRate,
+  getEmployeeStandardDailyHours,
   STANDARD_WORK_HOURS_PER_DAY,
   calculateEmployeeLiveSalesCommission,
   normalizeEmploymentType,
@@ -544,6 +545,8 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
       hourly_rate: 25000,
       overtimeRate: 37500,
       overtime_rate: 37500,
+      standard_daily_hours: 9,
+      standardDailyHours: 9,
       dailySalary: 225000,
       daily_salary: 225000,
       baseSalary: 5625000,
@@ -577,8 +580,9 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
     setEditingEmployee(emp);
     setFormError(null);
     setFormPhotoError(null);
-    const resolvedHourly = getEmployeeHourlyRate(emp, STANDARD_WORK_HOURS_PER_DAY, 25);
-    const resolvedDaily = getEmployeeDailySalary(emp, 25, STANDARD_WORK_HOURS_PER_DAY);
+    const resolvedStdHours = getEmployeeStandardDailyHours(emp, STANDARD_WORK_HOURS_PER_DAY);
+    const resolvedHourly = getEmployeeHourlyRate(emp, resolvedStdHours, 25);
+    const resolvedDaily = Math.round(resolvedHourly * resolvedStdHours);
     const resolvedIsHost = Boolean(emp.is_host === true || emp.isLiveStreamHost === true);
     const resolvedIsCoHost = Boolean(emp.is_co_host === true || emp.isCoHostLiveStream === true);
     const resolvedHostPct = Number(emp.host_commission_pct ?? emp.salesCommissionPercentage) || 0;
@@ -615,6 +619,8 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
       hourly_rate: resolvedHourly,
       overtimeRate: resolvedOvertimeRate,
       overtime_rate: resolvedOvertimeRate,
+      standard_daily_hours: resolvedStdHours,
+      standardDailyHours: resolvedStdHours,
       dailySalary: resolvedDaily,
       daily_salary: resolvedDaily,
       isLiveStreamHost: resolvedIsHost,
@@ -662,20 +668,17 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
 
     stopFormCamera();
 
+    const resolvedStdHours = getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY);
     const explicitHourly = Number(formData.hourlyRate ?? formData.hourly_rate) || 0;
     const explicitDaily = Number(formData.dailySalary ?? formData.daily_salary) || 0;
     const resolvedHourlyRate =
       explicitHourly > 0
         ? Math.round(explicitHourly)
         : explicitDaily > 0
-        ? Math.round(explicitDaily / STANDARD_WORK_HOURS_PER_DAY)
-        : Math.round((Number(formData.baseSalary) || 5625000) / (25 * STANDARD_WORK_HOURS_PER_DAY));
-    const resolvedDailySalary =
-      explicitDaily > 0
-        ? Math.round(explicitDaily)
-        : Math.round(resolvedHourlyRate * STANDARD_WORK_HOURS_PER_DAY);
-    const resolvedBaseSalary =
-      Number(formData.baseSalary) || resolvedDailySalary * 25;
+        ? Math.round(explicitDaily / resolvedStdHours)
+        : Math.round((Number(formData.baseSalary) || 5625000) / (25 * resolvedStdHours));
+    const resolvedDailySalary = Math.round(resolvedHourlyRate * resolvedStdHours);
+    const resolvedBaseSalary = Math.round(resolvedDailySalary * 25);
     const explicitOvertimeRate = Number(formData.overtimeRate ?? formData.overtime_rate) || 0;
     const resolvedOvertimeRate =
       explicitOvertimeRate > 0
@@ -752,6 +755,8 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         hourly_rate: resolvedHourlyRate,
         overtimeRate: resolvedOvertimeRate,
         overtime_rate: resolvedOvertimeRate,
+        standard_daily_hours: resolvedStdHours,
+        standardDailyHours: resolvedStdHours,
         dailySalary: resolvedDailySalary,
         daily_salary: resolvedDailySalary,
         baseSalary: resolvedBaseSalary,
@@ -781,7 +786,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
       saveEmployeeEmploymentMetaLocal(updated);
       onUpdateEmployee(updated);
       syncEmployeeLiveColumnsToSupabase(updated).catch(() => {});
-      showToast(`Data karyawan ${updated.fullName} (${resolvedEmploymentType} • Tarif Per Jam: ${formatRupiah(resolvedHourlyRate)}/jam${resolvedIsHost ? ` • Host Live: ${resolvedCommPct}%` : ''}${resolvedIsCoHost ? ` • Co-Host Live: ${resolvedCoHostCommPct}%` : ''}) berhasil diperbarui!`);
+      showToast(`Data karyawan ${updated.fullName} (${resolvedEmploymentType} • Std: ${resolvedStdHours} Jam/Hari • Tarif Per Jam: ${formatRupiah(resolvedHourlyRate)}/jam${resolvedIsHost ? ` • Host Live: ${resolvedCommPct}%` : ''}${resolvedIsCoHost ? ` • Co-Host Live: ${resolvedCoHostCommPct}%` : ''}) berhasil diperbarui!`);
     } else {
       const joinDt = formData.joinDate || new Date().toISOString().split('T')[0];
       const newEmp: Employee = {
@@ -815,6 +820,8 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         hourly_rate: resolvedHourlyRate,
         overtimeRate: resolvedOvertimeRate,
         overtime_rate: resolvedOvertimeRate,
+        standard_daily_hours: resolvedStdHours,
+        standardDailyHours: resolvedStdHours,
         dailySalary: resolvedDailySalary,
         daily_salary: resolvedDailySalary,
         baseSalary: resolvedBaseSalary,
@@ -867,8 +874,9 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
       'Jabatan',
       'Departemen',
       'Status Kontrak',
+      'Standar Jam Kerja/Hari',
       'Tarif Gaji Per Jam',
-      'Gaji Per Hari (9 Jam)',
+      'Gaji Per Hari',
       'Gaji Pokok (25 Hari)',
       'Tunjangan Jabatan',
       'Tunjangan Transport',
@@ -891,8 +899,9 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
       `"${e.role}"`,
       `"${e.department}"`,
       e.employmentStatus,
-      getEmployeeHourlyRate(e, STANDARD_WORK_HOURS_PER_DAY, 25),
-      getEmployeeDailySalary(e, 25, STANDARD_WORK_HOURS_PER_DAY),
+      getEmployeeStandardDailyHours(e),
+      getEmployeeHourlyRate(e, getEmployeeStandardDailyHours(e), 25),
+      getEmployeeDailySalary(e, 25, getEmployeeStandardDailyHours(e)),
       e.baseSalary,
       e.allowances.position,
       e.allowances.transport,
@@ -1336,11 +1345,23 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                     </span>
                   </td>
                   <td className="py-3 px-4">
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold text-[11px] mb-0.5">
-                      {formatRupiah(getEmployeeHourlyRate(emp, STANDARD_WORK_HOURS_PER_DAY, 25))} / jam
-                    </span>
+                    <div className="flex items-center gap-1 flex-wrap mb-0.5">
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold text-[11px]">
+                        {formatRupiah(getEmployeeHourlyRate(emp, getEmployeeStandardDailyHours(emp), 25))} / jam
+                      </span>
+                      <span
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-extrabold text-[10px] border ${
+                          getEmployeeStandardDailyHours(emp) < 9
+                            ? 'bg-sky-50 text-sky-800 border-sky-200'
+                            : 'bg-slate-100 text-slate-700 border-slate-200'
+                        }`}
+                        title={`Standar Jam Kerja Harian: ${getEmployeeStandardDailyHours(emp)} Jam/Hari`}
+                      >
+                        Std: {getEmployeeStandardDailyHours(emp)} Jam/Hari
+                      </span>
+                    </div>
                     <span className="font-semibold text-slate-900 block text-[11px]">
-                      9 Jam/Hr: {formatRupiah(getEmployeeDailySalary(emp, 25, STANDARD_WORK_HOURS_PER_DAY))}
+                      {getEmployeeStandardDailyHours(emp)} Jam/Hr: {formatRupiah(getEmployeeDailySalary(emp, 25, getEmployeeStandardDailyHours(emp)))}
                     </span>
                     {(emp.isLiveStreamHost ||
                       (emp.salesCommissionPercentage || 0) > 0 ||
@@ -1506,10 +1527,11 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
       </div>
 
       {/* VIEW PROFILE MODAL */}
-      {viewingEmployee && (
+      {Boolean(viewingEmployee) && viewingEmployee && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-slate-200 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between pb-4 border-b border-slate-100">
+          <div className="bg-white rounded-2xl max-w-3xl w-full shadow-2xl border border-slate-200 flex flex-col max-h-[88vh] overflow-hidden">
+            {/* Sticky Header */}
+            <div className="shrink-0 flex items-center justify-between px-5 py-4 border-b border-slate-200 bg-white">
               <div className="flex items-center gap-3.5">
                 <div className="relative group shrink-0">
                   <img
@@ -1529,7 +1551,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                 <div>
                   <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                     {viewingEmployee.fullName}
-                    {viewingEmployee.avatarUrl && viewingEmployee.avatarUrl.startsWith('data:image') && (
+                    {Boolean(viewingEmployee.avatarUrl && viewingEmployee.avatarUrl.startsWith('data:image')) && (
                       <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-full text-[10px] font-semibold">
                         Foto Real
                       </span>
@@ -1542,7 +1564,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                         ? viewingEmployee.role
                         : `${viewingEmployee.role} • ${viewingEmployee.department}`}
                     </span>
-                    {viewingEmployee.gender && (
+                    {Boolean(viewingEmployee.gender) && (
                       <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
                         viewingEmployee.gender === 'Laki-laki'
                           ? 'bg-blue-50 text-blue-700 border border-blue-200'
@@ -1561,7 +1583,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                       <Upload className="w-3 h-3" />
                       Upload / Ganti Foto Real Karyawan
                     </button>
-                    {viewingEmployee.contractDocumentUrl && (
+                    {Boolean(viewingEmployee.contractDocumentUrl) && (
                       <button
                         type="button"
                         onClick={() =>
@@ -1588,6 +1610,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                 </div>
               </div>
               <button
+                type="button"
                 onClick={() => setViewingEmployee(null)}
                 className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 cursor-pointer"
               >
@@ -1595,7 +1618,9 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
               </button>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-5 text-xs">
+            {/* Scrollable Body */}
+            <div className="flex-1 overflow-y-auto p-5 space-y-5">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
               <div className="p-3.5 bg-slate-50 rounded-xl space-y-2 border border-slate-100">
                 <span className="font-semibold text-slate-700 block border-b pb-1">Data Pekerjaan &amp; Identitas</span>
                 <div className="flex justify-between"><span className="text-slate-500">NIK Karyawan:</span><span className="font-mono font-medium">{viewingEmployee.nik}</span></div>
@@ -1687,16 +1712,22 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                 <div className="flex justify-between items-center">
                   <span className="text-slate-600 font-medium">Tarif Gaji Per Jam (hourly_rate):</span>
                   <span className="font-extrabold text-emerald-700 bg-white px-2 py-0.5 rounded border border-emerald-200">
-                    {formatRupiah(getEmployeeHourlyRate(viewingEmployee, STANDARD_WORK_HOURS_PER_DAY, 25))} / jam
+                    {formatRupiah(getEmployeeHourlyRate(viewingEmployee, getEmployeeStandardDailyHours(viewingEmployee), 25))} / jam
                   </span>
                 </div>
                 <div className="flex justify-between items-center">
-                  <span className="text-slate-600 font-medium">Gaji Harian (Standar 9 Jam):</span>
-                  <span className="font-bold text-slate-800">
-                    {formatRupiah(getEmployeeDailySalary(viewingEmployee, 25, STANDARD_WORK_HOURS_PER_DAY))} / hari
+                  <span className="text-slate-600 font-medium">Standar Jam Kerja / Hari:</span>
+                  <span className="font-extrabold text-sky-800 bg-sky-50 px-2 py-0.5 rounded border border-sky-200">
+                    Std: {getEmployeeStandardDailyHours(viewingEmployee)} Jam/Hari
                   </span>
                 </div>
-                <div className="flex justify-between"><span className="text-slate-600">Est. Bulanan (25 Hr / 225 Jam):</span><span className="font-bold text-slate-900">{formatRupiah(viewingEmployee.baseSalary)}</span></div>
+                <div className="flex justify-between items-center">
+                  <span className="text-slate-600 font-medium">Gaji Harian (Standar {getEmployeeStandardDailyHours(viewingEmployee)} Jam):</span>
+                  <span className="font-bold text-slate-800">
+                    {formatRupiah(getEmployeeDailySalary(viewingEmployee, 25, getEmployeeStandardDailyHours(viewingEmployee)))} / hari
+                  </span>
+                </div>
+                <div className="flex justify-between"><span className="text-slate-600">Est. Bulanan (25 Hr / {25 * getEmployeeStandardDailyHours(viewingEmployee)} Jam):</span><span className="font-bold text-slate-900">{formatRupiah(viewingEmployee.baseSalary)}</span></div>
                 <div className="flex justify-between"><span className="text-slate-600">Tunj. Jabatan:</span><span>{formatRupiah(viewingEmployee.allowances.position)}</span></div>
                 <div className="flex justify-between"><span className="text-slate-600">Tunj. Transport:</span><span>{formatRupiah(viewingEmployee.allowances.transport)}</span></div>
                 <div className="flex justify-between"><span className="text-slate-600">Tunj. Makan:</span><span>{formatRupiah(viewingEmployee.allowances.meal)}</span></div>
@@ -2853,14 +2884,16 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                 </div>
               );
             })()}
+            </div>
 
-            <div className="mt-6 flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-slate-100">
+            {/* Sticky Footer */}
+            <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-5 py-3 flex flex-wrap items-center justify-between gap-3">
               <button
                 type="button"
                 onClick={() => {
                   setDeletingEmployee(viewingEmployee);
                 }}
-                className="px-3.5 py-2 text-rose-600 hover:text-white hover:bg-rose-600 border border-rose-200 hover:border-rose-600 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                className="px-3.5 py-2 text-rose-600 hover:text-white hover:bg-rose-600 bg-white border border-rose-200 hover:border-rose-600 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
               >
                 <Trash2 className="w-3.5 h-3.5" />
                 <span>Hapus Karyawan</span>
@@ -2880,6 +2913,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                   <span>Edit Profil & Gaji</span>
                 </button>
                 <button
+                  type="button"
                   onClick={() => setViewingEmployee(null)}
                   className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-semibold cursor-pointer"
                 >
@@ -2892,14 +2926,23 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
       )}
 
       {/* ADD / EDIT EMPLOYEE MODAL */}
-      {isAddModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
-          <div className="bg-white rounded-2xl max-w-3xl w-full p-6 shadow-2xl border border-slate-200 my-8">
-            <div className="flex items-center justify-between pb-4 border-b border-slate-100">
-              <h3 className="text-base font-bold text-slate-900">
-                {editingEmployee ? 'Edit Data Karyawan' : 'Tambah Karyawan Baru'}
-              </h3>
+      {Boolean(isAddModalOpen) && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-3xl w-full shadow-2xl border border-slate-200 flex flex-col max-h-[88vh] overflow-hidden">
+            {/* Sticky Header */}
+            <div className="shrink-0 flex items-center justify-between px-5 py-3.5 border-b border-slate-200 bg-white">
+              <div>
+                <h3 className="text-base font-bold text-slate-900">
+                  {editingEmployee ? 'Edit Data Karyawan' : 'Tambah Karyawan Baru'}
+                </h3>
+                <p className="text-[11px] text-slate-500">
+                  {editingEmployee
+                    ? `Perbarui profil, standar jam kerja harian, & komponen gaji ${editingEmployee.fullName}`
+                    : 'Lengkapi data profil, standar jam kerja harian, dan gaji karyawan baru'}
+                </p>
+              </div>
               <button
+                type="button"
                 onClick={closeAddModal}
                 className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 cursor-pointer"
               >
@@ -2907,13 +2950,18 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
               </button>
             </div>
 
-            <form onSubmit={handleSaveEmployee} className="mt-5 space-y-5 text-xs">
-              {formError && (
-                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>{formError}</span>
-                </div>
-              )}
+            <form
+              onSubmit={handleSaveEmployee}
+              className="flex flex-col flex-1 min-h-0 overflow-hidden text-xs"
+            >
+              {/* Scrollable Form Body */}
+              <div className="flex-1 overflow-y-auto p-5 space-y-5">
+                {Boolean(formError) && (
+                  <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>{formError}</span>
+                  </div>
+                )}
 
               {/* Seksi Foto Profil Real Karyawan (Pas Foto) */}
               <div className="p-4 bg-slate-50/90 rounded-xl border border-slate-200">
@@ -3392,7 +3440,8 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                               value={formData.hourlyRate ?? formData.hourly_rate ?? 0}
                               onChange={(e) => {
                                 const hRate = Math.max(0, Number(e.target.value) || 0);
-                                const dRate = Math.round(hRate * STANDARD_WORK_HOURS_PER_DAY);
+                                const stdHrs = getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY);
+                                const dRate = Math.round(hRate * stdHrs);
                                 const currentOt = Number(formData.overtimeRate ?? formData.overtime_rate) || 0;
                                 const nextOt = currentOt > 0 ? currentOt : Math.round(hRate * 1.5);
                                 setFormData({
@@ -3417,7 +3466,8 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                                 key={preset}
                                 type="button"
                                 onClick={() => {
-                                  const dRate = Math.round(preset * STANDARD_WORK_HOURS_PER_DAY);
+                                  const stdHrs = getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY);
+                                  const dRate = Math.round(preset * stdHrs);
                                   const otPreset = Math.round(preset * 1.5);
                                   setFormData({
                                     ...formData,
@@ -3696,16 +3746,151 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                 </div>
               </div>
 
-              {/* Seksi 2: Gaji Per Hari, Gaji Pokok & Tunjangan */}
+              {/* Seksi 2: Standar Jam Kerja Harian, Gaji Per Jam, Gaji Harian & Tunjangan */}
               <div>
                 <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5 pb-1 border-b border-slate-100">
                   <h4 className="font-semibold text-slate-800">
-                    2. Struktur Tarif Gaji Per Jam (Hourly Rate), Harian (9 Jam) &amp; Tunjangan (IDR)
+                    2. Struktur Tarif Gaji Per Jam (Hourly Rate), Standar Jam Kerja Harian &amp; Tunjangan (IDR)
                   </h4>
                   <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
-                    Payroll Real-Time = Jam Kerja Riil × Tarif Gaji Per Jam (Standar 9 Jam/Hari)
+                    Payroll Real-Time = Jam Kerja Riil × Tarif Gaji Per Jam (Standar {getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY)} Jam/Hari)
                   </span>
                 </div>
+
+                {/* Pengaturan Standar Jam Kerja / Hari (standard_daily_hours) */}
+                <div className="mb-3 p-3.5 bg-sky-50/80 border-2 border-sky-300 rounded-xl space-y-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <label className="block text-sky-950 font-extrabold text-xs">
+                        Standar Jam Kerja / Hari (<code className="font-mono text-[10px]">standard_daily_hours</code>) *
+                      </label>
+                      <span className="text-[11px] text-sky-800 block mt-0.5">
+                        Menentukan batas maksimal (cap) jam kerja normal harian, tarif gaji harian, dan potongan absensi.
+                      </span>
+                    </div>
+                    <span className="px-2.5 py-1 rounded-lg bg-sky-600 text-white font-extrabold text-xs shadow-2xs">
+                      Std: {getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY)} Jam / Hari
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
+                    <div className="md:col-span-8 flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const nextStd = 9;
+                          const currHourly =
+                            Number(formData.hourlyRate ?? formData.hourly_rate) || 25000;
+                          const nextDaily = Math.round(currHourly * nextStd);
+                          setFormData({
+                            ...formData,
+                            standard_daily_hours: nextStd,
+                            standardDailyHours: nextStd,
+                            dailySalary: nextDaily,
+                            daily_salary: nextDaily,
+                            baseSalary: Math.round(nextDaily * 25),
+                          });
+                        }}
+                        className={`px-3 py-2 rounded-xl text-xs font-extrabold border transition-all cursor-pointer ${
+                          getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY) === 9
+                            ? 'bg-sky-700 text-white border-sky-700 shadow-xs'
+                            : 'bg-white text-sky-900 border-sky-300 hover:bg-sky-100'
+                        }`}
+                      >
+                        9 Jam / Hari (Full Shift)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const nextStd = 6;
+                          const currHourly =
+                            Number(formData.hourlyRate ?? formData.hourly_rate) || 25000;
+                          const nextDaily = Math.round(currHourly * nextStd);
+                          setFormData({
+                            ...formData,
+                            standard_daily_hours: nextStd,
+                            standardDailyHours: nextStd,
+                            dailySalary: nextDaily,
+                            daily_salary: nextDaily,
+                            baseSalary: Math.round(nextDaily * 25),
+                          });
+                        }}
+                        className={`px-3 py-2 rounded-xl text-xs font-extrabold border transition-all cursor-pointer ${
+                          getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY) === 6
+                            ? 'bg-sky-700 text-white border-sky-700 shadow-xs'
+                            : 'bg-white text-sky-900 border-sky-300 hover:bg-sky-100'
+                        }`}
+                      >
+                        6 Jam / Hari (Half / Short Shift)
+                      </button>
+                      {[4, 5, 7, 8].map((h) => (
+                        <button
+                          key={h}
+                          type="button"
+                          onClick={() => {
+                            const currHourly =
+                              Number(formData.hourlyRate ?? formData.hourly_rate) || 25000;
+                            const nextDaily = Math.round(currHourly * h);
+                            setFormData({
+                              ...formData,
+                              standard_daily_hours: h,
+                              standardDailyHours: h,
+                              dailySalary: nextDaily,
+                              daily_salary: nextDaily,
+                              baseSalary: Math.round(nextDaily * 25),
+                            });
+                          }}
+                          className={`px-2.5 py-2 rounded-xl text-[11px] font-bold border transition-all cursor-pointer ${
+                            getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY) === h
+                              ? 'bg-sky-700 text-white border-sky-700 shadow-xs'
+                              : 'bg-white text-slate-700 border-slate-300 hover:bg-sky-50'
+                          }`}
+                        >
+                          {h} Jam
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="md:col-span-4">
+                      <div className="relative">
+                        <input
+                          type="number"
+                          min={1}
+                          max={24}
+                          step={0.5}
+                          value={
+                            formData.standard_daily_hours ??
+                            formData.standardDailyHours ??
+                            STANDARD_WORK_HOURS_PER_DAY
+                          }
+                          onChange={(e) => {
+                            const rawVal = Number(e.target.value);
+                            const nextStd =
+                              !isNaN(rawVal) && rawVal > 0
+                                ? Math.min(24, rawVal)
+                                : STANDARD_WORK_HOURS_PER_DAY;
+                            const currHourly =
+                              Number(formData.hourlyRate ?? formData.hourly_rate) || 25000;
+                            const nextDaily = Math.round(currHourly * nextStd);
+                            setFormData({
+                              ...formData,
+                              standard_daily_hours: nextStd,
+                              standardDailyHours: nextStd,
+                              dailySalary: nextDaily,
+                              daily_salary: nextDaily,
+                              baseSalary: Math.round(nextDaily * 25),
+                            });
+                          }}
+                          className="w-full pl-3 pr-20 py-2 bg-white border-2 border-sky-400 rounded-xl font-extrabold text-sky-950 text-sm focus:outline-hidden focus:ring-2 focus:ring-sky-500/30"
+                        />
+                        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] font-bold text-sky-700">
+                          Jam / Hari
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-3">
                   <div className="p-2.5 bg-emerald-50/90 border border-emerald-400 rounded-xl">
                     <label className="block text-emerald-950 font-bold mb-1">
@@ -3723,12 +3908,13 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                         Math.round(
                           (Number(formData.dailySalary ?? formData.daily_salary) ||
                             Math.round((Number(formData.baseSalary) || 0) / 25)) /
-                            STANDARD_WORK_HOURS_PER_DAY
+                            getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY)
                         )
                       }
                       onChange={(e) => {
                         const nextHourly = Math.max(0, Number(e.target.value) || 0);
-                        const nextDaily = Math.round(nextHourly * STANDARD_WORK_HOURS_PER_DAY);
+                        const stdHrs = getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY);
+                        const nextDaily = Math.round(nextHourly * stdHrs);
                         setFormData({
                           ...formData,
                           hourlyRate: nextHourly,
@@ -3742,12 +3928,12 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                       className="w-full p-2 bg-white border border-emerald-500 rounded-lg text-emerald-950 font-extrabold focus:outline-hidden focus:ring-2 focus:ring-emerald-500/30"
                     />
                     <span className="block text-[10px] text-emerald-700 mt-1 font-medium">
-                      Dikali akumulasi jam kerja riil bulanan
+                      Dikali akumulasi jam kerja riil bulanan (Maks. {getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY)} Jam/Hari)
                     </span>
                   </div>
                   <div className="p-2.5 bg-emerald-50/50 border border-emerald-200 rounded-xl">
                     <label className="block text-emerald-900 font-bold mb-1">
-                      Gaji Harian Standar 9 Jam (<code className="font-mono text-[10px]">daily_salary</code>)
+                      Gaji Harian Standar {getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY)} Jam (<code className="font-mono text-[10px]">daily_salary</code>)
                     </label>
                     <input
                       type="number"
@@ -3761,7 +3947,8 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                       }
                       onChange={(e) => {
                         const nextDaily = Math.max(0, Number(e.target.value) || 0);
-                        const nextHourly = Math.round(nextDaily / STANDARD_WORK_HOURS_PER_DAY);
+                        const stdHrs = getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY);
+                        const nextHourly = Math.round(nextDaily / stdHrs);
                         setFormData({
                           ...formData,
                           hourlyRate: nextHourly,
@@ -3775,12 +3962,12 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                       className="w-full p-2 bg-white border border-emerald-300 rounded-lg text-emerald-900 font-bold focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20"
                     />
                     <span className="block text-[10px] text-emerald-700 mt-1">
-                      9 jam × {formatRupiah(formData.hourlyRate ?? formData.hourly_rate ?? 0)} / jam
+                      {getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY)} jam × {formatRupiah(formData.hourlyRate ?? formData.hourly_rate ?? 0)} / jam
                     </span>
                   </div>
                   <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl">
                     <label className="block text-slate-600 font-semibold mb-1">
-                      Estimasi Bulanan (25 Hari / 225 Jam)
+                      Estimasi Bulanan (25 Hari / {25 * getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY)} Jam)
                     </label>
                     <input
                       type="number"
@@ -3788,8 +3975,9 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                       value={formData.baseSalary}
                       onChange={(e) => {
                         const nextBase = Math.max(0, Number(e.target.value) || 0);
+                        const stdHrs = getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY);
                         const syncedDaily = Math.round(nextBase / 25);
-                        const syncedHourly = Math.round(syncedDaily / STANDARD_WORK_HOURS_PER_DAY);
+                        const syncedHourly = Math.round(syncedDaily / stdHrs);
                         setFormData({
                           ...formData,
                           baseSalary: nextBase,
@@ -3802,7 +3990,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                       className="w-full p-2 bg-white border border-slate-200 rounded-lg text-slate-800 font-semibold"
                     />
                     <span className="block text-[10px] text-slate-400 mt-1">
-                      Estimasi penuh 25 hari × 9 jam kerja
+                      Estimasi penuh 25 hari × {getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY)} jam kerja
                     </span>
                   </div>
                 </div>
@@ -4262,12 +4450,14 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                   </div>
                 </div>
               </div>
+              </div>
 
-              <div className="pt-4 border-t border-slate-200 flex justify-end gap-2.5">
+              {/* Sticky Footer */}
+              <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-5 py-3 flex items-center justify-end gap-2.5">
                 <button
                   type="button"
                   onClick={closeAddModal}
-                  className="px-4 py-2 border border-slate-300 rounded-xl text-slate-700 hover:bg-slate-50 cursor-pointer font-medium"
+                  className="px-4 py-2 border border-slate-300 bg-white rounded-xl text-slate-700 hover:bg-slate-100 cursor-pointer font-medium"
                 >
                   Batal
                 </button>
@@ -4348,10 +4538,10 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
       )}
 
       {/* QUICK PHOTO UPLOAD MODAL */}
-      {quickPhotoEmployee && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 my-8">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+      {Boolean(quickPhotoEmployee) && quickPhotoEmployee && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-200 flex flex-col max-h-[88vh] overflow-hidden">
+            <div className="shrink-0 flex items-center justify-between px-5 py-3.5 border-b border-slate-200 bg-white">
               <div className="flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center">
                   <Camera className="w-4 h-4" />
@@ -4366,6 +4556,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                 </div>
               </div>
               <button
+                type="button"
                 onClick={closeQuickPhotoModal}
                 className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 cursor-pointer"
               >
@@ -4373,7 +4564,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
               </button>
             </div>
 
-            <div className="mt-4 space-y-4 text-xs">
+            <div className="flex-1 overflow-y-auto p-5 space-y-4 text-xs">
               {/* Preview Comparison */}
               <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-around">
                 <div className="text-center">
@@ -4396,14 +4587,14 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                       alt="Pratinjau Baru"
                       className="w-16 h-16 rounded-xl object-cover ring-2 ring-emerald-500 mx-auto shadow-md"
                     />
-                    {quickPhotoPreview && quickPhotoPreview.startsWith('data:image') && (
+                    {Boolean(quickPhotoPreview && quickPhotoPreview.startsWith('data:image')) && (
                       <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-emerald-500 border-2 border-white rounded-full" />
                     )}
                   </div>
                 </div>
               </div>
 
-              {quickPhotoError && (
+              {Boolean(quickPhotoError) && (
                 <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 flex items-center gap-2">
                   <AlertCircle className="w-4 h-4 shrink-0" />
                   <span>{quickPhotoError}</span>
@@ -4456,7 +4647,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                 </div>
 
                 {/* Webcam Stream */}
-                {isQuickCameraActive && (
+                {Boolean(isQuickCameraActive) && (
                   <div className="p-3 bg-slate-900 rounded-xl text-white">
                     <div className="relative w-full max-w-xs mx-auto aspect-square rounded-lg overflow-hidden bg-black flex items-center justify-center">
                       <video
@@ -4518,26 +4709,26 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                   </div>
                 </div>
               </div>
+            </div>
 
-              {/* Bottom Buttons */}
-              <div className="pt-4 border-t border-slate-200 flex justify-end gap-2.5">
-                <button
-                  type="button"
-                  onClick={closeQuickPhotoModal}
-                  className="px-4 py-2 border border-slate-300 rounded-xl text-slate-700 hover:bg-slate-50 cursor-pointer font-medium"
-                >
-                  Batal
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSaveQuickPhoto}
-                  disabled={!quickPhotoPreview || quickPhotoPreview === quickPhotoEmployee.avatarUrl}
-                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl font-semibold shadow-md cursor-pointer flex items-center gap-1.5"
-                >
-                  <Check className="w-4 h-4" />
-                  <span>Simpan Pas Foto Real</span>
-                </button>
-              </div>
+            {/* Sticky Bottom Buttons */}
+            <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-5 py-3 flex justify-end gap-2.5 text-xs">
+              <button
+                type="button"
+                onClick={closeQuickPhotoModal}
+                className="px-4 py-2 border border-slate-300 bg-white rounded-xl text-slate-700 hover:bg-slate-100 cursor-pointer font-medium"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveQuickPhoto}
+                disabled={!quickPhotoPreview || quickPhotoPreview === quickPhotoEmployee.avatarUrl}
+                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl font-semibold shadow-md cursor-pointer flex items-center gap-1.5"
+              >
+                <Check className="w-4 h-4" />
+                <span>Simpan Pas Foto Real</span>
+              </button>
             </div>
           </div>
         </div>

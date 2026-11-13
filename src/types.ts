@@ -37,7 +37,9 @@ export interface Employee {
   hourly_rate?: number; // Alias kolom Supabase hourly_rate
   overtimeRate?: number; // Tarif Lembur Per Jam Part-Time (overtime_rate)
   overtime_rate?: number; // Alias kolom Supabase overtime_rate
-  dailySalary?: number; // Gaji Per Hari (daily_salary = 9 jam × hourly_rate)
+  standard_daily_hours?: number; // Standar Jam Kerja Harian per karyawan (default: 9 jam/hari, bisa diisi 6 jam/hari atau angka manual)
+  standardDailyHours?: number; // Alias camelCase untuk standard_daily_hours
+  dailySalary?: number; // Gaji Per Hari (daily_salary = standard_daily_hours × hourly_rate)
   daily_salary?: number; // Alias kolom Supabase daily_salary
   allowances: {
     position: number; // Tunjangan Jabatan
@@ -226,6 +228,26 @@ export interface PayrollRecord {
   isDecemberReconciliation?: boolean; // Menandakan masa pajak terakhir (Desember) dengan rekonsiliasi Pasal 17
   annualPph21Summary?: DecemberPPh21ReconciliationResult;
   otherDeductions: number;
+  tunjanganKerajinan?: number;
+  tunjanganKedisiplinan?: number;
+  kesalahanCount?: number;
+  kesalahanRate?: number;
+  catatanKesalahan?: string;
+  tanpaKeteranganHari?: number;
+  tanpaKeteranganRate?: number;
+  izinJamMenit?: number;
+  izinJamRate?: number;
+  izinHariJumlah?: number;
+  izinHariRate?: number;
+  sakitHariJumlah?: number;
+  sakitHariRate?: number;
+  sisaKasbonLalu?: number;
+  cicilanKasbonBulanIni?: number;
+  sisaKasbonDepan?: number;
+  bpjs_tk_manual?: number;
+  bpjs_kesehatan_manual?: number;
+  pph21_manual?: number;
+  catatanPotongan?: string;
   cashAdvanceDeduction?: number; // Potongan cicilan kasbon bulan berjalan
   cashAdvanceNotes?: string; // e.g. "Angsuran ke-1 dari 3 (Sisa Rp 2.000.000)"
 
@@ -350,6 +372,8 @@ export type DashboardModule =
   | 'employees'
   | 'payroll'
   | 'part_time_payroll'
+  | 'payroll_adjustments'
+  | 'payroll_deductions'
   | 'bonus_management'
   | 'attendance'
   | 'work_shifts'
@@ -941,3 +965,46 @@ export interface EmployeeBonus {
   department?: string;
   role?: string;
 }
+
+export interface EmployeeAdjustment {
+  id: string;
+  employee_id: string;
+  employee_nik: string;
+  employee_name: string;
+  period_month: string; // Format YYYY-MM, default periode aktif
+  tunjangan_kerajinan: number; // Nominal Rp, default 0
+  tunjangan_kedisiplinan: number; // Nominal Rp, default 0
+  kesalahan_count: number; // Jumlah kesalahan dalam bulan tersebut, default 0
+  kesalahan_rate: number; // Tarif denda per kesalahan dalam Rp, misal default Rp 10.000
+  catatan_kesalahan: string; // Opsional, keterangan detail kesalahan
+  updated_at: string; // ISO date string
+  department?: string;
+  role?: string;
+}
+
+export interface PayrollDeductionRecord {
+  id: string;
+  employee_id: string;
+  employee_nik: string;
+  employee_name: string;
+  period_month: string; // Format YYYY-MM, default periode aktif
+  tanpa_keterangan_hari: number; // Jumlah hari alpa/tanpa keterangan, default 0
+  tanpa_keterangan_rate: number; // Tarif potongan per hari, otomatis dari gaji harian namun bisa diedit manual
+  izin_jam_menit: number; // Total menit izin jam, default 0
+  izin_jam_rate: number; // Tarif potongan per menit, otomatis dari tarif per jam / 60 namun bisa diedit manual
+  izin_hari_jumlah: number; // Jumlah hari izin tidak dibayar, default 0
+  izin_hari_rate: number; // Tarif potongan per hari, otomatis dari gaji harian namun bisa diedit manual
+  sisa_kasbon_lalu: number; // Input 1: Sisa Kasbon bulan lalu dalam Rp, default 0
+  cicilan_kasbon_bulan_ini: number; // Input 2: Cicilan Kasbon bulan ini yang dipotong dari gaji dalam Rp, default 0
+  sisa_kasbon_depan: number; // Otomatis dihitung: Math.max(0, sisa_kasbon_lalu - cicilan_kasbon_bulan_ini)
+  bpjs_tk_manual: number; // Nominal Rp potongan BPJS Ketenagakerjaan (default 0)
+  bpjs_kesehatan_manual: number; // Nominal Rp potongan BPJS Kesehatan (default 0)
+  pph21_manual: number; // Nominal Rp potongan PPh 21 (default 0)
+  catatan_potongan: string; // Opsional
+  updated_at: string; // ISO date string
+  department?: string;
+  role?: string;
+  employment_status?: string;
+}
+
+

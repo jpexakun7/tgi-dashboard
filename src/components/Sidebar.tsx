@@ -20,6 +20,8 @@ import {
   Boxes,
   Award,
   HandCoins,
+  SlidersHorizontal,
+  FileMinus2,
 } from 'lucide-react';
 import { GoogleAdminUser, DashboardModule } from '../types';
 
@@ -28,6 +30,8 @@ export type ActiveTab =
   | 'employees'
   | 'payroll'
   | 'part_time_payroll'
+  | 'payroll_adjustments'
+  | 'payroll_deductions'
   | 'bonus_management'
   | 'attendance'
   | 'work_shifts'
@@ -99,6 +103,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: Clock,
       badge: 'Mingguan',
       badgeColor: 'bg-orange-100 text-orange-800',
+    },
+    {
+      id: 'payroll_adjustments' as ActiveTab,
+      label: 'Tunjangan & Kedisiplinan',
+      icon: SlidersHorizontal,
+      badge: 'Penyesuaian',
+      badgeColor: 'bg-indigo-100 text-indigo-800',
+    },
+    {
+      id: 'payroll_deductions' as ActiveTab,
+      label: 'Potongan Absensi & Kasbon',
+      icon: FileMinus2,
+      badge: 'Pengurangan',
+      badgeColor: 'bg-rose-100 text-rose-800',
     },
     {
       id: 'bonus_management' as ActiveTab,
@@ -321,10 +339,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
             const visibleMenuItems = menuItems.filter((item) => {
               if (userRole === 'Super Admin') return true;
               if (!allowedModules) return true;
-              if (item.id === 'bonus_management') {
+              if (
+                item.id === 'bonus_management' ||
+                item.id === 'payroll_adjustments' ||
+                item.id === 'payroll_deductions'
+              ) {
                 return (
                   allowedModules.includes('payroll' as any) ||
-                  allowedModules.includes('employees' as any)
+                  allowedModules.includes('employees' as any) ||
+                  allowedModules.includes(item.id as any)
                 );
               }
               return allowedModules.includes(item.id as any);

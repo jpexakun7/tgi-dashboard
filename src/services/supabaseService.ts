@@ -13,6 +13,8 @@ import {
   PartTimeWorkLog,
   PartTimeWeeklyPayout,
   EmployeeBonus,
+  EmployeeAdjustment,
+  PayrollDeductionRecord,
 } from '../types';
 import {
   normalizeEmploymentType,
@@ -20,6 +22,7 @@ import {
   calculateActualWorkHoursFromClock,
   calculateCappedDailyWorkHours,
   STANDARD_WORK_HOURS_PER_DAY,
+  getEmployeeStandardDailyHours,
 } from '../utils/formatters';
 import {
   sanitizeEmployeesListForStorage,
@@ -40,6 +43,8 @@ export interface PersistedEmploymentMeta {
   hourly_rate?: number;
   overtimeRate?: number;
   overtime_rate?: number;
+  standard_daily_hours?: number;
+  standardDailyHours?: number;
   updatedAt: string;
 }
 
@@ -73,6 +78,10 @@ export function getSavedEmploymentMetaMap(): Record<string, PersistedEmploymentM
               hourly_rate: Number(item.hourly_rate ?? item.hourlyRate) || undefined,
               overtimeRate: Number(item.overtime_rate ?? item.overtimeRate) || undefined,
               overtime_rate: Number(item.overtime_rate ?? item.overtimeRate) || undefined,
+              standard_daily_hours:
+                Number(item.standard_daily_hours ?? item.standardDailyHours) || undefined,
+              standardDailyHours:
+                Number(item.standard_daily_hours ?? item.standardDailyHours) || undefined,
               updatedAt: item.updatedAt || new Date().toISOString(),
             };
           }
@@ -121,6 +130,10 @@ export function getEmployeeEmploymentMetaLocal(
             hourly_rate: Number(found.hourlyRate ?? found.hourly_rate) || undefined,
             overtimeRate: Number(found.overtimeRate ?? found.overtime_rate) || undefined,
             overtime_rate: Number(found.overtimeRate ?? found.overtime_rate) || undefined,
+            standard_daily_hours:
+              Number(found.standard_daily_hours ?? found.standardDailyHours) || undefined,
+            standardDailyHours:
+              Number(found.standard_daily_hours ?? found.standardDailyHours) || undefined,
             updatedAt: new Date().toISOString(),
           };
         }
@@ -148,6 +161,7 @@ export function saveEmployeeEmploymentMetaLocal(emp: Partial<Employee>): void {
     : emp.employmentStatus || (emp as any).status || 'PKWT (Kontrak)';
   const hRate = Math.max(0, Math.round(Number(emp.hourlyRate ?? emp.hourly_rate) || 0));
   const oRate = Math.max(0, Math.round(Number(emp.overtimeRate ?? emp.overtime_rate) || 0));
+  const stdHours = getEmployeeStandardDailyHours(emp, STANDARD_WORK_HOURS_PER_DAY);
 
   try {
     const map = getSavedEmploymentMetaMap();
@@ -160,6 +174,8 @@ export function saveEmployeeEmploymentMetaLocal(emp: Partial<Employee>): void {
       hourly_rate: hRate > 0 ? hRate : undefined,
       overtimeRate: oRate > 0 ? oRate : undefined,
       overtime_rate: oRate > 0 ? oRate : undefined,
+      standard_daily_hours: stdHours,
+      standardDailyHours: stdHours,
       updatedAt: new Date().toISOString(),
     };
     if (emp.id) map[emp.id] = entry;
@@ -178,6 +194,8 @@ export function saveEmployeeEmploymentMetaLocal(emp: Partial<Employee>): void {
       hourlyRate: hRate > 0 ? hRate : undefined,
       overtime_rate: oRate > 0 ? oRate : undefined,
       overtimeRate: oRate > 0 ? oRate : undefined,
+      standard_daily_hours: stdHours,
+      standardDailyHours: stdHours,
       updatedAt: new Date().toISOString(),
     };
     if (emp.id) overrides[emp.id] = overridePayload;
@@ -215,6 +233,8 @@ export function saveEmployeeEmploymentMetaLocal(emp: Partial<Employee>): void {
             hourly_rate: nextHourly > 0 ? nextHourly : item.hourly_rate,
             overtimeRate: nextOt > 0 ? nextOt : item.overtimeRate,
             overtime_rate: nextOt > 0 ? nextOt : item.overtime_rate,
+            standard_daily_hours: stdHours,
+            standardDailyHours: stdHours,
           };
         });
         if (updated) {
@@ -269,7 +289,19 @@ export function applyPartTimeOverridesToEmployees(employees: Employee[]): Employ
         normalizeEmploymentType(savedEmp?.employmentStatus) === 'Part-Time' ||
         normalizeEmploymentType(savedEmp?.status) === 'Part-Time';
 
-      if (!isPt) return emp;
+      const resolvedStdHours =
+        Number(emp.standard_daily_hours ?? emp.standardDailyHours) ||
+        Number(meta?.standard_daily_hours ?? meta?.standardDailyHours) ||
+        Number(savedEmp?.standard_daily_hours ?? savedEmp?.standardDailyHours) ||
+        STANDARD_WORK_HOURS_PER_DAY;
+
+      if (!isPt) {
+        return {
+          ...emp,
+          standard_daily_hours: resolvedStdHours,
+          standardDailyHours: resolvedStdHours,
+        };
+      }
 
       const resolvedHourly =
         Number(emp.hourlyRate ?? emp.hourly_rate) ||
@@ -291,6 +323,8 @@ export function applyPartTimeOverridesToEmployees(employees: Employee[]): Employ
         hourlyRate: resolvedHourly > 0 ? resolvedHourly : undefined,
         overtime_rate: resolvedOvertime > 0 ? resolvedOvertime : undefined,
         overtimeRate: resolvedOvertime > 0 ? resolvedOvertime : undefined,
+        standard_daily_hours: resolvedStdHours,
+        standardDailyHours: resolvedStdHours,
         updatedAt: meta?.updatedAt || new Date().toISOString(),
       };
       if (emp.id && !overrides[emp.id]) {
@@ -312,6 +346,8 @@ export function applyPartTimeOverridesToEmployees(employees: Employee[]): Employ
         hourly_rate: resolvedHourly > 0 ? resolvedHourly : emp.hourly_rate,
         overtimeRate: resolvedOvertime > 0 ? resolvedOvertime : emp.overtimeRate,
         overtime_rate: resolvedOvertime > 0 ? resolvedOvertime : emp.overtime_rate,
+        standard_daily_hours: resolvedStdHours,
+        standardDailyHours: resolvedStdHours,
       };
     });
 
@@ -353,16 +389,21 @@ export function employeeToDb(emp: Employee) {
   saveEmployeeEmploymentMetaLocal(emp);
   const effectivePin = getEmployeeEffectivePin(emp);
   const rawAllowances = emp.allowances || { position: 0, transport: 0, meal: 0, communication: 0 };
+  const resolvedStandardDailyHours = getEmployeeStandardDailyHours(emp, STANDARD_WORK_HOURS_PER_DAY);
   const explicitHourly = Number(emp.hourlyRate ?? emp.hourly_rate) || 0;
   const explicitDaily = Number(emp.dailySalary ?? emp.daily_salary) || 0;
   const resolvedHourlyRate =
     explicitHourly > 0
       ? Math.round(explicitHourly)
       : explicitDaily > 0
-      ? Math.round(explicitDaily / 9)
-      : Math.round((Number(emp.baseSalary) || 0) / (25 * 9));
+      ? Math.round(explicitDaily / resolvedStandardDailyHours)
+      : Math.round((Number(emp.baseSalary) || 0) / (25 * resolvedStandardDailyHours));
   const resolvedDailySalary =
-    explicitDaily > 0 ? Math.round(explicitDaily) : resolvedHourlyRate * 9;
+    explicitHourly > 0
+      ? Math.round(resolvedHourlyRate * resolvedStandardDailyHours)
+      : explicitDaily > 0
+      ? Math.round(explicitDaily)
+      : Math.round(resolvedHourlyRate * resolvedStandardDailyHours);
   const explicitOvertimeRate = Number(emp.overtimeRate ?? emp.overtime_rate) || 0;
   const resolvedOvertimeRate =
     explicitOvertimeRate > 0 ? Math.round(explicitOvertimeRate) : Math.round(resolvedHourlyRate * 1.5);
@@ -401,6 +442,7 @@ export function employeeToDb(emp: Employee) {
       _hourlyRate: resolvedHourlyRate,
       _overtimeRate: resolvedOvertimeRate,
       _dailySalary: resolvedDailySalary,
+      _standardDailyHours: resolvedStandardDailyHours,
       _employmentType: resolvedEmploymentType,
       _employmentStatus: resolvedEmploymentStatus,
       _isLiveStreamHost: Boolean(emp.isLiveStreamHost ?? emp.is_host),
@@ -512,17 +554,30 @@ export function dbToEmployee(row: any): Employee {
     ? 'Part-Time'
     : (row.employment_status as any) || 'PKWT (Kontrak)';
 
+  const standardDailyHours =
+    Number(
+      row.standard_daily_hours ??
+        row.standardDailyHours ??
+        rawAllowances._standardDailyHours ??
+        localMeta?.standard_daily_hours ??
+        localMeta?.standardDailyHours
+    ) || STANDARD_WORK_HOURS_PER_DAY;
   const baseSalary = Number(row.base_salary) || 0;
   const rawDaily =
     Number(row.daily_salary ?? rawAllowances._dailySalary) ||
     (baseSalary > 0 ? Math.round(baseSalary / 25) : 0);
   const hourlyRate =
     Number(row.hourly_rate ?? rawAllowances._hourlyRate ?? localMeta?.hourlyRate) ||
-    (rawDaily > 0 ? Math.round(rawDaily / 9) : 0);
+    (rawDaily > 0 ? Math.round(rawDaily / standardDailyHours) : 0);
   const overtimeRate =
     Number(row.overtime_rate ?? rawAllowances._overtimeRate ?? localMeta?.overtimeRate) ||
     Math.round(hourlyRate * 1.5);
-  const dailySalary = rawDaily > 0 ? rawDaily : hourlyRate * 9;
+  const dailySalary =
+    hourlyRate > 0
+      ? Math.round(hourlyRate * standardDailyHours)
+      : rawDaily > 0
+      ? rawDaily
+      : 0;
 
   const isHostResolved = Boolean(
     row.is_host ?? row.is_live_stream_host ?? rawAllowances._isLiveStreamHost
@@ -610,6 +665,8 @@ export function dbToEmployee(row: any): Employee {
     hourly_rate: hourlyRate,
     overtimeRate,
     overtime_rate: overtimeRate,
+    standard_daily_hours: standardDailyHours,
+    standardDailyHours,
     dailySalary,
     daily_salary: dailySalary,
     allowances: {
@@ -724,15 +781,15 @@ export function dbToPayroll(row: any): PayrollRecord {
     bonus: Number(row.bonus) || 0,
     totalGrossSalary: Number(row.total_gross_salary) || 0,
     lateDeduction: Number(row.late_deduction) || 0,
-    bpjsKesehatanEmployee: Number(row.bpjs_kesehatan_employee) || 0,
-    bpjsKesehatanEmployer: Number(row.bpjs_kesehatan_employer) || 0,
-    bpjsJhtEmployee: Number(row.bpjs_jht_employee) || 0,
-    bpjsJhtEmployer: Number(row.bpjs_jht_employer) || 0,
-    bpjsJpEmployee: Number(row.bpjs_jp_employee) || 0,
-    bpjsJpEmployer: Number(row.bpjs_jp_employer) || 0,
-    bpjsJkkEmployer: Number(row.bpjs_jkk_employer) || 0,
-    bpjsJkmEmployer: Number(row.bpjs_jkm_employer) || 0,
-    pph21TER: Number(row.pph21_ter) || 0,
+    bpjsKesehatanEmployee: 0,
+    bpjsKesehatanEmployer: 0,
+    bpjsJhtEmployee: 0,
+    bpjsJhtEmployer: 0,
+    bpjsJpEmployee: 0,
+    bpjsJpEmployer: 0,
+    bpjsJkkEmployer: 0,
+    bpjsJkmEmployer: 0,
+    pph21TER: 0,
     otherDeductions: 0,
     cashAdvanceDeduction: Number(row.cash_advance_deduction) || 0,
     totalDeductions: Number(row.total_deductions) || 0,
@@ -2970,3 +3027,569 @@ export async function deleteEmployeeBonus(bonusId: string): Promise<boolean> {
     return true;
   }
 }
+
+// ============================================================================
+// EMPLOYEE ADJUSTMENTS (TUNJANGAN KERAJINAN, KEDISIPLINAN & POTONGAN KESALAHAN)
+// ============================================================================
+
+export const EMPLOYEE_ADJUSTMENTS_STORAGE_KEY = 'tgi_employee_adjustments';
+
+export function getSavedEmployeeAdjustments(): EmployeeAdjustment[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(EMPLOYEE_ADJUSTMENTS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item) => item && typeof item === 'object' && item.id)
+      .map((item) => ({
+        id: String(item.id),
+        employee_id: String(item.employee_id || ''),
+        employee_nik: String(item.employee_nik || ''),
+        employee_name: String(item.employee_name || ''),
+        period_month: String(item.period_month || new Date().toISOString().slice(0, 7)),
+        tunjangan_kerajinan: Math.max(0, Math.round(Number(item.tunjangan_kerajinan) || 0)),
+        tunjangan_kedisiplinan: Math.max(0, Math.round(Number(item.tunjangan_kedisiplinan) || 0)),
+        kesalahan_count: Math.max(0, Math.round(Number(item.kesalahan_count) || 0)),
+        kesalahan_rate:
+          item.kesalahan_rate !== undefined && !isNaN(Number(item.kesalahan_rate))
+            ? Math.max(0, Math.round(Number(item.kesalahan_rate)))
+            : 10000,
+        catatan_kesalahan: String(item.catatan_kesalahan || ''),
+        updated_at: String(item.updated_at || new Date().toISOString()),
+        department: item.department ? String(item.department) : undefined,
+        role: item.role ? String(item.role) : undefined,
+      }))
+      .sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || ''));
+  } catch {
+    return [];
+  }
+}
+
+export function saveEmployeeAdjustmentsLocal(adjustments: EmployeeAdjustment[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const clean = (Array.isArray(adjustments) ? adjustments : [])
+      .filter((item) => item && item.id)
+      .sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || ''));
+    localStorage.setItem(EMPLOYEE_ADJUSTMENTS_STORAGE_KEY, JSON.stringify(clean));
+    window.dispatchEvent(
+      new CustomEvent('tgi_employee_adjustments_updated', { detail: clean })
+    );
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function dbToEmployeeAdjustment(row: any): EmployeeAdjustment {
+  return {
+    id: String(row.id || generateSessionUuid()),
+    employee_id: String(row.employee_id || row.employeeId || ''),
+    employee_nik: String(row.employee_nik || row.employeeNik || ''),
+    employee_name: String(row.employee_name || row.employeeName || ''),
+    period_month: String(
+      row.period_month || row.periodMonth || new Date().toISOString().slice(0, 7)
+    ),
+    tunjangan_kerajinan: Math.max(
+      0,
+      Math.round(Number(row.tunjangan_kerajinan ?? row.tunjanganKerajinan) || 0)
+    ),
+    tunjangan_kedisiplinan: Math.max(
+      0,
+      Math.round(Number(row.tunjangan_kedisiplinan ?? row.tunjanganKedisiplinan) || 0)
+    ),
+    kesalahan_count: Math.max(
+      0,
+      Math.round(Number(row.kesalahan_count ?? row.kesalahanCount) || 0)
+    ),
+    kesalahan_rate:
+      row.kesalahan_rate !== undefined || row.kesalahanRate !== undefined
+        ? Math.max(0, Math.round(Number(row.kesalahan_rate ?? row.kesalahanRate) || 0))
+        : 10000,
+    catatan_kesalahan: String(row.catatan_kesalahan ?? row.catatanKesalahan ?? ''),
+    updated_at: String(row.updated_at || row.updatedAt || new Date().toISOString()),
+    department: row.department ? String(row.department) : undefined,
+    role: row.role ? String(row.role) : undefined,
+  };
+}
+
+export async function fetchEmployeeAdjustments(): Promise<EmployeeAdjustment[]> {
+  const localAdjustments = getSavedEmployeeAdjustments();
+  try {
+    const { data, error } = await supabase
+      .from('employee_adjustments')
+      .select('*')
+      .order('updated_at', { ascending: false });
+
+    if (error || !data) {
+      return localAdjustments;
+    }
+
+    const dbList = data.map(dbToEmployeeAdjustment);
+    const map = new Map<string, EmployeeAdjustment>();
+    for (const item of [...localAdjustments, ...dbList]) {
+      if (!item) continue;
+      const key = `${item.employee_id || item.employee_nik}::${item.period_month}`;
+      const existing = map.get(key);
+      if (!existing || (item.updated_at || '') >= (existing.updated_at || '')) {
+        map.set(key, item);
+      }
+    }
+
+    const merged = Array.from(map.values()).sort((a, b) =>
+      (b.updated_at || '').localeCompare(a.updated_at || '')
+    );
+    saveEmployeeAdjustmentsLocal(merged);
+    return merged;
+  } catch {
+    return localAdjustments;
+  }
+}
+
+export async function upsertEmployeeAdjustment(
+  payload: Omit<EmployeeAdjustment, 'id' | 'updated_at'> & {
+    id?: string;
+    updated_at?: string;
+  }
+): Promise<EmployeeAdjustment> {
+  const localAdjustments = getSavedEmployeeAdjustments();
+  const normalizedPeriod = String(
+    payload.period_month || new Date().toISOString().slice(0, 7)
+  ).trim();
+  const existingIdx = localAdjustments.findIndex(
+    (a) =>
+      a.id === payload.id ||
+      (a.period_month === normalizedPeriod &&
+        ((Boolean(payload.employee_id) && a.employee_id === payload.employee_id) ||
+          (Boolean(payload.employee_nik) &&
+            a.employee_nik.toLowerCase() === payload.employee_nik.toLowerCase())))
+  );
+
+  const existingRecord = existingIdx >= 0 ? localAdjustments[existingIdx] : null;
+
+  const newAdjustment: EmployeeAdjustment = {
+    id: payload.id || existingRecord?.id || generateSessionUuid(),
+    employee_id: String(payload.employee_id || existingRecord?.employee_id || '').trim(),
+    employee_nik: sanitizeSafeText(
+      payload.employee_nik || existingRecord?.employee_nik || '',
+      60
+    ),
+    employee_name: sanitizeSafeText(
+      payload.employee_name || existingRecord?.employee_name || '',
+      150
+    ),
+    period_month: normalizedPeriod,
+    tunjangan_kerajinan: Math.min(
+      500_000_000,
+      Math.max(0, Math.round(Number(payload.tunjangan_kerajinan) || 0))
+    ),
+    tunjangan_kedisiplinan: Math.min(
+      500_000_000,
+      Math.max(0, Math.round(Number(payload.tunjangan_kedisiplinan) || 0))
+    ),
+    kesalahan_count: Math.min(
+      1000,
+      Math.max(0, Math.round(Number(payload.kesalahan_count) || 0))
+    ),
+    kesalahan_rate:
+      payload.kesalahan_rate !== undefined && !isNaN(Number(payload.kesalahan_rate))
+        ? Math.min(100_000_000, Math.max(0, Math.round(Number(payload.kesalahan_rate))))
+        : 10000,
+    catatan_kesalahan: sanitizeSafeText(payload.catatan_kesalahan || '', 500),
+    updated_at: payload.updated_at || new Date().toISOString(),
+    department: payload.department
+      ? sanitizeSafeText(payload.department, 100)
+      : existingRecord?.department,
+    role: payload.role ? sanitizeSafeText(payload.role, 100) : existingRecord?.role,
+  };
+
+  const filtered = localAdjustments.filter(
+    (a) =>
+      a.id !== newAdjustment.id &&
+      !(
+        a.period_month === newAdjustment.period_month &&
+        ((Boolean(newAdjustment.employee_id) && a.employee_id === newAdjustment.employee_id) ||
+          (Boolean(newAdjustment.employee_nik) &&
+            a.employee_nik.toLowerCase() === newAdjustment.employee_nik.toLowerCase()))
+      )
+  );
+  const updated = [newAdjustment, ...filtered];
+  saveEmployeeAdjustmentsLocal(updated);
+
+  try {
+    await supabase.from('employee_adjustments').upsert(
+      {
+        id: newAdjustment.id,
+        employee_id: newAdjustment.employee_id,
+        employee_nik: newAdjustment.employee_nik,
+        employee_name: newAdjustment.employee_name,
+        period_month: newAdjustment.period_month,
+        tunjangan_kerajinan: newAdjustment.tunjangan_kerajinan,
+        tunjangan_kedisiplinan: newAdjustment.tunjangan_kedisiplinan,
+        kesalahan_count: newAdjustment.kesalahan_count,
+        kesalahan_rate: newAdjustment.kesalahan_rate,
+        catatan_kesalahan: newAdjustment.catatan_kesalahan,
+        updated_at: newAdjustment.updated_at,
+        department: newAdjustment.department || null,
+        role: newAdjustment.role || null,
+      },
+      { onConflict: 'id' }
+    );
+  } catch {
+    // Fallback to localStorage already saved
+  }
+
+  return newAdjustment;
+}
+
+export async function deleteEmployeeAdjustment(adjustmentId: string): Promise<void> {
+  if (!adjustmentId) return;
+  const current = getSavedEmployeeAdjustments();
+  const updated = current.filter((a) => a.id !== adjustmentId);
+  saveEmployeeAdjustmentsLocal(updated);
+
+  try {
+    await supabase.from('employee_adjustments').delete().eq('id', adjustmentId);
+  } catch {
+    // Fallback to localStorage already saved
+  }
+}
+
+// ============================================================================
+// PAYROLL DEDUCTIONS (POTONGAN ABSENSI & KASBON 3 TAHAP)
+// ============================================================================
+
+export const PAYROLL_DEDUCTIONS_STORAGE_KEY = 'tgi_payroll_deductions';
+
+export function getSavedPayrollDeductions(): PayrollDeductionRecord[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(PAYROLL_DEDUCTIONS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item) => item && typeof item === 'object' && item.id)
+      .map((item) => {
+        const sisaLalu = Math.max(0, Math.round(Number(item.sisa_kasbon_lalu) || 0));
+        const rawCicilan = Math.max(0, Math.round(Number(item.cicilan_kasbon_bulan_ini) || 0));
+        const cicilanBulanIni = sisaLalu > 0 ? Math.min(sisaLalu, rawCicilan) : rawCicilan;
+        const sisaDepan = Math.max(0, sisaLalu - cicilanBulanIni);
+        return {
+          id: String(item.id),
+          employee_id: String(item.employee_id || ''),
+          employee_nik: String(item.employee_nik || ''),
+          employee_name: String(item.employee_name || ''),
+          period_month: String(item.period_month || new Date().toISOString().slice(0, 7)),
+          tanpa_keterangan_hari: Math.max(0, Number(item.tanpa_keterangan_hari) || 0),
+          tanpa_keterangan_rate: Math.max(0, Math.round(Number(item.tanpa_keterangan_rate) || 0)),
+          izin_jam_menit: Math.max(0, Math.round(Number(item.izin_jam_menit) || 0)),
+          izin_jam_rate: Math.max(0, Math.round(Number(item.izin_jam_rate) || 0)),
+          izin_hari_jumlah: Math.max(0, Number(item.izin_hari_jumlah) || 0),
+          izin_hari_rate: Math.max(0, Math.round(Number(item.izin_hari_rate) || 0)),
+          sisa_kasbon_lalu: sisaLalu,
+          cicilan_kasbon_bulan_ini: cicilanBulanIni,
+          sisa_kasbon_depan: sisaDepan,
+          bpjs_tk_manual: Math.max(0, Math.round(Number(item.bpjs_tk_manual) || 0)),
+          bpjs_kesehatan_manual: Math.max(0, Math.round(Number(item.bpjs_kesehatan_manual) || 0)),
+          pph21_manual: Math.max(0, Math.round(Number(item.pph21_manual) || 0)),
+          catatan_potongan: String(item.catatan_potongan || ''),
+          updated_at: String(item.updated_at || new Date().toISOString()),
+          department: item.department ? String(item.department) : undefined,
+          role: item.role ? String(item.role) : undefined,
+          employment_status: item.employment_status ? String(item.employment_status) : undefined,
+        };
+      })
+      .sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || ''));
+  } catch {
+    return [];
+  }
+}
+
+export function savePayrollDeductionsLocal(deductions: PayrollDeductionRecord[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const clean = (Array.isArray(deductions) ? deductions : [])
+      .filter((item) => item && item.id)
+      .map((item) => {
+        const sisaLalu = Math.max(0, Math.round(Number(item.sisa_kasbon_lalu) || 0));
+        const rawCicilan = Math.max(0, Math.round(Number(item.cicilan_kasbon_bulan_ini) || 0));
+        const cicilanBulanIni = sisaLalu > 0 ? Math.min(sisaLalu, rawCicilan) : rawCicilan;
+        return {
+          ...item,
+          sisa_kasbon_lalu: sisaLalu,
+          cicilan_kasbon_bulan_ini: cicilanBulanIni,
+          sisa_kasbon_depan: Math.max(0, sisaLalu - cicilanBulanIni),
+          bpjs_tk_manual: Math.max(0, Math.round(Number(item.bpjs_tk_manual) || 0)),
+          bpjs_kesehatan_manual: Math.max(0, Math.round(Number(item.bpjs_kesehatan_manual) || 0)),
+          pph21_manual: Math.max(0, Math.round(Number(item.pph21_manual) || 0)),
+        };
+      })
+      .sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || ''));
+    localStorage.setItem(PAYROLL_DEDUCTIONS_STORAGE_KEY, JSON.stringify(clean));
+    window.dispatchEvent(
+      new CustomEvent('tgi_payroll_deductions_updated', { detail: clean })
+    );
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function dbToPayrollDeduction(row: any): PayrollDeductionRecord {
+  const sisaLalu = Math.max(
+    0,
+    Math.round(Number(row.sisa_kasbon_lalu ?? row.sisaKasbonLalu) || 0)
+  );
+  const rawCicilan = Math.max(
+    0,
+    Math.round(Number(row.cicilan_kasbon_bulan_ini ?? row.cicilanKasbonBulanIni) || 0)
+  );
+  const cicilanBulanIni = sisaLalu > 0 ? Math.min(sisaLalu, rawCicilan) : rawCicilan;
+  const sisaDepan = Math.max(0, sisaLalu - cicilanBulanIni);
+
+  return {
+    id: String(row.id || generateSessionUuid()),
+    employee_id: String(row.employee_id || row.employeeId || ''),
+    employee_nik: String(row.employee_nik || row.employeeNik || ''),
+    employee_name: String(row.employee_name || row.employeeName || ''),
+    period_month: String(
+      row.period_month || row.periodMonth || new Date().toISOString().slice(0, 7)
+    ),
+    tanpa_keterangan_hari: Math.max(
+      0,
+      Number(row.tanpa_keterangan_hari ?? row.tanpaKeteranganHari) || 0
+    ),
+    tanpa_keterangan_rate: Math.max(
+      0,
+      Math.round(Number(row.tanpa_keterangan_rate ?? row.tanpaKeteranganRate) || 0)
+    ),
+    izin_jam_menit: Math.max(
+      0,
+      Math.round(Number(row.izin_jam_menit ?? row.izinJamMenit) || 0)
+    ),
+    izin_jam_rate: Math.max(
+      0,
+      Math.round(Number(row.izin_jam_rate ?? row.izinJamRate) || 0)
+    ),
+    izin_hari_jumlah: Math.max(
+      0,
+      Number(row.izin_hari_jumlah ?? row.izinHariJumlah) || 0
+    ),
+    izin_hari_rate: Math.max(
+      0,
+      Math.round(Number(row.izin_hari_rate ?? row.izinHariRate) || 0)
+    ),
+    sisa_kasbon_lalu: sisaLalu,
+    cicilan_kasbon_bulan_ini: cicilanBulanIni,
+    sisa_kasbon_depan: sisaDepan,
+    bpjs_tk_manual: Math.max(
+      0,
+      Math.round(Number(row.bpjs_tk_manual ?? row.bpjsTkManual) || 0)
+    ),
+    bpjs_kesehatan_manual: Math.max(
+      0,
+      Math.round(Number(row.bpjs_kesehatan_manual ?? row.bpjsKesehatanManual) || 0)
+    ),
+    pph21_manual: Math.max(
+      0,
+      Math.round(Number(row.pph21_manual ?? row.pph21Manual) || 0)
+    ),
+    catatan_potongan: String(row.catatan_potongan ?? row.catatanPotongan ?? ''),
+    updated_at: String(row.updated_at || row.updatedAt || new Date().toISOString()),
+    department: row.department ? String(row.department) : undefined,
+    role: row.role ? String(row.role) : undefined,
+    employment_status: row.employment_status ? String(row.employment_status) : undefined,
+  };
+}
+
+export async function fetchPayrollDeductions(): Promise<PayrollDeductionRecord[]> {
+  const localDeductions = getSavedPayrollDeductions();
+  try {
+    const { data, error } = await supabase
+      .from('payroll_deductions')
+      .select('*')
+      .order('updated_at', { ascending: false });
+
+    if (error || !data) {
+      return localDeductions;
+    }
+
+    const dbList = data.map(dbToPayrollDeduction);
+    const map = new Map<string, PayrollDeductionRecord>();
+    for (const item of [...localDeductions, ...dbList]) {
+      if (!item) continue;
+      const key = `${item.employee_id || item.employee_nik}::${item.period_month}`;
+      const existing = map.get(key);
+      if (!existing || (item.updated_at || '') >= (existing.updated_at || '')) {
+        map.set(key, item);
+      }
+    }
+
+    const merged = Array.from(map.values()).sort((a, b) =>
+      (b.updated_at || '').localeCompare(a.updated_at || '')
+    );
+    savePayrollDeductionsLocal(merged);
+    return merged;
+  } catch {
+    return localDeductions;
+  }
+}
+
+export async function upsertPayrollDeduction(
+  payload: Omit<PayrollDeductionRecord, 'id' | 'updated_at' | 'sisa_kasbon_depan'> & {
+    id?: string;
+    sisa_kasbon_depan?: number;
+    updated_at?: string;
+  }
+): Promise<PayrollDeductionRecord> {
+  const localDeductions = getSavedPayrollDeductions();
+  const normalizedPeriod = String(
+    payload.period_month || new Date().toISOString().slice(0, 7)
+  ).trim();
+  const existingIdx = localDeductions.findIndex(
+    (d) =>
+      d.id === payload.id ||
+      (d.period_month === normalizedPeriod &&
+        ((Boolean(payload.employee_id) && d.employee_id === payload.employee_id) ||
+          (Boolean(payload.employee_nik) &&
+            d.employee_nik.toLowerCase() === payload.employee_nik.toLowerCase())))
+  );
+
+  const existingRecord = existingIdx >= 0 ? localDeductions[existingIdx] : null;
+
+  const sisaLalu = Math.min(
+    1_000_000_000,
+    Math.max(0, Math.round(Number(payload.sisa_kasbon_lalu) || 0))
+  );
+  const rawCicilan = Math.min(
+    1_000_000_000,
+    Math.max(0, Math.round(Number(payload.cicilan_kasbon_bulan_ini) || 0))
+  );
+  const cicilanBulanIni = sisaLalu > 0 ? Math.min(sisaLalu, rawCicilan) : rawCicilan;
+  const sisaDepan = Math.max(0, sisaLalu - cicilanBulanIni);
+
+  const newDeduction: PayrollDeductionRecord = {
+    id: payload.id || existingRecord?.id || generateSessionUuid(),
+    employee_id: String(payload.employee_id || existingRecord?.employee_id || '').trim(),
+    employee_nik: sanitizeSafeText(
+      payload.employee_nik || existingRecord?.employee_nik || '',
+      60
+    ),
+    employee_name: sanitizeSafeText(
+      payload.employee_name || existingRecord?.employee_name || '',
+      150
+    ),
+    period_month: normalizedPeriod,
+    tanpa_keterangan_hari: Math.min(
+      31,
+      Math.max(0, Number(payload.tanpa_keterangan_hari) || 0)
+    ),
+    tanpa_keterangan_rate: Math.min(
+      100_000_000,
+      Math.max(0, Math.round(Number(payload.tanpa_keterangan_rate) || 0))
+    ),
+    izin_jam_menit: Math.min(
+      15000,
+      Math.max(0, Math.round(Number(payload.izin_jam_menit) || 0))
+    ),
+    izin_jam_rate: Math.min(
+      10_000_000,
+      Math.max(0, Math.round(Number(payload.izin_jam_rate) || 0))
+    ),
+    izin_hari_jumlah: Math.min(
+      31,
+      Math.max(0, Number(payload.izin_hari_jumlah) || 0)
+    ),
+    izin_hari_rate: Math.min(
+      100_000_000,
+      Math.max(0, Math.round(Number(payload.izin_hari_rate) || 0))
+    ),
+    sisa_kasbon_lalu: sisaLalu,
+    cicilan_kasbon_bulan_ini: cicilanBulanIni,
+    sisa_kasbon_depan: sisaDepan,
+    bpjs_tk_manual: Math.min(
+      100_000_000,
+      Math.max(0, Math.round(Number(payload.bpjs_tk_manual) || 0))
+    ),
+    bpjs_kesehatan_manual: Math.min(
+      100_000_000,
+      Math.max(0, Math.round(Number(payload.bpjs_kesehatan_manual) || 0))
+    ),
+    pph21_manual: Math.min(
+      100_000_000,
+      Math.max(0, Math.round(Number(payload.pph21_manual) || 0))
+    ),
+    catatan_potongan: sanitizeSafeText(payload.catatan_potongan || '', 500),
+    updated_at: payload.updated_at || new Date().toISOString(),
+    department: payload.department
+      ? sanitizeSafeText(payload.department, 100)
+      : existingRecord?.department,
+    role: payload.role ? sanitizeSafeText(payload.role, 100) : existingRecord?.role,
+    employment_status: payload.employment_status
+      ? sanitizeSafeText(payload.employment_status, 100)
+      : existingRecord?.employment_status,
+  };
+
+  const filtered = localDeductions.filter(
+    (d) =>
+      d.id !== newDeduction.id &&
+      !(
+        d.period_month === newDeduction.period_month &&
+        ((Boolean(newDeduction.employee_id) && d.employee_id === newDeduction.employee_id) ||
+          (Boolean(newDeduction.employee_nik) &&
+            d.employee_nik.toLowerCase() === newDeduction.employee_nik.toLowerCase()))
+      )
+  );
+  const updated = [newDeduction, ...filtered];
+  savePayrollDeductionsLocal(updated);
+
+  try {
+    await supabase.from('payroll_deductions').upsert(
+      {
+        id: newDeduction.id,
+        employee_id: newDeduction.employee_id,
+        employee_nik: newDeduction.employee_nik,
+        employee_name: newDeduction.employee_name,
+        period_month: newDeduction.period_month,
+        tanpa_keterangan_hari: newDeduction.tanpa_keterangan_hari,
+        tanpa_keterangan_rate: newDeduction.tanpa_keterangan_rate,
+        izin_jam_menit: newDeduction.izin_jam_menit,
+        izin_jam_rate: newDeduction.izin_jam_rate,
+        izin_hari_jumlah: newDeduction.izin_hari_jumlah,
+        izin_hari_rate: newDeduction.izin_hari_rate,
+        sisa_kasbon_lalu: newDeduction.sisa_kasbon_lalu,
+        cicilan_kasbon_bulan_ini: newDeduction.cicilan_kasbon_bulan_ini,
+        sisa_kasbon_depan: newDeduction.sisa_kasbon_depan,
+        bpjs_tk_manual: newDeduction.bpjs_tk_manual,
+        bpjs_kesehatan_manual: newDeduction.bpjs_kesehatan_manual,
+        pph21_manual: newDeduction.pph21_manual,
+        catatan_potongan: newDeduction.catatan_potongan,
+        updated_at: newDeduction.updated_at,
+        department: newDeduction.department || null,
+        role: newDeduction.role || null,
+        employment_status: newDeduction.employment_status || null,
+      },
+      { onConflict: 'id' }
+    );
+  } catch {
+    // Fallback to localStorage already saved
+  }
+
+  return newDeduction;
+}
+
+export async function deletePayrollDeduction(deductionId: string): Promise<void> {
+  if (!deductionId) return;
+  const current = getSavedPayrollDeductions();
+  const updated = current.filter((d) => d.id !== deductionId);
+  savePayrollDeductionsLocal(updated);
+
+  try {
+    await supabase.from('payroll_deductions').delete().eq('id', deductionId);
+  } catch {
+    // Fallback to localStorage already saved
+  }
+}
+
+
