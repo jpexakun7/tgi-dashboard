@@ -250,6 +250,13 @@ export interface PayrollRecord {
   catatanPotongan?: string;
   cashAdvanceDeduction?: number; // Potongan cicilan kasbon bulan berjalan
   cashAdvanceNotes?: string; // e.g. "Angsuran ke-1 dari 3 (Sisa Rp 2.000.000)"
+  thrAmount?: number; // Nominal THR (hanya dihitung jika show_in_payslip = true)
+  thrBasisAmount?: number; // Dasar perhitungan upah THR
+  thrShowInPayslip?: boolean; // Wajib true dari ceklis Admin agar tampil & dihitung di Slip Gaji
+  thrHolidayName?: string; // Nama Hari Raya (misal: Hari Raya Idul Fitri 2026)
+  thrTenureLabel?: string; // Masa kerja otomatis (misal: 1 Tahun 4 Bulan)
+  thrProportionFormula?: string; // Rumus proporsional (misal: 100% (12/12 Bulan))
+  thrPaymentStatus?: 'Belum Cair' | 'Sudah Dibayar';
 
   totalDeductions: number;
   takeHomePay: number; // Gaji Bersih
@@ -268,12 +275,16 @@ export interface AttendanceRecord {
   checkOut: string;
   status: 'Hadir Tepat Waktu' | 'Terlambat' | 'Izin' | 'Sakit' | 'Cuti' | 'Alpa';
   workHours: number;
+  overtimeHours?: number; // Approved overtime hours above target daily hours (0 unless approved by Admin)
   lateMinutes: number;
   notes?: string;
   faceScanVerified?: boolean;
   faceConfidence?: number; // e.g. 98.6
   facePhotoSnapshot?: string; // Captured snapshot during scan (Check-In)
+  photoIn?: string; // Alias for Check-In face selfie proof
   checkOutPhotoSnapshot?: string; // Captured snapshot during scan (Check-Out)
+  photoOut?: string; // Alias for Check-Out face selfie proof
+  facePhotoOut?: string; // Alias for Check-Out face selfie proof
   checkInFullTimestamp?: string; // Real-time full date & time string on Check-In
   checkOutFullTimestamp?: string; // Real-time full date & time string on Check-Out
   locationCoords?: {
@@ -288,6 +299,7 @@ export interface AttendanceRecord {
     accuracy: number;
   };
   checkOutLocationAddress?: string;
+  checkOutDistanceMeters?: number;
   isInOfficeRadius?: boolean;
   distanceMeters?: number;
   shiftId?: string;
@@ -296,6 +308,7 @@ export interface AttendanceRecord {
   scheduledCheckOut?: string; // Jam pulang sesuai jadwal shift (contoh: '17:30')
   earlyLeaveMinutes?: number; // Pulang lebih cepat dalam menit
   isManualStatus?: boolean; // Status diatur manual oleh Admin HR
+  updated_at?: string;
 }
 
 export interface GoogleUserAccount {
@@ -372,6 +385,7 @@ export type DashboardModule =
   | 'employees'
   | 'payroll'
   | 'part_time_payroll'
+  | 'thr_management'
   | 'payroll_adjustments'
   | 'payroll_deductions'
   | 'bonus_management'
@@ -1005,6 +1019,49 @@ export interface PayrollDeductionRecord {
   department?: string;
   role?: string;
   employment_status?: string;
+}
+
+export type ThrEligibilityStatus =
+  | 'Berhak Penuh (100%)'
+  | 'Berhak Proporsional'
+  | 'Belum Berhak THR';
+
+export type ThrPaymentStatus = 'Belum Cair' | 'Sudah Dibayar';
+
+export interface ThrPayoutRecord {
+  id: string;
+  employee_id: string;
+  employee_nik: string;
+  employee_name: string;
+  department: string;
+  role: string;
+  employment_type: string; // 'PKWTT (Tetap)' | 'PKWT (Kontrak)' | 'Part-Time'
+  join_date: string; // YYYY-MM-DD
+  thr_year: number; // e.g. 2026
+  holiday_name: string; // e.g. 'Hari Raya Idul Fitri' | 'Hari Raya Natal'
+  holiday_date: string; // YYYY-MM-DD
+  period_month: string; // Format YYYY-MM
+  tenure_months: number; // Jumlah bulan masa kerja
+  tenure_days: number; // Total hari masa kerja
+  tenure_label: string; // e.g. "1 Tahun 6 Bulan" atau "5 Bulan (152 Hari)"
+  eligibility_status: ThrEligibilityStatus;
+  proportion_formula: string; // e.g. "100% × (Gaji Pokok + Tunj. Tetap)" atau "(5/12) × Upah Dasar"
+  base_salary_component: number; // Gaji Pokok
+  fixed_allowance_component: number; // Tunjangan Tetap (Jabatan)
+  parttime_avg_monthly_wage: number; // Rata-rata pendapatan bulanan Part-Time
+  calculation_basis_amount: number; // Dasar perhitungan upah THR
+  calculated_thr_amount: number; // Nominal THR terhitung otomatis sesuai Permenaker No. 6/2016
+  manual_adjustment_amount: number; // Penyesuaian / bonus tambahan manual (Rp, default 0)
+  total_thr_amount: number; // Total THR akhir = Math.max(0, calculated_thr_amount + manual_adjustment_amount)
+  show_in_payslip: boolean; // WAJIB default false; hanya muncul & dihitung di Slip Gaji jika dicentang Admin
+  payment_status: ThrPaymentStatus; // 'Belum Cair' | 'Sudah Dibayar'
+  paid_at?: string;
+  paid_by?: string;
+  payment_method?: 'Transfer Bank' | 'Bersama Gaji Bulanan' | 'Tunai / Kas Operasional';
+  reference_number?: string;
+  notes?: string;
+  created_at?: string;
+  updated_at: string;
 }
 
 

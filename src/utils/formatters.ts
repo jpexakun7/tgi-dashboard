@@ -16,6 +16,10 @@ import {
   EmployeeAdjustment,
   PayrollDeductionRecord,
   LeaveRequest,
+  OvertimeRequest,
+  ThrPayoutRecord,
+  ThrEligibilityStatus,
+  PartTimeWorkLog,
 } from '../types';
 
 export function formatRupiah(amount: number): string {
@@ -34,11 +38,302 @@ export function formatNumber(amount: number): string {
   return new Intl.NumberFormat('id-ID').format(amount);
 }
 
+export const JAKARTA_TIMEZONE = 'Asia/Jakarta';
+
+const INDO_DAY_NAMES = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+const INDO_MONTH_NAMES_FULL = [
+  'Januari',
+  'Februari',
+  'Maret',
+  'April',
+  'Mei',
+  'Juni',
+  'Juli',
+  'Agustus',
+  'September',
+  'Oktober',
+  'November',
+  'Desember',
+];
+const INDO_MONTH_NAMES_SHORT = [
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'Mei',
+  'Jun',
+  'Jul',
+  'Agu',
+  'Sep',
+  'Okt',
+  'Nov',
+  'Des',
+];
+
+export interface JakartaDateParts {
+  year: number;
+  month: number; // 1-12
+  day: number; // 1-31
+  hours: number; // 0-23
+  minutes: number; // 0-59
+  seconds: number; // 0-59
+  dayOfWeek: number; // 0 (Minggu) - 6 (Sabtu)
+  yearStr: string;
+  monthStr: string;
+  dayStr: string;
+  hoursStr: string;
+  minutesStr: string;
+  secondsStr: string;
+}
+
+/**
+ * Mengambil komponen waktu lokal Indonesia Barat (WIB / Asia/Jakarta / UTC+7) secara akurat
+ * tanpa terpengaruh timezone lokal browser/server.
+ */
+export function getJakartaDateParts(date: Date = new Date()): JakartaDateParts {
+  const safeDate = date instanceof Date && !isNaN(date.getTime()) ? date : new Date();
+  try {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: JAKARTA_TIMEZONE,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+      weekday: 'short',
+    });
+    const parts = formatter.formatToParts(safeDate);
+    const map: Record<string, string> = {};
+    for (const p of parts) {
+      if (p.type !== 'literal') {
+        map[p.type] = p.value;
+      }
+    }
+    const year = parseInt(map.year || '2026', 10);
+    const month = parseInt(map.month || '1', 10);
+    const day = parseInt(map.day || '1', 10);
+    let hours = parseInt(map.hour || '0', 10);
+    if (hours === 24) hours = 0;
+    const minutes = parseInt(map.minute || '0', 10);
+    const seconds = parseInt(map.second || '0', 10);
+
+    const weekdayMap: Record<string, number> = {
+      Sun: 0,
+      Mon: 1,
+      Tue: 2,
+      Wed: 3,
+      Thu: 4,
+      Fri: 5,
+      Sat: 6,
+    };
+    const dayOfWeek =
+      weekdayMap[map.weekday] !== undefined
+        ? weekdayMap[map.weekday]
+        : new Date(Date.UTC(year, month - 1, day, 12, 0, 0)).getUTCDay();
+
+    return {
+      year,
+      month,
+      day,
+      hours,
+      minutes,
+      seconds,
+      dayOfWeek,
+      yearStr: String(year).padStart(4, '0'),
+      monthStr: String(month).padStart(2, '0'),
+      dayStr: String(day).padStart(2, '0'),
+      hoursStr: String(hours).padStart(2, '0'),
+      minutesStr: String(minutes).padStart(2, '0'),
+      secondsStr: String(seconds).padStart(2, '0'),
+    };
+  } catch {
+    // Fallback eksplisit ke UTC+7 (WIB)
+    const wibMs = safeDate.getTime() + 7 * 60 * 60 * 1000;
+    const wibDate = new Date(wibMs);
+    const year = wibDate.getUTCFullYear();
+    const month = wibDate.getUTCMonth() + 1;
+    const day = wibDate.getUTCDate();
+    const hours = wibDate.getUTCHours();
+    const minutes = wibDate.getUTCMinutes();
+    const seconds = wibDate.getUTCSeconds();
+    const dayOfWeek = wibDate.getUTCDay();
+    return {
+      year,
+      month,
+      day,
+      hours,
+      minutes,
+      seconds,
+      dayOfWeek,
+      yearStr: String(year).padStart(4, '0'),
+      monthStr: String(month).padStart(2, '0'),
+      dayStr: String(day).padStart(2, '0'),
+      hoursStr: String(hours).padStart(2, '0'),
+      minutesStr: String(minutes).padStart(2, '0'),
+      secondsStr: String(seconds).padStart(2, '0'),
+    };
+  }
+}
+
+/**
+ * Mengembalikan string tanggal YYYY-MM-DD sesuai waktu lokal Indonesia (WIB / Asia/Jakarta).
+ * Menggantikan `new Date().toISOString().split('T')[0]` agar tidak mundur 1 hari antara pukul 00:00 - 06:59 WIB.
+ */
+export function getJakartaDateString(date: Date = new Date()): string {
+  const { yearStr, monthStr, dayStr } = getJakartaDateParts(date);
+  return `${yearStr}-${monthStr}-${dayStr}`;
+}
+
+/**
+ * Mengembalikan string periode tahun-bulan YYYY-MM sesuai waktu lokal Indonesia (WIB / Asia/Jakarta).
+ */
+export function getJakartaYearMonth(date: Date = new Date()): string {
+  const { yearStr, monthStr } = getJakartaDateParts(date);
+  return `${yearStr}-${monthStr}`;
+}
+
+/**
+ * Mengembalikan string jam HH:mm atau HH:mm:ss sesuai waktu lokal Indonesia (WIB / Asia/Jakarta).
+ */
+export function getJakartaTimeString(
+  date: Date = new Date(),
+  includeSeconds: boolean = false
+): string {
+  const { hoursStr, minutesStr, secondsStr } = getJakartaDateParts(date);
+  return includeSeconds ? `${hoursStr}:${minutesStr}:${secondsStr}` : `${hoursStr}:${minutesStr}`;
+}
+
+/**
+ * Mengembalikan ISO-8601 Timestamp dengan offset eksplisit +07:00 (WIB / Asia/Jakarta)
+ * agar sinkron saat disimpan ke Supabase.
+ */
+export function getJakartaIsoTimestamp(date: Date = new Date()): string {
+  const { yearStr, monthStr, dayStr, hoursStr, minutesStr, secondsStr } = getJakartaDateParts(date);
+  return `${yearStr}-${monthStr}-${dayStr}T${hoursStr}:${minutesStr}:${secondsStr}+07:00`;
+}
+
+/**
+ * Mengembalikan format lengkap Hari, Tanggal & Jam WIB untuk tampilan jam digital real-time.
+ */
+export function getJakartaFullDateTimeLabel(
+  date: Date = new Date(),
+  includeSeconds: boolean = true
+): {
+  dayName: string;
+  fullDayDate: string;
+  shortDayDate: string;
+  timeOnly: string;
+  timeWithZone: string;
+  compactLabel: string;
+} {
+  const p = getJakartaDateParts(date);
+  const dayName = INDO_DAY_NAMES[p.dayOfWeek] || 'Senin';
+  const monthFull = INDO_MONTH_NAMES_FULL[p.month - 1] || 'Januari';
+  const monthShort = INDO_MONTH_NAMES_SHORT[p.month - 1] || 'Jan';
+  const fullDayDate = `${dayName}, ${p.day} ${monthFull} ${p.year}`;
+  const shortDayDate = `${dayName}, ${p.day} ${monthShort} ${p.year}`;
+  const timeOnly = includeSeconds
+    ? `${p.hoursStr}:${p.minutesStr}:${p.secondsStr}`
+    : `${p.hoursStr}:${p.minutesStr}`;
+  const timeWithZone = `${timeOnly} WIB`;
+  const compactLabel = `${shortDayDate} • ${timeWithZone}`;
+  return {
+    dayName,
+    fullDayDate,
+    shortDayDate,
+    timeOnly,
+    timeWithZone,
+    compactLabel,
+  };
+}
+
+/**
+ * Menambah/mengurangi hari pada string tanggal YYYY-MM-DD secara aman tanpa bug pergeseran UTC.
+ */
+export function addDaysToDateString(dateStr: string, offsetDays: number): string {
+  const clean = (dateStr || '').trim().slice(0, 10);
+  const match = clean.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const baseParts = match
+    ? {
+        year: parseInt(match[1], 10),
+        month: parseInt(match[2], 10),
+        day: parseInt(match[3], 10),
+      }
+    : getJakartaDateParts();
+
+  const utcNoon = new Date(
+    Date.UTC(baseParts.year, baseParts.month - 1, baseParts.day + offsetDays, 12, 0, 0)
+  );
+  const y = String(utcNoon.getUTCFullYear()).padStart(4, '0');
+  const m = String(utcNoon.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(utcNoon.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+/**
+ * Mengembalikan indeks hari (0 = Minggu .. 6 = Sabtu) dari string YYYY-MM-DD secara konsisten di zona WIB.
+ */
+export function getDayOfWeekFromDateString(dateStr: string): number {
+  const clean = (dateStr || '').trim().slice(0, 10);
+  const match = clean.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    return getJakartaDateParts().dayOfWeek;
+  }
+  const y = parseInt(match[1], 10);
+  const m = parseInt(match[2], 10);
+  const d = parseInt(match[3], 10);
+  return new Date(Date.UTC(y, m - 1, d, 12, 0, 0)).getUTCDay();
+}
+
+/**
+ * Mengembalikan nama Periode Gaji real-time saat ini sesuai WIB (contoh: "November 2026").
+ */
+export function getCurrentRealTimePayrollPeriod(date: Date = new Date()): string {
+  const { year, month } = getJakartaDateParts(date);
+  const monthName = INDO_MONTH_NAMES_FULL[month - 1] || 'Januari';
+  return `${monthName} ${year}`;
+}
+
+/**
+ * Menghasilkan daftar pilihan Periode Gaji secara dinamis di sekitar bulan berjalan (WIB).
+ */
+export function getDynamicAvailablePayrollPeriods(
+  date: Date = new Date(),
+  monthsBack: number = 4,
+  monthsForward: number = 3
+): string[] {
+  const { year, month } = getJakartaDateParts(date);
+  const result: string[] = [];
+  for (let offset = -monthsBack; offset <= monthsForward; offset++) {
+    const dt = new Date(Date.UTC(year, month - 1 + offset, 15, 12, 0, 0));
+    const y = dt.getUTCFullYear();
+    const m = dt.getUTCMonth();
+    const mName = INDO_MONTH_NAMES_FULL[m] || 'Januari';
+    result.push(`${mName} ${y}`);
+  }
+  return result;
+}
+
 export function formatIndoDate(dateString: string): string {
   try {
-    const d = new Date(dateString);
+    if (!dateString) return '-';
+    const trimmed = dateString.trim();
+    const ymdMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (ymdMatch) {
+      const y = parseInt(ymdMatch[1], 10);
+      const m = parseInt(ymdMatch[2], 10);
+      const d = parseInt(ymdMatch[3], 10);
+      const mName = INDO_MONTH_NAMES_FULL[m - 1];
+      if (mName && d >= 1 && d <= 31) {
+        return `${d} ${mName} ${y}`;
+      }
+    }
+    const d = new Date(trimmed);
     if (isNaN(d.getTime())) return dateString;
     return new Intl.DateTimeFormat('id-ID', {
+      timeZone: JAKARTA_TIMEZONE,
       day: 'numeric',
       month: 'long',
       year: 'numeric',
@@ -305,10 +600,37 @@ export function calculateDecemberPPh21Reconciliation(params: {
 // Standar Jam Kerja Harian Default Tas Grosir Import = 9 Jam / Hari
 export const STANDARD_WORK_HOURS_PER_DAY = 9;
 
-// Ambil Standar Jam Kerja Harian per Karyawan (default 9 jam/hari jika belum diatur)
+// Hitung target durasi jam kerja dari konfigurasi Jadwal & Shift Kerja (mendukung shift pendek 5 jam, 6 jam, maupun full shift 9 jam)
+export function getShiftTargetHours(
+  shift?: Partial<WorkShift> | null
+): number | undefined {
+  if (!shift || !shift.checkInTime || !shift.checkOutTime) return undefined;
+  const [sh, sm] = shift.checkInTime.split(':').map(Number);
+  const [eh, em] = shift.checkOutTime.split(':').map(Number);
+  if (isNaN(sh) || isNaN(sm) || isNaN(eh) || isNaN(em)) return undefined;
+  let startMins = sh * 60 + sm;
+  let endMins = eh * 60 + em;
+  if (endMins <= startMins) {
+    endMins += 24 * 60;
+  }
+  const rawSpanHours = Number(((endMins - startMins) / 60).toFixed(2));
+  const breakMins = Math.max(0, Number(shift.breakDurationMinutes) || 0);
+  const netHours = Number(((endMins - startMins - breakMins) / 60).toFixed(2));
+  // Jika shift pendek (misal 5 jam atau 6 jam), gunakan durasi shift tersebut secara dinamis
+  if (rawSpanHours > 0 && rawSpanHours <= 7) {
+    return netHours > 0 ? netHours : rawSpanHours;
+  }
+  if (netHours > 0 && netHours <= 6.5) {
+    return netHours;
+  }
+  return undefined;
+}
+
+// Ambil Standar Jam Kerja Harian per Karyawan atau Shift (5 jam, 6 jam, 9 jam, dll. - tidak dipukul rata 9 jam)
 export function getEmployeeStandardDailyHours(
   employee?: Partial<Employee> | null,
-  fallbackHours: number = STANDARD_WORK_HOURS_PER_DAY
+  fallbackHours: number = STANDARD_WORK_HOURS_PER_DAY,
+  shift?: Partial<WorkShift> | null
 ): number {
   const raw = Number(
     employee?.standard_daily_hours ??
@@ -318,8 +640,55 @@ export function getEmployeeStandardDailyHours(
   if (!isNaN(raw) && raw > 0 && raw <= 24) {
     return Number(raw.toFixed(2));
   }
+  const shiftHours = getShiftTargetHours(shift);
+  if (shiftHours !== undefined && shiftHours > 0 && shiftHours <= 24) {
+    return shiftHours;
+  }
   const fb = Number(fallbackHours);
   return !isNaN(fb) && fb > 0 && fb <= 24 ? Number(fb.toFixed(2)) : STANDARD_WORK_HOURS_PER_DAY;
+}
+
+// Ambil total jam lembur yang TELAH DISETUJUI Admin (status === 'Disetujui') untuk employee_id & date tertentu
+export function getApprovedOvertimeHoursForEmployeeDate(
+  employeeId?: string | null,
+  date?: string | null,
+  overtimeRequests?: OvertimeRequest[] | null
+): number {
+  if (!employeeId || !date) return 0;
+  const cleanEmpId = String(employeeId).trim();
+  const cleanDate = String(date).trim();
+  if (!cleanEmpId || !cleanDate) return 0;
+
+  let list: OvertimeRequest[] = Array.isArray(overtimeRequests) ? overtimeRequests : [];
+  if (list.length === 0 && typeof window !== 'undefined') {
+    try {
+      const raw = localStorage.getItem('tgi_overtime_requests_data');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          list = parsed;
+        }
+      }
+    } catch {
+      // Ignore storage parse error
+    }
+  }
+
+  let approvedMinutes = 0;
+  for (const req of list) {
+    if (!req) continue;
+    const reqEmpId = String(req.employeeId || (req as any).employee_id || '').trim();
+    const reqDate = String(req.date || '').trim();
+    if (reqEmpId === cleanEmpId && reqDate === cleanDate && req.status === 'Disetujui') {
+      const mins =
+        typeof req.minutes === 'number' && !isNaN(req.minutes) && req.minutes > 0
+          ? req.minutes
+          : (Number(req.hours) || 0) * 60;
+      approvedMinutes += Math.max(0, mins);
+    }
+  }
+
+  return Number((approvedMinutes / 60).toFixed(2));
 }
 
 // Ambil Tarif Gaji Per Jam (hourly_rate) Karyawan (otomatis fallback ke dailySalary / stdHours atau baseSalary / (25 hari × stdHours))
@@ -576,7 +945,7 @@ export function calculateEmployeeLiveSalesCommission(
       hostCommissionAmount += calcComm;
     }
 
-    const resolvedDate = rec.date || rec.session_date || new Date().toISOString().split('T')[0];
+    const resolvedDate = rec.date || rec.session_date || getJakartaDateString();
 
     return {
       ...rec,
@@ -905,70 +1274,115 @@ export function calculateActualWorkHoursFromClock(
 
 export interface CappedDailyWorkHoursResult {
   rawDurationHours: number; // Durasi mentah dari clockOut - clockIn
-  cappedWorkHours: number; // Jam kerja normal setelah dibatasi maksimal 9 jam/hari (0 jika belum Clock-Out)
-  excessHours: number; // Kelebihan jam di atas batas maksimal 9 jam/hari
-  isCappedToMax: boolean; // true jika rawDurationHours > maxNormalHoursPerDay
-  isMissingClockOut: boolean; // true jika belum Clock-Out atau clockIn === clockOut
+  cappedWorkHours: number; // Jam kerja normal setelah dibatasi maksimal target jam harian (5/6/9 jam)
+  excessHours: number; // Kelebihan jam di atas batas maksimal target jam harian
+  overtimeHours: number; // Jam lembur diakui (0 secara default kecuali ada pengajuan lembur 'Disetujui')
+  isCappedToMax: boolean; // true jika rawDurationHours > maxNormalHoursPerDay atau lupa clock-out lewat 23:59
+  isMissingClockOut: boolean; // true jika belum Clock-Out pada hari berjalan
+  isCrossMidnightOrForgotClockOut?: boolean; // true jika melewati 23:59 atau lupa clock-out di hari sebelumnya
 }
 
-// Hitung jam kerja normal harian dengan batas maksimal (cap) 9 jam/hari:
-// - Masuk 09:00, Pulang 18:00 = 9 Jam
-// - Masuk 09:00, Pulang 19:30 = raw 10.5 Jam -> dibatasi maksimal 9 Jam (isCappedToMax: true)
-// - Masuk 10:30, Pulang 18:00 = 7.5 Jam
-// - Jika Jam Masuk dan Jam Pulang sama atau belum Clock-Out = 0 Jam (isMissingClockOut: true)
+// Hitung jam kerja normal harian dengan batas maksimal dinamis sesuai target jam kerja karyawan/shift (5, 6, atau 9 jam/hari):
+// - Jika durasi aktual < target jam harian (misal 4 jam dari target 6 jam) -> dihitung 4 jam aktual, overtimeHours = 0
+// - Jika durasi aktual > target jam harian (misal > 5, 6, atau 9 jam) -> dibatasi maksimal sebesar target jam harian, overtimeHours = 0 secara default
+// - Kelebihan jam kerja HANYA dihitung sebagai overtimeHours jika approvedOvertimeHours > 0 (status 'Disetujui' di overtime_requests)
+// - Penanganan Lupa Clock-Out (lewat pukul 23:59 / pergantian hari): otomatis dibatasi maksimal sebesar target jam harian karyawan (5/6/9 jam)
 export function calculateCappedDailyWorkHours(
   clockIn?: string | null,
   clockOut?: string | null,
   fallbackWorkHours: number = 0,
-  maxNormalHoursPerDay: number = STANDARD_WORK_HOURS_PER_DAY
+  maxNormalHoursPerDay: number = STANDARD_WORK_HOURS_PER_DAY,
+  approvedOvertimeHours: number = 0,
+  attendanceDate?: string | null
 ): CappedDailyWorkHoursResult {
   const maxCap = Math.max(1, Number(maxNormalHoursPerDay) || STANDARD_WORK_HOURS_PER_DAY);
+  const cleanApprovedOt = Math.max(0, Number(approvedOvertimeHours) || 0);
   const cleanIn = (clockIn || '').trim();
   const cleanOut = (clockOut || '').trim();
   const hasClockIn = Boolean(cleanIn && cleanIn !== '-' && cleanIn.includes(':'));
   const hasClockOut = Boolean(cleanOut && cleanOut !== '-' && cleanOut.includes(':'));
 
+  // Cek apakah sesi absensi sudah melewati pergantian hari (lewat pukul 23:59 WIB) tanpa Clock-Out
+  const todayIso = getJakartaDateString();
+  const isPastDaySession = Boolean(
+    attendanceDate && /^\d{4}-\d{2}-\d{2}$/.test(attendanceDate.trim()) && attendanceDate.trim() < todayIso
+  );
+
   if (hasClockIn && (!hasClockOut || cleanIn === cleanOut)) {
+    // Penanganan Lupa Clock-Out yang telah melewati pukul 23:59 (hari sebelumnya):
+    // Otomatis batasi jam kerja maksimal sebesar target jam kerja harian karyawan (5, 6, atau 9 jam sesuai profil/shift)
+    if (isPastDaySession) {
+      return {
+        rawDurationHours: maxCap,
+        cappedWorkHours: maxCap,
+        excessHours: 0,
+        overtimeHours: 0,
+        isCappedToMax: true,
+        isMissingClockOut: false,
+        isCrossMidnightOrForgotClockOut: true,
+      };
+    }
     return {
       rawDurationHours: 0,
       cappedWorkHours: 0,
       excessHours: 0,
+      overtimeHours: 0,
       isCappedToMax: false,
       isMissingClockOut: true,
+      isCrossMidnightOrForgotClockOut: false,
     };
   }
 
   if (hasClockIn && hasClockOut) {
+    const inParts = cleanIn.split(':').map(Number);
+    const outParts = cleanOut.split(':').map(Number);
+    const inMins = (inParts[0] || 0) * 60 + (inParts[1] || 0);
+    const outMins = (outParts[0] || 0) * 60 + (outParts[1] || 0);
+    const crossedMidnight = outMins < inMins && inMins < 18 * 60; // Sesi reguler melewati 23:59
+
     const raw = calculateActualWorkHoursFromClock(cleanIn, cleanOut);
     if (raw <= 0) {
       return {
         rawDurationHours: 0,
         cappedWorkHours: 0,
         excessHours: 0,
+        overtimeHours: 0,
         isCappedToMax: false,
         isMissingClockOut: true,
+        isCrossMidnightOrForgotClockOut: false,
       };
     }
+
+    // Jika melewati 23:59 (lupa clock-out tepat waktu) tanpa lembur disetujui, batasi ke target jam harian (5/6/9 jam)
     const capped = Number(Math.min(maxCap, raw).toFixed(2));
     const excess = Number(Math.max(0, raw - maxCap).toFixed(2));
+    const recognizedOvertime =
+      cleanApprovedOt > 0 ? Number(Math.min(excess, cleanApprovedOt).toFixed(2)) : 0;
+
     return {
       rawDurationHours: raw,
       cappedWorkHours: capped,
       excessHours: excess,
-      isCappedToMax: raw > maxCap,
+      overtimeHours: recognizedOvertime,
+      isCappedToMax: raw > maxCap || crossedMidnight,
       isMissingClockOut: false,
+      isCrossMidnightOrForgotClockOut: crossedMidnight,
     };
   }
 
   const fallbackRaw = Math.max(0, Number(fallbackWorkHours) || 0);
   const cappedFallback = Number(Math.min(maxCap, fallbackRaw).toFixed(2));
   const excessFallback = Number(Math.max(0, fallbackRaw - maxCap).toFixed(2));
+  const recognizedFallbackOt =
+    cleanApprovedOt > 0 ? Number(Math.min(excessFallback, cleanApprovedOt).toFixed(2)) : 0;
   return {
     rawDurationHours: fallbackRaw,
     cappedWorkHours: cappedFallback,
     excessHours: excessFallback,
+    overtimeHours: recognizedFallbackOt,
     isCappedToMax: fallbackRaw > maxCap,
     isMissingClockOut: fallbackRaw <= 0,
+    isCrossMidnightOrForgotClockOut: false,
   };
 }
 
@@ -1251,24 +1665,37 @@ export function deduplicateDailyAttendances(
 
     // Merge latest valid checkOut from any record on the same day
     let mergedCheckOut = primary.checkOut;
-    let mergedCheckOutPhoto = primary.checkOutPhotoSnapshot;
+    let mergedCheckOutPhoto = primary.checkOutPhotoSnapshot || primary.facePhotoOut || primary.photoOut;
     let mergedCheckOutTimestamp = primary.checkOutFullTimestamp;
     let mergedCheckOutCoords = primary.checkOutLocationCoords;
     let mergedCheckOutAddress = primary.checkOutLocationAddress;
+    let mergedCheckOutDistance = primary.checkOutDistanceMeters;
+    let mergedPhotoIn = primary.facePhotoSnapshot || primary.photoIn;
 
     for (const r of sorted) {
+      if (r.facePhotoSnapshot || r.photoIn) {
+        mergedPhotoIn = r.facePhotoSnapshot || r.photoIn || mergedPhotoIn;
+      }
       if (r.checkOut && r.checkOut !== '-' && r.checkOut.trim() !== '') {
         mergedCheckOut = r.checkOut;
-        mergedCheckOutPhoto = r.checkOutPhotoSnapshot || mergedCheckOutPhoto;
+        mergedCheckOutPhoto =
+          r.checkOutPhotoSnapshot || r.facePhotoOut || r.photoOut || mergedCheckOutPhoto;
         mergedCheckOutTimestamp = r.checkOutFullTimestamp || mergedCheckOutTimestamp;
         mergedCheckOutCoords = r.checkOutLocationCoords || mergedCheckOutCoords;
         mergedCheckOutAddress = r.checkOutLocationAddress || mergedCheckOutAddress;
+        if (r.checkOutDistanceMeters !== undefined) {
+          mergedCheckOutDistance = r.checkOutDistanceMeters;
+        }
       }
     }
 
     const emp = empMap.get(primary.employeeId);
-    const empStdHours = getEmployeeStandardDailyHours(emp);
     const empShift = getEmployeeShift(emp, shifts);
+    const empStdHours = getEmployeeStandardDailyHours(emp, STANDARD_WORK_HOURS_PER_DAY, empShift);
+    const approvedOtHours = getApprovedOvertimeHoursForEmployeeDate(
+      primary.employeeId,
+      primary.date
+    );
     const scheduledIn = empShift.checkInTime || primary.scheduledCheckIn || '09:00';
     const scheduledOut = empShift.checkOutTime || primary.scheduledCheckOut || '17:30';
     const effectiveShift: WorkShift = {
@@ -1299,6 +1726,19 @@ export function deduplicateDailyAttendances(
         empStdHours
       );
 
+      // Penanganan Lupa Clock-Out (melewati pukul 23:59 / hari sebelumnya tanpa Clock-Out):
+      // Otomatis batasi jam kerja maksimal sebesar target jam kerja harian karyawan (5, 6, atau 9 jam sesuai profil/shift)
+      const cappedRes = calculateCappedDailyWorkHours(
+        primary.checkIn,
+        mergedCheckOut,
+        evalRes.workHours,
+        empStdHours,
+        approvedOtHours,
+        primary.date
+      );
+      const resolvedWorkHours =
+        evalRes.workHours > 0 ? evalRes.workHours : cappedRes.cappedWorkHours;
+
       const finalStatus = primary.isManualStatus ? primary.status : evalRes.status;
       const finalLateMins = primary.isManualStatus
         ? primary.status === 'Hadir Tepat Waktu'
@@ -1310,34 +1750,47 @@ export function deduplicateDailyAttendances(
 
       deduplicated.push({
         ...primary,
+        facePhotoSnapshot: mergedPhotoIn,
+        photoIn: mergedPhotoIn,
         checkOut: mergedCheckOut,
         checkOutPhotoSnapshot: mergedCheckOutPhoto,
+        photoOut: mergedCheckOutPhoto,
+        facePhotoOut: mergedCheckOutPhoto,
         checkOutFullTimestamp: mergedCheckOutTimestamp,
         checkOutLocationCoords: mergedCheckOutCoords,
         checkOutLocationAddress: mergedCheckOutAddress,
+        checkOutDistanceMeters: mergedCheckOutDistance,
         scheduledCheckIn: scheduledIn,
         scheduledCheckOut: scheduledOut,
         shiftId: empShift.id || primary.shiftId,
         shiftName: empShift.name || primary.shiftName,
         lateMinutes: finalLateMins,
         earlyLeaveMinutes: evalRes.earlyLeaveMinutes,
-        workHours: evalRes.workHours,
+        workHours: resolvedWorkHours,
+        overtimeHours: cappedRes.overtimeHours,
         status: finalStatus,
       });
     } else {
+      const cappedNonShift = calculateCappedDailyWorkHours(
+        primary.checkIn,
+        mergedCheckOut,
+        primary.workHours,
+        empStdHours,
+        approvedOtHours,
+        primary.date
+      );
       deduplicated.push({
         ...primary,
+        facePhotoSnapshot: mergedPhotoIn,
+        photoIn: mergedPhotoIn,
         checkOut: isNonPresentStatus ? '-' : mergedCheckOut,
+        checkOutPhotoSnapshot: mergedCheckOutPhoto,
+        photoOut: mergedCheckOutPhoto,
+        facePhotoOut: mergedCheckOutPhoto,
         lateMinutes: 0,
         earlyLeaveMinutes: 0,
-        workHours: isNonPresentStatus
-          ? 0
-          : calculateCappedDailyWorkHours(
-              primary.checkIn,
-              mergedCheckOut,
-              primary.workHours,
-              empStdHours
-            ).cappedWorkHours,
+        workHours: isNonPresentStatus ? 0 : cappedNonShift.cappedWorkHours,
+        overtimeHours: isNonPresentStatus ? 0 : cappedNonShift.overtimeHours,
       });
     }
   });
@@ -1367,7 +1820,7 @@ export function getTodayDeduplicatedAttendances(
 
   if (dedupedAll.length === 0) return [];
 
-  const todayIso = new Date().toISOString().split('T')[0];
+  const todayIso = getJakartaDateString();
   const hasTodayLogs = dedupedAll.some((a) => a.date === todayIso);
   if (hasTodayLogs) {
     return dedupedAll.filter((a) => a.date === todayIso);
@@ -1457,7 +1910,9 @@ export function calculateEmployeeAttendancePenalty(
         rec.checkIn,
         rec.checkOut,
         rec.workHours,
-        standardWorkHoursPerDay
+        standardWorkHoursPerDay,
+        rec.overtimeHours || 0,
+        rec.date
       );
       const actualHours = cappedRes.cappedWorkHours;
       totalActualWorkHours = Number((totalActualWorkHours + actualHours).toFixed(2));
@@ -1479,7 +1934,9 @@ export function calculateEmployeeAttendancePenalty(
         rec.checkIn,
         rec.checkOut,
         rec.workHours,
-        standardWorkHoursPerDay
+        standardWorkHoursPerDay,
+        rec.overtimeHours || 0,
+        rec.date
       );
       const actualHours = cappedRes.cappedWorkHours;
       totalActualWorkHours = Number((totalActualWorkHours + actualHours).toFixed(2));
@@ -1597,6 +2054,7 @@ export interface PayrollAttendancePenaltyMeta {
   penaltyPolicy?: Partial<AttendancePenaltyPolicy> | null;
   employeeAdjustment?: EmployeeAdjustment | null;
   payrollDeduction?: PayrollDeductionRecord | null;
+  thrPayout?: ThrPayoutRecord | null;
   leaveRequests?: LeaveRequest[];
 }
 
@@ -1736,6 +2194,16 @@ export function calculatePayroll(
   const liveSalesSummary = calculateEmployeeLiveSalesCommission(employee, period);
   const salesCommission = liveSalesSummary.totalCommission;
 
+  // Tunjangan Hari Raya (THR) - HANYA dihitung jika show_in_payslip === true dari ceklis Admin
+  const thrRec = attendancePenaltyMeta?.thrPayout || null;
+  const thrShowInPayslip = Boolean(thrRec && thrRec.show_in_payslip === true && Number(thrRec.total_thr_amount) > 0);
+  const thrAmount = thrShowInPayslip
+    ? Math.max(0, Math.round(Number(thrRec!.total_thr_amount) || 0))
+    : 0;
+  const thrBasisAmount = thrShowInPayslip
+    ? Math.max(0, Math.round(Number(thrRec!.calculation_basis_amount) || 0))
+    : 0;
+
   const totalGrossSalary =
     baseSalary +
     position +
@@ -1743,7 +2211,8 @@ export function calculatePayroll(
     tunjanganKedisiplinan +
     overtimePay +
     bonus +
-    salesCommission;
+    salesCommission +
+    thrAmount;
 
   // Denda Keterlambatan & Potongan Absen (Otomatis dari Rekap Presensi atau Parameter)
   const resolvedTotalLateMins =
@@ -1946,7 +2415,7 @@ export function calculatePayroll(
     id: `pay-${employee.id}-${Date.now()}`,
     employeeId: employee.id,
     period,
-    createdAt: new Date().toISOString(),
+    createdAt: getJakartaIsoTimestamp(),
     hourlyRate,
     totalActualWorkHours: resolvedActualWorkHours,
     standardWorkHoursPerDay,
@@ -2024,6 +2493,13 @@ export function calculatePayroll(
     catatanPotongan,
     cashAdvanceDeduction: cicilanKasbonBulanIni,
     cashAdvanceNotes,
+    thrAmount,
+    thrBasisAmount,
+    thrShowInPayslip,
+    thrHolidayName: thrShowInPayslip ? thrRec?.holiday_name : undefined,
+    thrTenureLabel: thrShowInPayslip ? thrRec?.tenure_label : undefined,
+    thrProportionFormula: thrShowInPayslip ? thrRec?.proportion_formula : undefined,
+    thrPaymentStatus: thrShowInPayslip ? thrRec?.payment_status : undefined,
     totalDeductions,
     takeHomePay,
     // Status awal saat digenerate adalah Draft (harus melalui tahap Verifikasi / Pembayaran sebelum Lunas)
@@ -2144,12 +2620,18 @@ export function getContractValidityInfo(employee?: Partial<Employee> | null): {
     };
   }
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const endObj = new Date(endDate);
-  endObj.setHours(0, 0, 0, 0);
-  const startObj = startDate ? new Date(startDate) : new Date(today);
-  startObj.setHours(0, 0, 0, 0);
+  const todayWibStr = getJakartaDateString();
+  const today = new Date(`${todayWibStr}T00:00:00+07:00`);
+  const endObj = new Date(
+    /^\d{4}-\d{2}-\d{2}$/.test(endDate.trim()) ? `${endDate.trim()}T00:00:00+07:00` : endDate
+  );
+  const startObj = startDate
+    ? new Date(
+        /^\d{4}-\d{2}-\d{2}$/.test(startDate.trim())
+          ? `${startDate.trim()}T00:00:00+07:00`
+          : startDate
+      )
+    : new Date(today);
 
   if (isNaN(endObj.getTime())) {
     return {
@@ -2313,7 +2795,7 @@ export function evaluateBankAccountValidity(
   };
 }
 
-// Format Berita Transfer Bank singkat seperti "Gaji Okt 2026 Tas Grosir Import"
+// Format Berita Transfer Bank singkat seperti "Gaji Nov 2026 Tas Grosir Import"
 export function formatBankTransferRemark(period: string, companyShortName: string = 'Tas Grosir Import'): string {
   const monthShortMap: Record<string, string> = {
     januari: 'Jan',
@@ -2330,22 +2812,17 @@ export function formatBankTransferRemark(period: string, companyShortName: strin
     desember: 'Des',
   };
 
-  const parts = (period || 'Oktober 2026').trim().split(/\s+/);
+  const wibNow = getJakartaDateParts();
+  const fallbackPeriod = getCurrentRealTimePayrollPeriod();
+  const parts = (period || fallbackPeriod).trim().split(/\s+/);
   const firstWord = (parts[0] || '').toLowerCase();
-  const shortMonth = monthShortMap[firstWord] || parts[0] || 'Okt';
-  const yearPart = parts.slice(1).join(' ') || '2026';
+  const shortMonth = monthShortMap[firstWord] || parts[0] || INDO_MONTH_NAMES_SHORT[wibNow.month - 1] || 'Jan';
+  const yearPart = parts.slice(1).join(' ') || wibNow.yearStr;
 
   return `Gaji ${shortMonth} ${yearPart} ${companyShortName}`.trim();
 }
 
-export const AVAILABLE_PAYROLL_PERIODS: string[] = [
-  'Agustus 2026',
-  'September 2026',
-  'Oktober 2026',
-  'November 2026',
-  'Desember 2026',
-  'Januari 2027',
-];
+export const AVAILABLE_PAYROLL_PERIODS: string[] = getDynamicAvailablePayrollPeriods(new Date(), 4, 4);
 
 export const PAYROLL_SIGNATORIES_STORAGE_KEY = 'tgi_payroll_signatories_config_v2';
 
@@ -2619,7 +3096,7 @@ export function normalizePeriodToYearMonth(periodStr?: string | null): string {
   }
   const lower = trimmed.toLowerCase();
   const yearMatch = lower.match(/\b(20\d{2})\b/);
-  const year = yearMatch ? yearMatch[1] : String(new Date().getFullYear());
+  const year = yearMatch ? yearMatch[1] : getJakartaDateParts().yearStr;
   for (const [mName, mNum] of Object.entries(INDO_MONTH_NAME_TO_NUM)) {
     if (lower.includes(mName)) {
       return `${year}-${mNum}`;
@@ -2642,16 +3119,17 @@ export function formatCutOffPeriodRange(
   cutOffStartDay: number = 26,
   cutOffEndDay: number = 25
 ): string {
-  if (!periodStr) return '26 Oktober - 25 November 2026';
-  const trimmed = periodStr.trim();
+  const currentYm = getJakartaYearMonth();
+  const trimmed = (periodStr || '').trim();
   if (trimmed.includes('-') && /\d+\s+[A-Za-z]+\s*-\s*\d+\s+[A-Za-z]+/.test(trimmed)) {
     return trimmed;
   }
-  const norm = normalizePeriodToYearMonth(trimmed) || '2026-11';
+  const norm = normalizePeriodToYearMonth(trimmed) || currentYm;
   const [yearRaw, monthRaw] = norm.split('-');
+  const wibNow = getJakartaDateParts();
   const parsedYear = parseInt(yearRaw, 10);
-  const year = !isNaN(parsedYear) && parsedYear >= 2020 ? parsedYear : 2026;
-  const month = parseInt(monthRaw, 10) || 11;
+  const year = !isNaN(parsedYear) && parsedYear >= 2020 ? parsedYear : wibNow.year;
+  const month = parseInt(monthRaw, 10) || wibNow.month;
 
   const prevMonthNum = month === 1 ? 12 : month - 1;
   const prevYear = month === 1 ? year - 1 : year;
@@ -2676,11 +3154,13 @@ export function formatEndOfPeriodPrintDate(
   if (customDateText && customDateText.trim() && !customDateText.includes('1900')) {
     return customDateText.trim();
   }
-  const norm = normalizePeriodToYearMonth(periodStr) || '2026-11';
+  const currentYm = getJakartaYearMonth();
+  const wibNow = getJakartaDateParts();
+  const norm = normalizePeriodToYearMonth(periodStr) || currentYm;
   const [yearRaw, monthRaw] = norm.split('-');
   const parsedYear = parseInt(yearRaw, 10);
-  const year = !isNaN(parsedYear) && parsedYear >= 2020 ? parsedYear : 2026;
-  const month = parseInt(monthRaw, 10) || 11;
+  const year = !isNaN(parsedYear) && parsedYear >= 2020 ? parsedYear : wibNow.year;
+  const month = parseInt(monthRaw, 10) || wibNow.month;
   const lastDay = new Date(year, month, 0).getDate();
   const monthKey = String(month).padStart(2, '0');
   const monthName = NUM_TO_INDO_MONTH_NAME[monthKey] || 'November';
@@ -2729,10 +3209,8 @@ export function getEmployeeBonusesForPeriod(
     ? empBonuses.filter((b) => normalizePeriodToYearMonth(b.period_month) === targetYm)
     : empBonuses;
 
-  // Fallback: if the payslip is for a default period (e.g. "Oktober 2026") and the Admin awarded a bonus in the current month (e.g. "2026-11")
-  // or if no bonus matched the exact label but allowCurrentMonthFallback is enabled, include the employee's bonuses so it shows on their active payslip.
   if (matched.length === 0 && allowCurrentMonthFallback) {
-    const currentYm = new Date().toISOString().slice(0, 7);
+    const currentYm = getJakartaYearMonth();
     const currentMonthBonuses = empBonuses.filter(
       (b) => normalizePeriodToYearMonth(b.period_month) === currentYm
     );
@@ -2796,7 +3274,7 @@ export function getEmployeeAdjustmentForPeriod(
   }
 
   if (allowCurrentMonthFallback) {
-    const currentYm = new Date().toISOString().slice(0, 7);
+    const currentYm = getJakartaYearMonth();
     const currentMonthMatch = empAdjustments.find(
       (a) => normalizePeriodToYearMonth(a.period_month) === currentYm
     );
@@ -2851,7 +3329,7 @@ export function getEmployeePayrollDeductionForPeriod(
   }
 
   if (allowCurrentMonthFallback) {
-    const currentYm = new Date().toISOString().slice(0, 7);
+    const currentYm = getJakartaYearMonth();
     const currentMonthMatch = empDeductions.find(
       (d) => normalizePeriodToYearMonth(d.period_month) === currentYm
     );
@@ -2940,6 +3418,486 @@ export function getApprovedSickLeaveSummaryForPeriod(
     sickRatePerDay,
     sickDeductionTotal,
     sickNotes: notesArr.join(' • '),
+  };
+}
+
+// ============================================================================
+// KALKULATOR THR OTOMATIS SESUAI PERMENAKER NO. 6/2016 & INTEGRASI SLIP GAJI
+// ============================================================================
+
+export const HOLIDAY_PRESETS_CONFIG: Array<{
+  name: string;
+  datesByYear: Record<number, string>;
+  defaultMonthDay: string;
+}> = [
+  {
+    name: 'Hari Raya Idul Fitri',
+    datesByYear: {
+      2025: '2025-03-31',
+      2026: '2026-03-20',
+      2027: '2027-03-10',
+      2028: '2028-02-27',
+    },
+    defaultMonthDay: '03-20',
+  },
+  {
+    name: 'Hari Raya Natal & Tahun Baru',
+    datesByYear: {
+      2025: '2025-12-25',
+      2026: '2026-12-25',
+      2027: '2027-12-25',
+      2028: '2028-12-25',
+    },
+    defaultMonthDay: '12-25',
+  },
+  {
+    name: 'Hari Raya Nyepi',
+    datesByYear: {
+      2025: '2025-03-29',
+      2026: '2026-03-19',
+      2027: '2027-03-08',
+      2028: '2028-03-26',
+    },
+    defaultMonthDay: '03-19',
+  },
+  {
+    name: 'Hari Raya Waisak',
+    datesByYear: {
+      2025: '2025-05-12',
+      2026: '2026-05-31',
+      2027: '2027-05-20',
+      2028: '2028-05-09',
+    },
+    defaultMonthDay: '05-31',
+  },
+  {
+    name: 'Tahun Baru Imlek',
+    datesByYear: {
+      2025: '2025-01-29',
+      2026: '2026-02-17',
+      2027: '2027-02-06',
+      2028: '2028-01-26',
+    },
+    defaultMonthDay: '02-17',
+  },
+  {
+    name: 'Hari Raya Keagamaan Lainnya',
+    datesByYear: {},
+    defaultMonthDay: '12-25',
+  },
+];
+
+/**
+ * Menghasilkan tanggal Hari Raya (YYYY-MM-DD) yang valid untuk Tahun & Jenis Hari Raya tertentu.
+ * Jika tahun yang dipilih adalah tahun berjalan (WIB) dan tanggal preset sudah terlewat (< hari ini WIB)
+ * pada kategori "Hari Raya Keagamaan Lainnya", maka otomatis disesuaikan ke tanggal valid >= hari ini.
+ */
+export function getHolidayDateForYearAndPreset(
+  holidayName: string,
+  targetYear: number,
+  ensureFutureInCurrentYear: boolean = false
+): string {
+  const todayWib = getJakartaDateString();
+  const currentWibYear = getJakartaDateParts().year;
+  const preset =
+    HOLIDAY_PRESETS_CONFIG.find((p) => p.name === holidayName) || HOLIDAY_PRESETS_CONFIG[0];
+
+  const mapped = preset.datesByYear[targetYear] || `${targetYear}-${preset.defaultMonthDay}`;
+  if (ensureFutureInCurrentYear && targetYear === currentWibYear && mapped < todayWib) {
+    // Jika tanggal preset di tahun berjalan sudah lewat dari hari ini WIB, gunakan tanggal mendatang di tahun ini (misal 25 Desember) atau hari ini
+    const dec25 = `${targetYear}-12-25`;
+    return dec25 >= todayWib ? dec25 : todayWib;
+  }
+  return mapped;
+}
+
+/**
+ * Menentukan default konfigurasi THR yang 100% real-time sesuai waktu lokal WIB (Asia/Jakarta):
+ * - Memastikan default Tanggal Hari Raya selalu >= tanggal hari ini (WIB) dan tidak pernah jatuh ke masa lalu.
+ * - Jika Idul Fitri tahun berjalan sudah lewat (misal saat ini November 2026 dan Idul Fitri Maret 2026 sudah lewat),
+ *   otomatis mengarahkan ke Hari Raya terdekat yang akan datang (>= hari ini WIB) atau Idul Fitri tahun berikutnya.
+ */
+export function getDefaultUpcomingHolidayConfig(
+  existingRecords?: ThrPayoutRecord[] | null,
+  currentPayrollPeriod?: string | null
+): {
+  selectedYear: number;
+  selectedHolidayName: string;
+  selectedHolidayDate: string;
+  selectedPeriodMonth: string;
+} {
+  const todayWib = getJakartaDateString();
+  const currentYm = normalizePeriodToYearMonth(currentPayrollPeriod) || getJakartaYearMonth();
+  const currentWibYear = getJakartaDateParts().year;
+
+  // Cek apakah sudah ada data THR tersimpan dengan holiday_date >= todayWib
+  if (Array.isArray(existingRecords) && existingRecords.length > 0) {
+    const upcomingSaved = existingRecords.find(
+      (r) => r && r.holiday_date && r.holiday_date.slice(0, 10) >= todayWib
+    );
+    if (upcomingSaved) {
+      const yr = Number(upcomingSaved.thr_year) || Number(upcomingSaved.holiday_date.slice(0, 4)) || currentWibYear;
+      return {
+        selectedYear: yr,
+        selectedHolidayName: upcomingSaved.holiday_name || 'Hari Raya Idul Fitri',
+        selectedHolidayDate: upcomingSaved.holiday_date.slice(0, 10),
+        selectedPeriodMonth: normalizePeriodToYearMonth(upcomingSaved.period_month) || currentYm,
+      };
+    }
+  }
+
+  // Cek apakah Idul Fitri tahun berjalan masih akan datang (>= todayWib)
+  const idulFitriThisYear = getHolidayDateForYearAndPreset('Hari Raya Idul Fitri', currentWibYear);
+  if (idulFitriThisYear >= todayWib) {
+    return {
+      selectedYear: currentWibYear,
+      selectedHolidayName: 'Hari Raya Idul Fitri',
+      selectedHolidayDate: idulFitriThisYear,
+      selectedPeriodMonth: currentYm,
+    };
+  }
+
+  // Jika Idul Fitri tahun berjalan sudah lewat, cek apakah Hari Raya Natal & Tahun Baru tahun berjalan masih >= todayWib
+  const natalThisYear = getHolidayDateForYearAndPreset('Hari Raya Natal & Tahun Baru', currentWibYear);
+  if (natalThisYear >= todayWib) {
+    return {
+      selectedYear: currentWibYear,
+      selectedHolidayName: 'Hari Raya Natal & Tahun Baru',
+      selectedHolidayDate: natalThisYear,
+      selectedPeriodMonth: currentYm,
+    };
+  }
+
+  // Jika akhir Desember sudah lewat, arahkan ke Idul Fitri tahun berikutnya
+  const nextYear = currentWibYear + 1;
+  const idulFitriNextYear = getHolidayDateForYearAndPreset('Hari Raya Idul Fitri', nextYear);
+  return {
+    selectedYear: nextYear,
+    selectedHolidayName: 'Hari Raya Idul Fitri',
+    selectedHolidayDate: idulFitriNextYear,
+    selectedPeriodMonth: currentYm,
+  };
+}
+
+export function doesEmployeeMatchThrPayout(
+  thr: ThrPayoutRecord | null | undefined,
+  employee: Partial<Employee> | null | undefined
+): boolean {
+  if (!thr || !employee) return false;
+  if (employee.id && thr.employee_id && thr.employee_id === employee.id) {
+    return true;
+  }
+  const empNik = (employee.nik || '').trim().toLowerCase();
+  const thrNik = (thr.employee_nik || '').trim().toLowerCase();
+  if (empNik && thrNik && empNik === thrNik) {
+    return true;
+  }
+  const empName = (employee.fullName || '').trim().toLowerCase();
+  const thrName = (thr.employee_name || '').trim().toLowerCase();
+  if (empName && thrName && empName === thrName) {
+    return true;
+  }
+  return false;
+}
+
+export function getEmployeeThrRecordForPeriod(
+  allThrPayouts: ThrPayoutRecord[] | null | undefined,
+  employee: Partial<Employee> | null | undefined,
+  periodOrDate?: string,
+  thrYear?: number
+): ThrPayoutRecord | null {
+  if (!Array.isArray(allThrPayouts) || !employee) return null;
+
+  const empThrs = allThrPayouts
+    .filter((t) => doesEmployeeMatchThrPayout(t, employee))
+    .sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || ''));
+
+  if (empThrs.length === 0) return null;
+
+  if (thrYear) {
+    const yearMatch = empThrs.find((t) => Number(t.thr_year) === Number(thrYear));
+    if (yearMatch) return yearMatch;
+  }
+
+  const targetYm = normalizePeriodToYearMonth(periodOrDate);
+  if (targetYm) {
+    const exactMatch = empThrs.find(
+      (t) => normalizePeriodToYearMonth(t.period_month) === targetYm
+    );
+    if (exactMatch) return exactMatch;
+
+    const targetYear = Number(targetYm.slice(0, 4));
+    if (!isNaN(targetYear) && targetYear > 2000) {
+      const sameYearMatch = empThrs.find((t) => Number(t.thr_year) === targetYear);
+      if (sameYearMatch) return sameYearMatch;
+    }
+  }
+
+  return empThrs[0];
+}
+
+/**
+ * Mengambil data THR karyawan HANYA JIKA Admin sudah mencentang checkbox
+ * "Tampilkan & Cairkan di Slip Gaji" (show_in_payslip === true).
+ * Jika show_in_payslip === false, fungsi ini wajib mengembalikan null agar THR
+ * tidak muncul dan tidak dihitung di Slip Gaji maupun Portal Karyawan.
+ */
+export function getActiveEmployeeThrForPayslip(
+  allThrPayouts: ThrPayoutRecord[] | null | undefined,
+  employee: Partial<Employee> | null | undefined,
+  periodOrDate?: string
+): ThrPayoutRecord | null {
+  const record = getEmployeeThrRecordForPeriod(allThrPayouts, employee, periodOrDate);
+  if (!record) return null;
+  if (record.show_in_payslip !== true) return null;
+  if (Number(record.total_thr_amount) <= 0) return null;
+  return record;
+}
+
+export function calculateEmployeeThrPermenaker(params: {
+  employee: Employee;
+  holidayDate: string; // YYYY-MM-DD
+  holidayName?: string;
+  thrYear?: number;
+  periodMonth?: string; // YYYY-MM
+  partTimeLogs?: PartTimeWorkLog[];
+  attendances?: AttendanceRecord[];
+  existingRecord?: Partial<ThrPayoutRecord> | null;
+}): ThrPayoutRecord {
+  const {
+    employee,
+    holidayDate,
+    holidayName = 'Hari Raya Idul Fitri',
+    thrYear,
+    periodMonth,
+    partTimeLogs = [],
+    attendances = [],
+    existingRecord,
+  } = params;
+
+  const cleanHolidayDate =
+    holidayDate && /^\d{4}-\d{2}-\d{2}/.test(holidayDate.trim())
+      ? holidayDate.trim().slice(0, 10)
+      : getJakartaDateString();
+
+  const resolvedYear =
+    thrYear && !isNaN(Number(thrYear))
+      ? Number(thrYear)
+      : Number(cleanHolidayDate.slice(0, 4)) || getJakartaDateParts().year;
+
+  const resolvedPeriodMonth =
+    periodMonth && /^\d{4}-\d{2}$/.test(periodMonth.trim())
+      ? periodMonth.trim()
+      : normalizePeriodToYearMonth(periodMonth) || cleanHolidayDate.slice(0, 7);
+
+  const rawJoinDate = (employee.joinDate || employee.contractStartDate || '').trim();
+  const cleanJoinDate = /^\d{4}-\d{2}-\d{2}/.test(rawJoinDate)
+    ? rawJoinDate.slice(0, 10)
+    : `${resolvedYear - 1}-01-01`;
+
+  const joinObj = new Date(`${cleanJoinDate}T00:00:00+07:00`);
+  const holidayObj = new Date(`${cleanHolidayDate}T00:00:00+07:00`);
+  const diffMs = holidayObj.getTime() - joinObj.getTime();
+  const tenureDays = !isNaN(diffMs) && diffMs > 0 ? Math.floor(diffMs / (1000 * 60 * 60 * 24)) : 0;
+
+  let tenureMonths = 0;
+  if (tenureDays >= 30) {
+    let calMonths =
+      (holidayObj.getFullYear() - joinObj.getFullYear()) * 12 +
+      (holidayObj.getMonth() - joinObj.getMonth());
+    if (holidayObj.getDate() < joinObj.getDate()) {
+      calMonths -= 1;
+    }
+    const approxMonthsByDays = Math.floor(tenureDays / 30);
+    tenureMonths = Math.max(1, calMonths, approxMonthsByDays >= 12 ? 12 : calMonths);
+    if (tenureDays >= 365 && tenureMonths < 12) {
+      tenureMonths = 12;
+    }
+  }
+
+  let tenureLabel = '';
+  if (tenureDays < 30) {
+    tenureLabel = `< 1 Bulan (${tenureDays} Hari)`;
+  } else if (tenureMonths >= 12) {
+    const yrs = Math.floor(tenureMonths / 12);
+    const remM = tenureMonths % 12;
+    tenureLabel =
+      remM > 0
+        ? `${yrs} Tahun ${remM} Bulan (${tenureMonths} Bln)`
+        : `${yrs} Tahun (${tenureMonths} Bulan)`;
+  } else {
+    tenureLabel = `${tenureMonths} Bulan (${tenureDays} Hari)`;
+  }
+
+  const isPartTime = isEmployeePartTime(employee);
+  const stdDailyHours = getEmployeeStandardDailyHours(employee);
+  const empHourlyRate = getEmployeeHourlyRate(employee, stdDailyHours, 25);
+
+  let baseSalaryComponent = 0;
+  let fixedAllowanceComponent = 0;
+  let partTimeAvgMonthlyWage = 0;
+  let calculationBasisAmount = 0;
+  let eligibilityStatus: ThrEligibilityStatus = 'Belum Berhak THR';
+  let proportionFormula = 'Masa Kerja < 1 Bulan (< 30 Hari) — Belum Berhak THR';
+  let calculatedThrAmount = 0;
+
+  if (!isPartTime) {
+    // Karyawan Tetap (PKWTT) & Kontrak (PKWT): Dasar Upah = Gaji Pokok + Tunjangan Tetap (Jabatan)
+    baseSalaryComponent =
+      Math.max(0, Math.round(Number(employee.baseSalary) || 0)) ||
+      Math.round(empHourlyRate * stdDailyHours * 25);
+    fixedAllowanceComponent = Math.max(0, Math.round(Number(employee.allowances?.position) || 0));
+    calculationBasisAmount = baseSalaryComponent + fixedAllowanceComponent;
+
+    if (tenureDays < 30 || tenureMonths < 1) {
+      eligibilityStatus = 'Belum Berhak THR';
+      proportionFormula = 'Masa Kerja < 1 Bulan (< 30 Hari) — Rp 0';
+      calculatedThrAmount = 0;
+    } else if (tenureMonths >= 12) {
+      eligibilityStatus = 'Berhak Penuh (100%)';
+      proportionFormula = '100% × (Gaji Pokok + Tunjangan Tetap)';
+      calculatedThrAmount = Math.round(calculationBasisAmount);
+    } else {
+      eligibilityStatus = 'Berhak Proporsional';
+      proportionFormula = `(${tenureMonths} / 12 Bulan) × (Gaji Pokok + Tunj. Tetap)`;
+      calculatedThrAmount = Math.round((tenureMonths / 12) * calculationBasisAmount);
+    }
+  } else {
+    // Karyawan Part-Time / Harian Lepas:
+    // Masa kerja >= 12 bulan: 1x rata-rata pendapatan bulanan dari riwayat payroll/absensi 12 bulan terakhir.
+    // Masa kerja 1 s/d 11 bulan: (Jumlah Bulan Masa Kerja / 12) × Rata-rata Pendapatan Bulanan selama masa kerja.
+    const windowMonths = tenureMonths >= 12 ? 12 : Math.max(1, tenureMonths);
+    const windowStartObj = new Date(holidayObj);
+    windowStartObj.setMonth(windowStartObj.getMonth() - windowMonths);
+    const windowStartStr = getJakartaDateString(windowStartObj);
+
+    const monthlyEarningsMap = new Map<string, number>();
+    const recordedEmpDateKeys = new Set<string>();
+
+    for (const log of partTimeLogs) {
+      if (!log) continue;
+      const logEmpId = log.employeeId || log.employee_id;
+      if (logEmpId !== employee.id) continue;
+      const dStr = (log.date || log.work_date || '').slice(0, 10);
+      if (!dStr || dStr < windowStartStr || dStr > cleanHolidayDate) continue;
+      const ym = dStr.slice(0, 7);
+      const wage =
+        Math.max(0, Math.round(Number(log.dailyWage ?? log.daily_wage) || 0)) ||
+        Math.round(
+          (Number(log.normalHours ?? log.normal_hours ?? log.hoursWorked) || 0) * empHourlyRate
+        );
+      if (wage > 0) {
+        recordedEmpDateKeys.add(`${employee.id}_${dStr}`);
+        monthlyEarningsMap.set(ym, (monthlyEarningsMap.get(ym) || 0) + wage);
+      }
+    }
+
+    for (const att of attendances) {
+      if (!att || att.employeeId !== employee.id) continue;
+      const dStr = (att.date || '').slice(0, 10);
+      if (!dStr || dStr < windowStartStr || dStr > cleanHolidayDate) continue;
+      if (['Alpa', 'Sakit', 'Izin', 'Cuti'].includes(att.status)) continue;
+      if (recordedEmpDateKeys.has(`${employee.id}_${dStr}`)) continue;
+      const capped = calculateCappedDailyWorkHours(
+        att.checkIn,
+        att.checkOut,
+        att.workHours,
+        stdDailyHours,
+        att.overtimeHours || 0,
+        dStr
+      );
+      const wage = Math.round(capped.cappedWorkHours * empHourlyRate);
+      if (wage > 0) {
+        const ym = dStr.slice(0, 7);
+        monthlyEarningsMap.set(ym, (monthlyEarningsMap.get(ym) || 0) + wage);
+      }
+    }
+
+    if (monthlyEarningsMap.size > 0) {
+      const totalLoggedEarnings = Array.from(monthlyEarningsMap.values()).reduce(
+        (sum, val) => sum + val,
+        0
+      );
+      partTimeAvgMonthlyWage = Math.round(totalLoggedEarnings / monthlyEarningsMap.size);
+    } else {
+      // Fallback estimasi bulanan jika riwayat log belum tersedia (24 hari kerja × jam standar harian × tarif per jam)
+      partTimeAvgMonthlyWage =
+        Math.max(0, Math.round(Number(employee.baseSalary) || 0)) ||
+        Math.round(empHourlyRate * stdDailyHours * 24);
+    }
+
+    calculationBasisAmount = partTimeAvgMonthlyWage;
+
+    if (tenureDays < 30 || tenureMonths < 1) {
+      eligibilityStatus = 'Belum Berhak THR';
+      proportionFormula = 'Masa Kerja < 1 Bulan (< 30 Hari) — Rp 0';
+      calculatedThrAmount = 0;
+    } else if (tenureMonths >= 12) {
+      eligibilityStatus = 'Berhak Penuh (100%)';
+      proportionFormula = '1x Rata-rata Pendapatan Bulanan (12 Bln Terakhir)';
+      calculatedThrAmount = Math.round(partTimeAvgMonthlyWage);
+    } else {
+      eligibilityStatus = 'Berhak Proporsional';
+      proportionFormula = `(${tenureMonths} / 12 Bulan) × Rata-rata Pendapatan Bulanan`;
+      calculatedThrAmount = Math.round((tenureMonths / 12) * partTimeAvgMonthlyWage);
+    }
+  }
+
+  const manualAdjustmentAmount =
+    existingRecord?.manual_adjustment_amount !== undefined &&
+    !isNaN(Number(existingRecord.manual_adjustment_amount))
+      ? Math.round(Number(existingRecord.manual_adjustment_amount))
+      : 0;
+
+  const totalThrAmount = Math.max(0, Math.round(calculatedThrAmount + manualAdjustmentAmount));
+
+  // WAJIB default false sampai Admin mencentang secara manual per karyawan
+  const showInPayslip = Boolean(existingRecord?.show_in_payslip ?? false);
+  const paymentStatus =
+    existingRecord?.payment_status === 'Sudah Dibayar' ? 'Sudah Dibayar' : 'Belum Cair';
+
+  const empTypeLabel = isPartTime
+    ? 'Part-Time'
+    : employee.employmentStatus || employee.status || 'PKWT (Kontrak)';
+
+  const nowWibIso = getJakartaIsoTimestamp();
+
+  return {
+    id: existingRecord?.id || `thr-${resolvedYear}-${employee.id}`,
+    employee_id: employee.id,
+    employee_nik: employee.nik || '',
+    employee_name: employee.fullName || '',
+    department: employee.department || 'Operasional',
+    role: employee.role || 'Staff',
+    employment_type: empTypeLabel,
+    join_date: cleanJoinDate,
+    thr_year: resolvedYear,
+    holiday_name: existingRecord?.holiday_name || holidayName,
+    holiday_date: cleanHolidayDate,
+    period_month: resolvedPeriodMonth,
+    tenure_months: tenureMonths,
+    tenure_days: tenureDays,
+    tenure_label: tenureLabel,
+    eligibility_status: eligibilityStatus,
+    proportion_formula: proportionFormula,
+    base_salary_component: baseSalaryComponent,
+    fixed_allowance_component: fixedAllowanceComponent,
+    parttime_avg_monthly_wage: partTimeAvgMonthlyWage,
+    calculation_basis_amount: calculationBasisAmount,
+    calculated_thr_amount: calculatedThrAmount,
+    manual_adjustment_amount: manualAdjustmentAmount,
+    total_thr_amount: totalThrAmount,
+    show_in_payslip: showInPayslip,
+    payment_status: paymentStatus,
+    paid_at: existingRecord?.paid_at,
+    paid_by: existingRecord?.paid_by,
+    payment_method: existingRecord?.payment_method || 'Transfer Bank',
+    reference_number:
+      existingRecord?.reference_number ||
+      `TGI-THR-${resolvedYear}-${(employee.nik || employee.id).replace(/\s+/g, '')}`,
+    notes: existingRecord?.notes || '',
+    created_at: existingRecord?.created_at || nowWibIso,
+    updated_at: nowWibIso,
   };
 }
 

@@ -44,7 +44,13 @@ import {
   GoogleAdminUser,
   Department,
 } from '../types';
-import { formatRupiah, formatIndoDate } from '../utils/formatters';
+import {
+  formatRupiah,
+  formatIndoDate,
+  getJakartaDateString,
+  getJakartaDateParts,
+  getCurrentRealTimePayrollPeriod,
+} from '../utils/formatters';
 
 interface PerformanceReviewViewProps {
   reviews: PerformanceReview[];
@@ -160,6 +166,16 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
   const [confirmDeleteReview, setConfirmDeleteReview] = useState<PerformanceReview | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  const defaultCutoffDate = useMemo(() => {
+    const parts = getJakartaDateParts();
+    return `${parts.year}-${String(parts.month).padStart(2, '0')}-25`;
+  }, []);
+  const defaultQuarterLabel = useMemo(() => {
+    const parts = getJakartaDateParts();
+    const q = Math.ceil(parts.month / 3);
+    return `Q${q} ${parts.year}`;
+  }, []);
+
   // New Period Broadcast Modal
   const [isNewPeriodModalOpen, setIsNewPeriodModalOpen] = useState(false);
   const [newPeriodForm, setNewPeriodForm] = useState<{
@@ -168,25 +184,29 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
     department: string;
     deadlineDate: string;
     notes: string;
-  }>({
-    period: 'Q4 2026',
+  }>(() => ({
+    period: defaultQuarterLabel,
     periodType: 'Kuartalan',
     department: 'Semua Departemen',
-    deadlineDate: '2026-10-25',
-    notes: 'Penilaian kinerja & KPI triwulan keempat. Atasan diharapkan menyelesaikan evaluasi seluruh staf sebelum deadline cut-off.',
-  });
+    deadlineDate: defaultCutoffDate,
+    notes: 'Penilaian kinerja & KPI berjalan. Atasan diharapkan menyelesaikan evaluasi seluruh staf sebelum deadline cut-off.',
+  }));
 
   // Deadline Reminder Broadcast Modal
   const [isReminderModalOpen, setIsReminderModalOpen] = useState(false);
-  const [reminderPeriod, setReminderPeriod] = useState<string>(companyConfig.currentPayrollPeriod || 'Oktober 2026');
-  const [reminderDeadline, setReminderDeadline] = useState<string>('2026-10-25');
+  const [reminderPeriod, setReminderPeriod] = useState<string>(
+    companyConfig.currentPayrollPeriod || getCurrentRealTimePayrollPeriod()
+  );
+  const [reminderDeadline, setReminderDeadline] = useState<string>(defaultCutoffDate);
   const [reminderDept, setReminderDept] = useState<string>('Semua Departemen');
 
   // Form State
   const [formEmployeeId, setFormEmployeeId] = useState(employees[0]?.id || '');
   const [formPeriodType, setFormPeriodType] = useState<ReviewPeriodType>('Bulanan');
-  const [formPeriod, setFormPeriod] = useState(companyConfig.currentPayrollPeriod || 'Oktober 2026');
-  const [formReviewDate, setFormReviewDate] = useState(new Date().toISOString().slice(0, 10));
+  const [formPeriod, setFormPeriod] = useState(
+    companyConfig.currentPayrollPeriod || getCurrentRealTimePayrollPeriod()
+  );
+  const [formReviewDate, setFormReviewDate] = useState(() => getJakartaDateString());
   
   // 4 Core Component Scores (Scale 1 - 100)
   const [formKpiScore, setFormKpiScore] = useState<number>(85);
@@ -339,8 +359,8 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
     setEditingReview(null);
     setFormEmployeeId(employees[0]?.id || '');
     setFormPeriodType('Bulanan');
-    setFormPeriod(companyConfig.currentPayrollPeriod || 'Oktober 2026');
-    setFormReviewDate(new Date().toISOString().slice(0, 10));
+    setFormPeriod(companyConfig.currentPayrollPeriod || getCurrentRealTimePayrollPeriod());
+    setFormReviewDate(getJakartaDateString());
     setFormKpiScore(85);
     setFormDisciplineScore(90);
     setFormTeamworkScore(85);
@@ -687,7 +707,7 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <span className="px-2.5 py-1 bg-white/90 text-indigo-800 border border-indigo-200 rounded-lg font-semibold text-[11px]">
-            Periode: {companyConfig.currentPayrollPeriod || 'Oktober 2026'}
+            Periode: {companyConfig.currentPayrollPeriod || getCurrentRealTimePayrollPeriod()}
           </span>
         </div>
       </div>

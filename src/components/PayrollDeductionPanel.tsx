@@ -11,6 +11,7 @@ import {
   getEmployeeStandardDailyHours,
   STANDARD_WORK_HOURS_PER_DAY,
   getApprovedSickLeaveSummaryForPeriod,
+  getJakartaYearMonth,
 } from '../utils/formatters';
 import {
   ShieldAlert,
@@ -65,7 +66,7 @@ export const PayrollDeductionPanel: React.FC<PayrollDeductionPanelProps> = ({
   const defaultPeriodYm = useMemo(
     () =>
       normalizePeriodToYearMonth(currentPayrollPeriod) ||
-      new Date().toISOString().slice(0, 7),
+      getJakartaYearMonth(),
     [currentPayrollPeriod]
   );
 

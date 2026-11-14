@@ -31,7 +31,11 @@ import {
   Legend,
 } from 'recharts';
 import { PayrollRecord, Employee, CompanyConfig } from '../types';
-import { formatRupiah } from '../utils/formatters';
+import {
+  formatRupiah,
+  getJakartaDateParts,
+  getCurrentRealTimePayrollPeriod,
+} from '../utils/formatters';
 
 interface PayrollTrendChartProps {
   currentPayrolls: PayrollRecord[];
@@ -99,16 +103,44 @@ export const PayrollTrendChart: React.FC<PayrollTrendChartProps> = ({
     };
   }, [currentPayrolls, employees]);
 
-  // Construct 6-month dataset dynamically from real active employees & payrolls
+  // Construct 6-month dataset dynamically from real active employees & payrolls in WIB
   const rawSixMonthData: MonthlyPayrollData[] = useMemo(() => {
     const activeEmps = employees.filter((e) => e.isActive !== false);
-    const monthsMeta = [
-      { key: '2026-05', label: 'Mei 2026', short: 'Mei', endIso: '2026-05-31' },
-      { key: '2026-06', label: 'Juni 2026', short: 'Jun', endIso: '2026-06-30' },
-      { key: '2026-07', label: 'Juli 2026', short: 'Jul', endIso: '2026-07-31' },
-      { key: '2026-08', label: 'Agustus 2026', short: 'Agu', endIso: '2026-08-31' },
-      { key: '2026-09', label: 'September 2026', short: 'Sep', endIso: '2026-09-30' },
+    const fullMonths = [
+      'Januari',
+      'Februari',
+      'Maret',
+      'April',
+      'Mei',
+      'Juni',
+      'Juli',
+      'Agustus',
+      'September',
+      'Oktober',
+      'November',
+      'Desember',
     ];
+    const shortMonths = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+    const nowParts = getJakartaDateParts();
+    const monthsMeta: { key: string; label: string; short: string; year: number; endIso: string }[] = [];
+
+    for (let offset = 5; offset >= 1; offset--) {
+      let mIdx = nowParts.month - 1 - offset;
+      let yr = nowParts.year;
+      while (mIdx < 0) {
+        mIdx += 12;
+        yr -= 1;
+      }
+      const mNum = mIdx + 1;
+      const lastDay = new Date(yr, mNum, 0).getDate();
+      monthsMeta.push({
+        key: `${yr}-${String(mNum).padStart(2, '0')}`,
+        label: `${fullMonths[mIdx]} ${yr}`,
+        short: shortMonths[mIdx],
+        year: yr,
+        endIso: `${yr}-${String(mNum).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`,
+      });
+    }
 
     const historicalMonths: MonthlyPayrollData[] = monthsMeta.map((m) => {
       const empsInMonth = activeEmps.filter((e) => !e.joinDate || e.joinDate <= m.endIso);
@@ -118,7 +150,7 @@ export const PayrollTrendChart: React.FC<PayrollTrendChartProps> = ({
           monthKey: m.key,
           monthLabel: m.label,
           shortLabel: m.short,
-          year: 2026,
+          year: m.year,
           totalTHP: 0,
           totalGross: 0,
           baseSalary: 0,
@@ -150,7 +182,7 @@ export const PayrollTrendChart: React.FC<PayrollTrendChartProps> = ({
         monthKey: m.key,
         monthLabel: m.label,
         shortLabel: m.short,
-        year: 2026,
+        year: m.year,
         totalTHP,
         totalGross,
         baseSalary,
@@ -162,13 +194,17 @@ export const PayrollTrendChart: React.FC<PayrollTrendChartProps> = ({
       };
     });
 
+    const curMonthIdx = Math.max(0, Math.min(11, nowParts.month - 1));
+    const activePeriodLabel =
+      companyConfig?.currentPayrollPeriod || getCurrentRealTimePayrollPeriod();
+
     return [
       ...historicalMonths,
       {
-        monthKey: '2026-10',
-        monthLabel: `${companyConfig?.currentPayrollPeriod || 'Oktober 2026'} (Berjalan)`,
-        shortLabel: 'Okt*',
-        year: 2026,
+        monthKey: `${nowParts.year}-${String(nowParts.month).padStart(2, '0')}`,
+        monthLabel: `${activePeriodLabel} (Berjalan)`,
+        shortLabel: `${shortMonths[curMonthIdx]}*`,
+        year: nowParts.year,
         totalTHP: currentMonthAggregates.totalTHP,
         totalGross: currentMonthAggregates.totalGross,
         baseSalary: currentMonthAggregates.baseSalary,
@@ -176,7 +212,7 @@ export const PayrollTrendChart: React.FC<PayrollTrendChartProps> = ({
         totalDeductions: currentMonthAggregates.totalDeductions,
         employeeCount: currentMonthAggregates.employeeCount,
         avgTHP: currentMonthAggregates.avgTHP,
-        notes: `Periode aktif (${currentMonthAggregates.employeeCount} karyawan): Termasuk PPh 21 TER, BPJS & potongan presensi`,
+        notes: `Periode aktif (${currentMonthAggregates.employeeCount} karyawan): Termasuk PPh 21, BPJS & potongan presensi`,
         isCurrentMonth: true,
       },
     ];
@@ -691,7 +727,7 @@ export const PayrollTrendChart: React.FC<PayrollTrendChartProps> = ({
         <div className="flex items-center gap-2 text-slate-500">
           <Info className="w-4 h-4 text-slate-400 shrink-0" />
           <span>
-            Data periode <strong>Oktober 2026</strong> disinkronkan secara real-time dari modul kalkulasi Payroll & Kasbon.
+            Data periode <strong>{companyConfig?.currentPayrollPeriod || getCurrentRealTimePayrollPeriod()}</strong> disinkronkan secara real-time dari modul kalkulasi Payroll & Kasbon.
           </span>
         </div>
 

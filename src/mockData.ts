@@ -21,6 +21,7 @@ import {
 import {
   DEFAULT_WORK_SHIFTS,
   DEFAULT_ATTENDANCE_PENALTY_POLICY,
+  getCurrentRealTimePayrollPeriod,
 } from './utils/formatters';
 
 export const initialWorkShifts: WorkShift[] = DEFAULT_WORK_SHIFTS;
@@ -207,7 +208,7 @@ export const initialCompanyConfig: CompanyConfig = {
   address: 'Jl. Sumber Mas I Blok C No. 191, Tangerang, Banten, ID',
   phone: '(021) 5790-8800',
   npwpCompany: '01.345.678.9-012.000',
-  currentPayrollPeriod: 'Oktober 2026',
+  currentPayrollPeriod: getCurrentRealTimePayrollPeriod(),
   cutOffStartDay: 26,
   cutOffEndDay: 25,
   payrollDisbursementDay: 28,

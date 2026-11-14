@@ -12,6 +12,7 @@ import {
   OvertimeRequest,
   LiveStreamSalesRecord,
   DailyWorkWageItem,
+  ThrPayoutRecord,
 } from '../types';
 import {
   formatRupiah,
@@ -35,6 +36,7 @@ import {
   getEmployeeAdjustmentForPeriod,
   getEmployeePayrollDeductionForPeriod,
   getApprovedSickLeaveSummaryForPeriod,
+  getActiveEmployeeThrForPayslip,
 } from '../utils/formatters';
 import { getPayslipWhatsAppUrl, getPayslipEmailUrl } from '../utils/notificationHelper';
 import {
@@ -56,6 +58,8 @@ import {
   fetchEmployeeAdjustments,
   getSavedPayrollDeductions,
   fetchPayrollDeductions,
+  getSavedThrPayouts,
+  fetchThrPayoutsFromSupabase,
 } from '../services/supabaseService';
 
 export interface OfficialPayslipComputedData {
@@ -96,6 +100,14 @@ export interface OfficialPayslipComputedData {
   liveCommissionPct: number;
   liveCommissionPcsNote: string;
   salesCommissionAmount: number;
+  // Tunjangan Hari Raya (THR) - HANYA aktif jika show_in_payslip === true dari ceklis Admin
+  thrShowInPayslip: boolean;
+  thrAmount: number;
+  thrBasisAmount: number;
+  thrHolidayName: string;
+  thrTenureLabel: string;
+  thrProportionFormula: string;
+  thrPaymentStatus: 'Belum Cair' | 'Sudah Dibayar';
   subtotalGajiTidakTetap: number;
   // 3. Pengurangan
   alphaDays: number;
@@ -188,6 +200,7 @@ export function computeOfficialPayslipData(params: {
   employeeBonuses?: EmployeeBonus[];
   employeeAdjustments?: EmployeeAdjustment[];
   payrollDeductions?: PayrollDeductionRecord[];
+  thrPayouts?: ThrPayoutRecord[];
   cashAdvances?: CashAdvance[];
   leaveRequests?: LeaveRequest[];
   overtimeRequests?: OvertimeRequest[];
@@ -200,6 +213,7 @@ export function computeOfficialPayslipData(params: {
     employeeBonuses = [],
     employeeAdjustments,
     payrollDeductions,
+    thrPayouts,
     cashAdvances,
     leaveRequests,
     overtimeRequests,
@@ -463,13 +477,51 @@ export function computeOfficialPayslipData(params: {
       ? `${liveSalesSummary.totalPcs.toLocaleString('id-ID')} Pcs`
       : '';
 
+  // Tunjangan Hari Raya (THR): WAJIB CEKLIS ADMIN (show_in_payslip === true)
+  // Jika show_in_payslip === false, thrAmount WAJIB 0 dan TIDAK BOLEH muncul atau dihitung di Slip Gaji!
+  const resolvedThrList =
+    Array.isArray(thrPayouts) && thrPayouts.length > 0 ? thrPayouts : getSavedThrPayouts();
+  const activeThrRecord = getActiveEmployeeThrForPayslip(resolvedThrList, employee, periodStr);
+  const thrShowInPayslip = Boolean(
+    activeThrRecord
+      ? activeThrRecord.show_in_payslip === true && Number(activeThrRecord.total_thr_amount) > 0
+      : payroll.thrShowInPayslip === true && Number(payroll.thrAmount) > 0
+  );
+  const thrAmount = thrShowInPayslip
+    ? Math.max(
+        0,
+        Math.round(Number(activeThrRecord?.total_thr_amount ?? payroll.thrAmount) || 0)
+      )
+    : 0;
+  const thrBasisAmount = thrShowInPayslip
+    ? Math.max(
+        0,
+        Math.round(Number(activeThrRecord?.calculation_basis_amount ?? payroll.thrBasisAmount ?? thrAmount) || 0)
+      )
+    : 0;
+  const thrHolidayName = thrShowInPayslip
+    ? activeThrRecord?.holiday_name || payroll.thrHolidayName || 'Hari Raya Keagamaan'
+    : '';
+  const thrTenureLabel = thrShowInPayslip
+    ? activeThrRecord?.tenure_label || payroll.thrTenureLabel || '-'
+    : '';
+  const thrProportionFormula = thrShowInPayslip
+    ? activeThrRecord?.proportion_formula || payroll.thrProportionFormula || '100% × Upah Dasar'
+    : '';
+  const thrPaymentStatus: 'Belum Cair' | 'Sudah Dibayar' =
+    activeThrRecord?.payment_status === 'Sudah Dibayar' ||
+    payroll.thrPaymentStatus === 'Sudah Dibayar'
+      ? 'Sudah Dibayar'
+      : 'Belum Cair';
+
   const subtotalGajiTidakTetap =
     tunjanganKerajinanTotal +
     tunjanganKedisiplinanTotal +
     lemburJamTotal +
     lemburHariTotal +
     totalTambahanLainnya +
-    salesCommissionAmount;
+    salesCommissionAmount +
+    thrAmount;
 
   // 3. PENGURANGAN (Sinkronisasi Penuh dengan PayrollDeductionRecord & Panel Cuti/Izin)
   const resolvedDeductionsList =
@@ -714,6 +766,13 @@ export function computeOfficialPayslipData(params: {
     liveCommissionPct,
     liveCommissionPcsNote,
     salesCommissionAmount,
+    thrShowInPayslip,
+    thrAmount,
+    thrBasisAmount,
+    thrHolidayName,
+    thrTenureLabel,
+    thrProportionFormula,
+    thrPaymentStatus,
     subtotalGajiTidakTetap,
     alphaDays,
     alphaRate,
@@ -1063,6 +1122,31 @@ export const OfficialPayslipDocument: React.FC<OfficialPayslipDocumentProps> = (
                 {formatAccountingRupiah(data.salesCommissionAmount)}
               </td>
             </tr>
+
+            {/* Tunjangan Hari Raya (THR) — HANYA MUNCUL JIKA CEKLIS ADMIN (show_in_payslip === true) */}
+            {Boolean(data.thrShowInPayslip && data.thrAmount > 0) && (
+              <tr className="bg-emerald-50/70">
+                <td className="py-1.5 px-3 border border-slate-300 font-bold text-emerald-950">
+                  <div>Tunjangan Hari Raya (THR)</div>
+                  <div className="text-[10px] font-medium text-emerald-700">
+                    {data.thrHolidayName} • Masa Kerja: {data.thrTenureLabel}
+                  </div>
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono text-slate-800">
+                  {formatAccountingRupiah(data.thrBasisAmount)}
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-slate-800">
+                  <div className="font-semibold text-emerald-900">{data.thrProportionFormula}</div>
+                  <div className="text-[10px] text-slate-600">
+                    Status: {data.thrPaymentStatus === 'Sudah Dibayar' ? 'Sudah Dibayar (Cair)' : 'Terjadwal Pencairan'}
+                  </div>
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-bold text-emerald-800">
+                  {formatAccountingRupiah(data.thrAmount)}
+                </td>
+              </tr>
+            )}
+
             <tr className="bg-teal-100/80 font-extrabold text-slate-950">
               <td colSpan={3} className="py-2 px-3 border border-slate-300 text-right uppercase">
                 Subtotal Gaji Tidak Tetap
@@ -1363,6 +1447,7 @@ interface PayslipModalProps {
   employeeBonuses?: EmployeeBonus[];
   employeeAdjustments?: EmployeeAdjustment[];
   payrollDeductions?: PayrollDeductionRecord[];
+  thrPayouts?: ThrPayoutRecord[];
   onClose: () => void;
   onUpdateSignatories?: (config: PayrollSignatoriesConfig) => void;
 }
@@ -1378,6 +1463,7 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
   employeeBonuses: propEmployeeBonuses = [],
   employeeAdjustments: propEmployeeAdjustments = [],
   payrollDeductions: propPayrollDeductions = [],
+  thrPayouts: propThrPayouts = [],
   onClose,
   onUpdateSignatories,
 }) => {
@@ -1397,6 +1483,9 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
   const [payrollDeductions, setPayrollDeductions] = useState<PayrollDeductionRecord[]>(() =>
     getSavedPayrollDeductions()
   );
+  const [thrPayouts, setThrPayouts] = useState<ThrPayoutRecord[]>(() =>
+    getSavedThrPayouts()
+  );
 
   useEffect(() => {
     setSignatories(getPayrollSignatoriesConfig(companyConfig));
@@ -1415,13 +1504,14 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
     let isMounted = true;
 
     const loadLiveCommissionData = async () => {
-      const [sessions, empFromDb, bonusesFromDb, adjustmentsFromDb, deductionsFromDb] =
+      const [sessions, empFromDb, bonusesFromDb, adjustmentsFromDb, deductionsFromDb, thrFromDb] =
         await Promise.all([
           fetchLivestreamSessionsFromSupabase(employee.id, payroll?.period),
           fetchEmployeeByIdFromSupabase(employee.id),
           fetchEmployeeBonuses(),
           fetchEmployeeAdjustments(),
           fetchPayrollDeductions(),
+          fetchThrPayoutsFromSupabase(),
         ]);
       if (!isMounted) return;
       if (Array.isArray(sessions) && sessions.length > 0) {
@@ -1438,6 +1528,9 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
       }
       if (Array.isArray(deductionsFromDb)) {
         setPayrollDeductions(deductionsFromDb);
+      }
+      if (Array.isArray(thrFromDb)) {
+        setThrPayouts(thrFromDb);
       }
     };
 
@@ -1463,11 +1556,16 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
       setPayrollDeductions(getSavedPayrollDeductions());
     };
 
+    const handleThrUpdated = () => {
+      setThrPayouts(getSavedThrPayouts());
+    };
+
     window.addEventListener('tgi_employee_live_updated', handleLiveUpdated);
     window.addEventListener('tgi_livestream_sessions_updated', handleLiveUpdated);
     window.addEventListener('tgi_employee_bonuses_updated', handleBonusesUpdated);
     window.addEventListener('tgi_employee_adjustments_updated', handleAdjustmentsUpdated);
     window.addEventListener('tgi_payroll_deductions_updated', handleDeductionsUpdated);
+    window.addEventListener('tgi_thr_payouts_updated', handleThrUpdated);
     return () => {
       isMounted = false;
       window.removeEventListener('tgi_employee_live_updated', handleLiveUpdated);
@@ -1475,6 +1573,7 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
       window.removeEventListener('tgi_employee_bonuses_updated', handleBonusesUpdated);
       window.removeEventListener('tgi_employee_adjustments_updated', handleAdjustmentsUpdated);
       window.removeEventListener('tgi_payroll_deductions_updated', handleDeductionsUpdated);
+      window.removeEventListener('tgi_thr_payouts_updated', handleThrUpdated);
     };
   }, [employee?.id, payroll?.period]);
 
@@ -1546,6 +1645,14 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
     return Array.from(map.values());
   }, [payrollDeductions, propPayrollDeductions]);
 
+  const combinedThrPayouts = useMemo(() => {
+    const map = new Map<string, ThrPayoutRecord>();
+    for (const t of [...thrPayouts, ...propThrPayouts]) {
+      if (t?.id) map.set(t.id, t);
+    }
+    return Array.from(map.values());
+  }, [thrPayouts, propThrPayouts]);
+
   const computedData = useMemo(() => {
     if (!payroll || !effectiveEmployee) return null;
     return computeOfficialPayslipData({
@@ -1555,6 +1662,7 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
       employeeBonuses: combinedBonuses,
       employeeAdjustments: combinedAdjustments,
       payrollDeductions: combinedDeductions,
+      thrPayouts: combinedThrPayouts,
       cashAdvances,
       leaveRequests,
       overtimeRequests,
@@ -1567,6 +1675,7 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
     combinedBonuses,
     combinedAdjustments,
     combinedDeductions,
+    combinedThrPayouts,
     cashAdvances,
     leaveRequests,
     overtimeRequests,

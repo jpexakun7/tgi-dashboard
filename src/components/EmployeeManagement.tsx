@@ -63,6 +63,11 @@ import {
   STANDARD_WORK_HOURS_PER_DAY,
   calculateEmployeeLiveSalesCommission,
   normalizeEmploymentType,
+  getJakartaDateString,
+  getJakartaDateParts,
+  addDaysToDateString,
+  getJakartaIsoTimestamp,
+  getCurrentRealTimePayrollPeriod,
 } from '../utils/formatters';
 import {
   getContractReminderWhatsAppUrl,
@@ -147,7 +152,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
   const [detailEditingLogId, setDetailEditingLogId] = useState<string | null>(null);
   const [detailLiveRole, setDetailLiveRole] = useState<'Host' | 'Co-Host'>('Host');
   const [detailLiveDate, setDetailLiveDate] = useState<string>(
-    () => new Date().toISOString().split('T')[0]
+    () => getJakartaDateString()
   );
   const [detailLivePlatform, setDetailLivePlatform] =
     useState<LiveStreamPlatform>('TikTok Shop Live');
@@ -423,7 +428,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
     employmentStatus: 'PKWTT (Tetap)',
     employmentType: 'Full-Time',
     employment_type: 'Full-Time',
-    joinDate: new Date().toISOString().split('T')[0],
+    joinDate: getJakartaDateString(),
     hourlyRate: 35000,
     hourly_rate: 35000,
     overtimeRate: 52500,
@@ -460,10 +465,10 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
       stopFormCamera();
       setFormError(null);
       setFormPhotoError(null);
-      const currentYear = new Date().getFullYear();
+      const currentYear = getJakartaDateParts().year;
       const nextNum = employees.length + 1;
-      const todayIso = new Date().toISOString().split('T')[0];
-      const nextYearIso = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      const todayIso = getJakartaDateString();
+      const nextYearIso = addDaysToDateString(todayIso, 365);
       setFormData({
         nik: `TGI-${currentYear}-${String(nextNum).padStart(3, '0')}`,
         fullName: '',
@@ -519,10 +524,10 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
     setEditingEmployee(null);
     setFormError(null);
     setFormPhotoError(null);
-    const currentYear = new Date().getFullYear();
+    const currentYear = getJakartaDateParts().year;
     const nextNum = employees.length + 1;
-    const todayIso = new Date().toISOString().split('T')[0];
-    const nextYearIso = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const todayIso = getJakartaDateString();
+    const nextYearIso = addDaysToDateString(todayIso, 365);
     setFormData({
       nik: `TGI-${currentYear}-${String(nextNum).padStart(3, '0')}`,
       fullName: '',
@@ -788,7 +793,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
       syncEmployeeLiveColumnsToSupabase(updated).catch(() => {});
       showToast(`Data karyawan ${updated.fullName} (${resolvedEmploymentType} • Std: ${resolvedStdHours} Jam/Hari • Tarif Per Jam: ${formatRupiah(resolvedHourlyRate)}/jam${resolvedIsHost ? ` • Host Live: ${resolvedCommPct}%` : ''}${resolvedIsCoHost ? ` • Co-Host Live: ${resolvedCoHostCommPct}%` : ''}) berhasil diperbarui!`);
     } else {
-      const joinDt = formData.joinDate || new Date().toISOString().split('T')[0];
+      const joinDt = formData.joinDate || getJakartaDateString();
       const newEmp: Employee = {
         id: `emp-${Date.now()}`,
         nik: nikTrimmed,
@@ -2340,7 +2345,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                   return;
                 }
 
-                const resolvedDateStr = detailLiveDate || new Date().toISOString().split('T')[0];
+                const resolvedDateStr = detailLiveDate || getJakartaDateString();
                 const newLog: LiveStreamSalesRecord = {
                   id: generateSessionUuid(),
                   employeeId: viewingEmployee.id,
@@ -2350,7 +2355,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                   employeeNik: viewingEmployee.nik,
                   date: resolvedDateStr,
                   session_date: resolvedDateStr,
-                  period: 'Maret 2026',
+                  period: getCurrentRealTimePayrollPeriod(),
                   platform: detailLivePlatform,
                   sessionRole: detailLiveRole,
                   role_type: detailLiveRole === 'Co-Host' ? 'co_host' : 'host',
@@ -2368,7 +2373,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                   calculatedCommission: previewComm,
                   total_commission: previewComm,
                   status: 'Terverifikasi',
-                  createdAt: new Date().toISOString(),
+                  createdAt: getJakartaIsoTimestamp(),
                 };
                 const updatedLogs = [newLog, ...(viewingEmployee.liveStreamSalesLogs || [])];
                 const updatedEmp: Employee = {
@@ -4791,7 +4796,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         onClose={() => setIsLiveSessionModalOpen(false)}
         employees={employees}
         initialEmployeeId={liveSessionModalEmpId}
-        currentPeriod="Maret 2026"
+        currentPeriod={getCurrentRealTimePayrollPeriod()}
         onUpdateEmployee={(updated) => {
           onUpdateEmployee(updated);
           if (viewingEmployee && viewingEmployee.id === updated.id) {

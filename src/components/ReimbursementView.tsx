@@ -32,7 +32,13 @@ import {
   ReimbursementCategory,
   ReimbursementStatus,
 } from '../types';
-import { formatRupiah, formatIndoDate } from '../utils/formatters';
+import {
+  formatRupiah,
+  formatIndoDate,
+  getJakartaDateString,
+  getJakartaDateParts,
+  getJakartaTimeString,
+} from '../utils/formatters';
 import { validateImageFile, compressImage } from '../utils/imageUtils';
 
 interface ReimbursementViewProps {
@@ -82,7 +88,7 @@ export const ReimbursementView: React.FC<ReimbursementViewProps> = ({
 
   // New Claim Form State
   const [formEmployeeId, setFormEmployeeId] = useState<string>(employees[0]?.id || '');
-  const [formDate, setFormDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [formDate, setFormDate] = useState<string>(() => getJakartaDateString());
   const [formCategory, setFormCategory] = useState<ReimbursementCategory>('Transport & Bensin');
   const [formAmount, setFormAmount] = useState<number>(150000);
   const [formDescription, setFormDescription] = useState<string>('');
@@ -212,7 +218,7 @@ export const ReimbursementView: React.FC<ReimbursementViewProps> = ({
   const openAddModal = () => {
     stopCamera();
     setFormEmployeeId(employees[0]?.id || '');
-    setFormDate(new Date().toISOString().split('T')[0]);
+    setFormDate(getJakartaDateString());
     setFormCategory('Transport & Bensin');
     setFormAmount(150000);
     setFormDescription('');
@@ -232,8 +238,9 @@ export const ReimbursementView: React.FC<ReimbursementViewProps> = ({
       return;
     }
 
-    const currentYear = new Date().getFullYear();
-    const currentMonth = String(new Date().getMonth() + 1).padStart(2, '0');
+    const parts = getJakartaDateParts();
+    const currentYear = parts.year;
+    const currentMonth = String(parts.month).padStart(2, '0');
     const claimSeq = String(reimbursements.length + 1).padStart(3, '0');
     const newClaimNumber = `RMB-${currentYear}-${currentMonth}-${claimSeq}`;
 
@@ -250,7 +257,7 @@ export const ReimbursementView: React.FC<ReimbursementViewProps> = ({
       receiptFileName: formFileName || undefined,
       receiptFileType: 'image',
       status: 'Menunggu Persetujuan',
-      appliedAt: `${formDate} ${new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} WIB`,
+      appliedAt: `${formDate} ${getJakartaTimeString()} WIB`,
       paymentMethod: formPaymentMethod,
     };
 
@@ -265,7 +272,7 @@ export const ReimbursementView: React.FC<ReimbursementViewProps> = ({
     const updated: ReimbursementClaim = {
       ...claim,
       status: 'Disetujui',
-      approvedAt: `${new Date().toISOString().split('T')[0]} ${new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} WIB`,
+      approvedAt: `${getJakartaDateString()} ${getJakartaTimeString()} WIB`,
       approvedBy: adminEmail ? `Admin (${adminEmail})` : 'Admin Keuangan TGI',
     };
     onUpdateReimbursement(updated);
@@ -291,7 +298,7 @@ export const ReimbursementView: React.FC<ReimbursementViewProps> = ({
     const updated: ReimbursementClaim = {
       ...claim,
       status: 'Dibayarkan',
-      disbursedAt: `${new Date().toISOString().split('T')[0]} ${new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} WIB`,
+      disbursedAt: `${getJakartaDateString()} ${getJakartaTimeString()} WIB`,
     };
     onUpdateReimbursement(updated);
     showToast(`Klaim ${claim.claimNumber} ditandai lunas dibayarkan!`);

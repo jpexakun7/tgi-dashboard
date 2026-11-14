@@ -55,6 +55,7 @@ import {
 import { GranularRbacPanel } from './GranularRbacPanel';
 import { RoleModuleVisibilityPanel } from './RoleModuleVisibilityPanel';
 import { PinManagementPanel } from './PinManagementPanel';
+import { getJakartaDateString } from '../utils/formatters';
 
 export interface UserAccountItem {
   id: string;
@@ -84,7 +85,7 @@ const DEFAULT_USER_ACCOUNTS: UserAccountItem[] = [
     status: 'active',
     avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=256&h=256&q=80',
     lastLogin: 'Aktif',
-    passwordLastChanged: '2026-10-01',
+    passwordLastChanged: getJakartaDateString(),
   },
 ];
 
@@ -358,7 +359,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       if (u.id === selectedUserForAction.id) {
         return {
           ...u,
-          passwordLastChanged: new Date().toISOString().slice(0, 10),
+          passwordLastChanged: getJakartaDateString(),
         };
       }
       return u;

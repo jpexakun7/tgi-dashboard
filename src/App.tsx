@@ -45,6 +45,7 @@ import {
   EmployeeBonus,
   EmployeeAdjustment,
   PayrollDeductionRecord,
+  ThrPayoutRecord,
   DashboardModule,
 } from './types';
 import {
@@ -60,11 +61,16 @@ import {
   evaluateAttendanceAgainstShift,
   getEmployeeHourlyRate,
   getEmployeeStandardDailyHours,
+  getApprovedOvertimeHoursForEmployeeDate,
   STANDARD_WORK_HOURS_PER_DAY,
   isEmployeePartTime,
   normalizeEmploymentType,
   getEmployeeAdjustmentForPeriod,
   getEmployeePayrollDeductionForPeriod,
+  getActiveEmployeeThrForPayslip,
+  getCurrentRealTimePayrollPeriod,
+  formatEndOfPeriodPrintDate,
+  getJakartaDateString,
 } from './utils/formatters';
 import { computeHoursFromClockInOut } from './components/PartTimeLogs';
 import { Sidebar, ActiveTab } from './components/Sidebar';
@@ -95,6 +101,7 @@ import { PartTimePayrollSummary } from './components/PartTimePayrollSummary';
 import { BonusManagementView } from './components/BonusManagementView';
 import { PayrollAdjustmentPanel } from './components/PayrollAdjustmentPanel';
 import { PayrollDeductionPanel } from './components/PayrollDeductionPanel';
+import { ThrManagementPanel } from './components/ThrManagementPanel';
 
 import {
   checkSupabaseStatus,
@@ -158,9 +165,21 @@ import {
   fetchPayrollDeductions,
   upsertPayrollDeduction,
   deletePayrollDeduction,
+  getSavedThrPayouts,
+  fetchThrPayoutsFromSupabase,
+  upsertThrPayoutToSupabase,
+  batchUpsertThrPayoutsToSupabase,
+  fetchCashAdvancesFromSupabase,
+  upsertCashAdvanceToSupabase,
+  fetchCompanyConfigFromSupabase,
+  upsertCompanyConfigToSupabase,
+  notifySupabaseSyncStatus,
+  SupabaseSyncToastPayload,
 } from './services/supabaseService';
 import {
   isAdminSessionVerified,
+  isOfficialAdminEmail,
+  getVerifiedAdminEmail,
   markAdminSessionVerified,
   markEmployeeSessionLocked,
   clearAllAuthSessions,
@@ -176,6 +195,7 @@ export default function App() {
   const [isAddEmployeeModalOpen, setIsAddEmployeeModalOpen] = useState(false);
   const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState(false);
   const [isSeedingSupabase, setIsSeedingSupabase] = useState(false);
+  const [supabaseToast, setSupabaseToast] = useState<SupabaseSyncToastPayload | null>(null);
   const [supabaseStatus, setSupabaseStatus] = useState<SupabaseSyncStatus>({
     isConnected: false,
     isTablesCreated: false,
@@ -183,17 +203,46 @@ export default function App() {
     lastSyncTime: null,
   });
 
-  // Google Admin Auth State (1 Google Admin Account to manage everything)
+  useEffect(() => {
+    const handleToastEvent = (e: Event) => {
+      const detail = (e as CustomEvent<SupabaseSyncToastPayload>).detail;
+      if (detail) {
+        setSupabaseToast(detail);
+      }
+    };
+    window.addEventListener('tgi_supabase_sync_toast', handleToastEvent);
+    return () => window.removeEventListener('tgi_supabase_sync_toast', handleToastEvent);
+  }, []);
+
+  useEffect(() => {
+    if (!supabaseToast) return;
+    const timer = setTimeout(() => {
+      setSupabaseToast(null);
+    }, 6000);
+    return () => clearTimeout(timer);
+  }, [supabaseToast]);
+
+  // Google Admin Auth State (Strictly verified against official Admin session & email allowlist)
   const [adminUser, setAdminUser] = useState<GoogleAdminUser | null>(() => {
     try {
+      if (!isAdminSessionVerified()) return null;
       const saved = localStorage.getItem('tgi_admin_google_user');
-      return saved ? JSON.parse(saved) : null;
+      if (!saved) return null;
+      const parsed = JSON.parse(saved) as GoogleAdminUser;
+      if (!parsed?.email || !isOfficialAdminEmail(parsed.email)) return null;
+      return parsed;
     } catch {
       return null;
     }
   });
 
   const handleLoginSuccess = (user: GoogleAdminUser) => {
+    if (!user?.email || !isOfficialAdminEmail(user.email)) {
+      clearAllAuthSessions();
+      setIsAdminUnlocked(false);
+      setAdminUser(null);
+      return;
+    }
     markAdminSessionVerified(user.email);
     setIsAdminUnlocked(true);
     setAdminUser(user);
@@ -569,6 +618,9 @@ export default function App() {
   };
 
   const handleSwitchAdminUser = (account: GoogleAdminAccount) => {
+    if (!isAdminSessionVerified() || !isOfficialAdminEmail(account.email)) {
+      return;
+    }
     const newUser: GoogleAdminUser = {
       id: account.id,
       email: account.email,
@@ -581,6 +633,7 @@ export default function App() {
       }),
       phone: account.phone,
     };
+    markAdminSessionVerified(account.email);
     setAdminUser(newUser);
     try {
       localStorage.setItem('tgi_admin_google_user', JSON.stringify(newUser));
@@ -734,6 +787,14 @@ export default function App() {
           };
         }
         parsed.attendancePenaltyPolicy = getAttendancePenaltyPolicy(parsed.attendancePenaltyPolicy);
+        const realTimePeriod = getCurrentRealTimePayrollPeriod();
+        if (
+          !parsed.currentPayrollPeriod ||
+          parsed.currentPayrollPeriod === 'Oktober 2026' ||
+          parsed.currentPayrollPeriod === 'Maret 2026'
+        ) {
+          parsed.currentPayrollPeriod = realTimePeriod;
+        }
         return parsed;
       }
     } catch (e) {
@@ -749,7 +810,8 @@ export default function App() {
       console.error('Failed to save company config', e);
     }
   }, [companyConfig]);
-  // Helper untuk mengunci status Part-Time dari localStorage ('tgi_parttime_overrides' & 'tgi_employees_data') & state lokal
+
+  // Helper Cloud-First: Utamakan nilai dari Supabase Cloud (incomingList) agar pembaruan dari perangkat lain langsung menimpa cache lokal
   const mergePreservingPartTimeStatus = (
     incomingList: Employee[],
     prevLocalList: Employee[] = []
@@ -761,28 +823,27 @@ export default function App() {
     const baseMerged = incomingList.map((emp) => {
       const prevEmp = localMap.get(emp.id);
       const savedMeta = getEmployeeEmploymentMetaLocal(emp.id, emp.nik);
-      const isPt =
-        savedMeta?.employmentType === 'Part-Time' ||
-        savedMeta?.status === 'Part-Time' ||
-        isEmployeePartTime(prevEmp) ||
-        isEmployeePartTime(emp);
+      const isPt = isEmployeePartTime(emp);
       const resolvedType = isPt
         ? 'Part-Time'
-        : savedMeta?.employmentType ||
-          normalizeEmploymentType(emp.employmentType || emp.employment_type) ||
+        : normalizeEmploymentType(emp.employmentType || emp.employment_type) ||
+          savedMeta?.employmentType ||
           normalizeEmploymentType(prevEmp?.employmentType || prevEmp?.employment_type) ||
           (emp.employmentStatus === 'PKWTT (Tetap)' ? 'Full-Time' : 'Contract');
       const resolvedStatus = isPt
         ? 'Part-Time'
         : emp.employmentStatus || prevEmp?.employmentStatus || 'PKWT (Kontrak)';
+      const resolvedStdHours =
+        Number(emp.standard_daily_hours ?? emp.standardDailyHours) ||
+        Number(savedMeta?.standard_daily_hours ?? savedMeta?.standardDailyHours) ||
+        Number(prevEmp?.standard_daily_hours ?? prevEmp?.standardDailyHours) ||
+        STANDARD_WORK_HOURS_PER_DAY;
       const resolvedHourly =
-        (isPt && (savedMeta?.hourlyRate || prevEmp?.hourlyRate || prevEmp?.hourly_rate)) ||
         Number(emp.hourlyRate ?? emp.hourly_rate) ||
         Number(savedMeta?.hourlyRate) ||
         Number(prevEmp?.hourlyRate ?? prevEmp?.hourly_rate) ||
         0;
       const resolvedOvertime =
-        (isPt && (savedMeta?.overtimeRate || prevEmp?.overtimeRate || prevEmp?.overtime_rate)) ||
         Number(emp.overtimeRate ?? emp.overtime_rate) ||
         Number(savedMeta?.overtimeRate) ||
         Number(prevEmp?.overtimeRate ?? prevEmp?.overtime_rate) ||
@@ -793,28 +854,25 @@ export default function App() {
         status: resolvedStatus,
         employmentType: resolvedType,
         employment_type: resolvedType,
+        standard_daily_hours: resolvedStdHours,
+        standardDailyHours: resolvedStdHours,
         hourlyRate: resolvedHourly > 0 ? resolvedHourly : emp.hourlyRate,
         hourly_rate: resolvedHourly > 0 ? resolvedHourly : emp.hourly_rate,
         overtimeRate: resolvedOvertime > 0 ? resolvedOvertime : emp.overtimeRate,
         overtime_rate: resolvedOvertime > 0 ? resolvedOvertime : emp.overtime_rate,
       };
-      if (isPt) {
-        saveEmployeeEmploymentMetaLocal(mergedEmp);
-      }
+      saveEmployeeEmploymentMetaLocal(mergedEmp);
       return mergedEmp;
     });
-    const finalMerged = applyPartTimeOverridesToEmployees(baseMerged);
     try {
-      if (finalMerged.length > 0) {
-        localStorage.setItem(
-          'tgi_employees_data',
-          JSON.stringify(sanitizeEmployeesListForStorage(finalMerged))
-        );
-      }
+      localStorage.setItem(
+        'tgi_employees_data',
+        JSON.stringify(sanitizeEmployeesListForStorage(baseMerged))
+      );
     } catch {
       // ignore storage errors
     }
-    return finalMerged;
+    return baseMerged;
   };
 
   // 100% Real-Time Supabase Data State (dengan backup localStorage terenkripsi agar status Part-Time tidak pernah ter-reset)
@@ -852,6 +910,9 @@ export default function App() {
   const [payrollDeductions, setPayrollDeductions] = useState<PayrollDeductionRecord[]>(() =>
     getSavedPayrollDeductions()
   );
+  const [thrPayouts, setThrPayouts] = useState<ThrPayoutRecord[]>(() =>
+    getSavedThrPayouts()
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -879,6 +940,14 @@ export default function App() {
       })
       .catch(() => {});
 
+    fetchThrPayoutsFromSupabase()
+      .then((thrList) => {
+        if (mounted && Array.isArray(thrList)) {
+          setThrPayouts(thrList);
+        }
+      })
+      .catch(() => {});
+
     const handleBonusesUpdated = () => {
       if (mounted) {
         setEmployeeBonuses(getSavedEmployeeBonuses());
@@ -894,6 +963,11 @@ export default function App() {
         setPayrollDeductions(getSavedPayrollDeductions());
       }
     };
+    const handleThrUpdated = () => {
+      if (mounted) {
+        setThrPayouts(getSavedThrPayouts());
+      }
+    };
     const handleStorage = (e: StorageEvent) => {
       if (e.key === 'tgi_employee_bonuses' && mounted) {
         setEmployeeBonuses(getSavedEmployeeBonuses());
@@ -904,19 +978,34 @@ export default function App() {
       if (e.key === 'tgi_payroll_deductions' && mounted) {
         setPayrollDeductions(getSavedPayrollDeductions());
       }
+      if (e.key === 'tgi_thr_payouts' && mounted) {
+        setThrPayouts(getSavedThrPayouts());
+      }
     };
     window.addEventListener('tgi_employee_bonuses_updated', handleBonusesUpdated);
     window.addEventListener('tgi_employee_adjustments_updated', handleAdjustmentsUpdated);
     window.addEventListener('tgi_payroll_deductions_updated', handleDeductionsUpdated);
+    window.addEventListener('tgi_thr_payouts_updated', handleThrUpdated);
     window.addEventListener('storage', handleStorage);
     return () => {
       mounted = false;
       window.removeEventListener('tgi_employee_bonuses_updated', handleBonusesUpdated);
       window.removeEventListener('tgi_employee_adjustments_updated', handleAdjustmentsUpdated);
       window.removeEventListener('tgi_payroll_deductions_updated', handleDeductionsUpdated);
+      window.removeEventListener('tgi_thr_payouts_updated', handleThrUpdated);
       window.removeEventListener('storage', handleStorage);
     };
   }, []);
+
+  const handleSaveThrPayout = async (record: ThrPayoutRecord) => {
+    await upsertThrPayoutToSupabase(record);
+    setThrPayouts(getSavedThrPayouts());
+  };
+
+  const handleBatchSaveThrPayouts = async (records: ThrPayoutRecord[]) => {
+    await batchUpsertThrPayoutsToSupabase(records);
+    setThrPayouts(getSavedThrPayouts());
+  };
 
   const handleAddEmployeeBonus = async (
     payload: Omit<EmployeeBonus, 'id' | 'date_awarded' | 'is_read'> & {
@@ -1014,11 +1103,17 @@ export default function App() {
       att.checkIn && att.checkIn !== '-' ? att.checkIn : existing?.clockIn || '';
     const clockOut =
       att.checkOut && att.checkOut !== '-' ? att.checkOut : existing?.clockOut || '';
-    // Hanya hitung durasi jika clockIn DAN clockOut terisi (jangan pernah default ke 8 jam)
-    const empStdHours = getEmployeeStandardDailyHours(emp, STANDARD_WORK_HOURS_PER_DAY);
+    // Hitung durasi kerja dengan batas maksimal sesuai target harian karyawan (5, 6, atau 9 jam) & kunci lembur wajib approval Admin
+    const empShift = getEmployeeShift(emp, companyConfig.workShifts);
+    const empStdHours = getEmployeeStandardDailyHours(emp, STANDARD_WORK_HOURS_PER_DAY, empShift);
+    const approvedOt = getApprovedOvertimeHoursForEmployeeDate(
+      emp.id,
+      att.date,
+      overtimeRequests
+    );
     const computed =
       clockIn && clockOut && clockIn.trim() !== clockOut.trim()
-        ? computeHoursFromClockInOut(clockIn, clockOut, empStdHours)
+        ? computeHoursFromClockInOut(clockIn, clockOut, empStdHours, approvedOt, att.date)
         : {
             totalHours: 0,
             normalHours: 0,
@@ -1140,10 +1235,17 @@ export default function App() {
           : '';
 
       if (l.status !== 'Paid' && clockIn && clockOut && clockIn.trim() !== clockOut.trim()) {
+        const approvedOt = getApprovedOvertimeHoursForEmployeeDate(
+          emp.id,
+          l.date,
+          overtimeRequests
+        );
         const computed = computeHoursFromClockInOut(
           clockIn,
           clockOut,
-          empStdHours
+          empStdHours,
+          approvedOt,
+          l.date
         );
         const wage = Math.round(computed.normalHours * hrRate + computed.overtimeHours * otRate);
         const correctedLog: PartTimeWorkLog = {
@@ -1187,11 +1289,17 @@ export default function App() {
         att.checkIn && att.checkIn !== '-' ? att.checkIn : existing?.clockIn || '';
       const clockOut =
         att.checkOut && att.checkOut !== '-' ? att.checkOut : existing?.clockOut || '';
-      // Hitung durasi kerja REAL dari clock_out - clock_in (0 jam jika belum clock-out)
-      const empStdHours = getEmployeeStandardDailyHours(emp, STANDARD_WORK_HOURS_PER_DAY);
+      // Hitung durasi kerja REAL dari clock_out - clock_in sesuai target harian (5/6/9 jam) & kunci lembur wajib approval Admin
+      const empShift = getEmployeeShift(emp, companyConfig.workShifts);
+      const empStdHours = getEmployeeStandardDailyHours(emp, STANDARD_WORK_HOURS_PER_DAY, empShift);
+      const approvedOt = getApprovedOvertimeHoursForEmployeeDate(
+        emp.id,
+        att.date,
+        overtimeRequests
+      );
       const computed =
         clockIn && clockOut && clockIn.trim() !== clockOut.trim()
-          ? computeHoursFromClockInOut(clockIn, clockOut, empStdHours)
+          ? computeHoursFromClockInOut(clockIn, clockOut, empStdHours, approvedOt, att.date)
           : {
               totalHours: 0,
               normalHours: 0,
@@ -1290,17 +1398,27 @@ export default function App() {
         const inWeek =
           l.employeeId === employeeId && l.date >= weekStartDate && l.date <= weekEndDate;
         if (!idSet.has(l.id) && !inWeek) return l;
+        const emp = employees.find((e) => e.id === l.employeeId);
+        const empStd = getEmployeeStandardDailyHours(emp, STANDARD_WORK_HOURS_PER_DAY);
+        const approvedOt = getApprovedOvertimeHoursForEmployeeDate(
+          l.employeeId,
+          l.date,
+          overtimeRequests
+        );
         const hasIn = Boolean(l.clockIn && l.clockIn.trim() !== '' && l.clockIn !== '-');
         const hasOut = Boolean(l.clockOut && l.clockOut.trim() !== '' && l.clockOut !== '-');
         const computed =
           hasIn && hasOut
-            ? computeHoursFromClockInOut(l.clockIn, l.clockOut, STANDARD_WORK_HOURS_PER_DAY)
+            ? computeHoursFromClockInOut(l.clockIn, l.clockOut, empStd, approvedOt, l.date)
             : hasIn && !hasOut
-            ? { totalHours: 0, normalHours: 0, overtimeHours: 0 }
+            ? computeHoursFromClockInOut(l.clockIn, l.clockOut, empStd, approvedOt, l.date)
             : {
-                totalHours: Number(l.hoursWorked ?? l.hours_worked) || 0,
-                normalHours: Number(l.normalHours ?? l.normal_hours) || 0,
-                overtimeHours: Number(l.overtimeHours ?? l.overtime_hours) || 0,
+                totalHours: Math.min(empStd, Number(l.hoursWorked ?? l.hours_worked) || 0),
+                normalHours: Math.min(empStd, Number(l.normalHours ?? l.normal_hours) || 0),
+                overtimeHours:
+                  approvedOt > 0
+                    ? Math.min(Number(l.overtimeHours ?? l.overtime_hours) || 0, approvedOt)
+                    : 0,
               };
         const hrRate = Number(l.hourlyRate ?? l.hourlyRateSnapshot ?? l.hourly_rate) || 0;
         const otRate = Number(l.overtimeRate ?? l.overtime_rate) || Math.round(hrRate * 1.5);
@@ -1840,6 +1958,11 @@ export default function App() {
         emp,
         currentPeriod
       );
+      const empThr = getActiveEmployeeThrForPayslip(
+        thrPayouts,
+        emp,
+        currentPeriod
+      );
 
       const computed = calculatePayroll(
         emp,
@@ -1869,6 +1992,7 @@ export default function App() {
           penaltyPolicy: companyConfig.attendancePenaltyPolicy,
           employeeAdjustment: empAdjustment,
           payrollDeduction: empDeduction,
+          thrPayout: empThr,
           leaveRequests,
         }
       );
@@ -1893,6 +2017,7 @@ export default function App() {
     leaveRequests,
     employeeAdjustments,
     payrollDeductions,
+    thrPayouts,
     companyConfig.currentPayrollPeriod,
     companyConfig.lockedPayrollPeriods,
     companyConfig.waivedLateEmployeeIds,
@@ -2100,6 +2225,73 @@ export default function App() {
           setPartTimePayouts(cloudPtPayouts.filter((p) => !deletedIds.has(p.employeeId)));
         }
 
+        // 7c. Cloud-First Fetch untuk Manajemen Bonus, Tunjangan & Kedisiplinan, Potongan Absensi & Kasbon, THR, Kasbon, dan Pengaturan Perusahaan
+        const [
+          cloudBonuses,
+          cloudAdjustments,
+          cloudDeductions,
+          cloudThrPayouts,
+          cloudCashAdvances,
+          cloudCompanyConfig,
+        ] = await Promise.all([
+          fetchEmployeeBonuses(),
+          fetchEmployeeAdjustments(),
+          fetchPayrollDeductions(),
+          fetchThrPayoutsFromSupabase(),
+          fetchCashAdvancesFromSupabase(),
+          fetchCompanyConfigFromSupabase(),
+        ]);
+
+        if (Array.isArray(cloudBonuses)) {
+          setEmployeeBonuses(cloudBonuses.filter((b) => !deletedIds.has(b.employee_id)));
+        }
+        if (Array.isArray(cloudAdjustments)) {
+          setEmployeeAdjustments(cloudAdjustments.filter((a) => !deletedIds.has(a.employee_id)));
+        }
+        if (Array.isArray(cloudDeductions)) {
+          setPayrollDeductions(cloudDeductions.filter((d) => !deletedIds.has(d.employee_id)));
+        }
+        if (Array.isArray(cloudThrPayouts)) {
+          setThrPayouts(cloudThrPayouts.filter((t) => !deletedIds.has(t.employee_id)));
+        }
+        if (cloudCashAdvances !== null) {
+          if (cloudCashAdvances.length === 0 && cashAdvances.length > 0) {
+            cashAdvances
+              .filter((c) => !isLegacyDummyRecord(c) && !deletedIds.has(c.employeeId))
+              .forEach((c) => {
+                void upsertCashAdvanceToSupabase(c);
+              });
+          } else {
+            setCashAdvances(
+              cloudCashAdvances.filter(
+                (c) => !isLegacyDummyRecord(c) && !deletedIds.has(c.employeeId)
+              )
+            );
+          }
+        }
+        if (cloudCompanyConfig !== null && Object.keys(cloudCompanyConfig).length > 0) {
+          const realTimePeriod = getCurrentRealTimePayrollPeriod();
+          const resolvedCloudPeriod =
+            !cloudCompanyConfig.currentPayrollPeriod ||
+            cloudCompanyConfig.currentPayrollPeriod === 'Oktober 2026' ||
+            cloudCompanyConfig.currentPayrollPeriod === 'Maret 2026'
+              ? realTimePeriod
+              : cloudCompanyConfig.currentPayrollPeriod;
+          setCompanyConfig((prev) => ({
+            ...prev,
+            ...cloudCompanyConfig,
+            currentPayrollPeriod: resolvedCloudPeriod,
+            workShifts:
+              Array.isArray(cloudCompanyConfig.workShifts) &&
+              cloudCompanyConfig.workShifts.length > 0
+                ? cloudCompanyConfig.workShifts
+                : prev.workShifts,
+            attendancePenaltyPolicy: getAttendancePenaltyPolicy(
+              cloudCompanyConfig.attendancePenaltyPolicy || prev.attendancePenaltyPolicy
+            ),
+          }));
+        }
+
         // 8. Clean up local states (reviews, cashAdvances, assetLogs, notifications) so they only reference valid real employees
         setReviews((prev) =>
           prev.filter((r) => !isLegacyDummyRecord(r) && validEmpIds.has(r.employeeId))
@@ -2132,26 +2324,50 @@ export default function App() {
     setIsSeedingSupabase(true);
     try {
       const deletedIds = new Set(getDeletedEmployeeIds());
-      const seedEmps = (employees.length > 0 ? employees : initialEmployees).filter(
-        (e) => !deletedIds.has(e.id)
-      );
-      const seedPayrolls = (payrolls.length > 0 ? payrolls : initialPayrollRecords).filter(
-        (p) => !deletedIds.has(p.employeeId)
-      );
-      const res = await autoSeedSupabaseIfEmpty(
-        seedEmps,
-        assets.length > 0 ? assets : initialCompanyAssets,
-        seedPayrolls,
-        true
-      );
-      if (res.seeded) {
-        const freshEmps = await fetchEmployeesFromSupabase();
-        if (freshEmps && freshEmps.length > 0) setEmployees(freshEmps);
-        const freshAssets = await fetchAssetsFromSupabase();
-        if (freshAssets && freshAssets.length > 0) setAssets(freshAssets);
-      }
-      const updatedStatus = await checkSupabaseStatus();
-      setSupabaseStatus(updatedStatus);
+      const activeEmps = employees.filter((e) => !deletedIds.has(e.id));
+
+      // Push all active local modules to Supabase Cloud so other devices immediately see the exact same data
+      await Promise.allSettled([
+        ...activeEmps.map((e) => updateEmployeeInSupabase(e)),
+        ...attendances
+          .filter((a) => !deletedIds.has(a.employeeId))
+          .map((a) => upsertAttendanceToSupabase(a)),
+        ...employeeBonuses
+          .filter((b) => !deletedIds.has(b.employee_id))
+          .map((b) => addEmployeeBonus(b)),
+        ...employeeAdjustments
+          .filter((a) => !deletedIds.has(a.employee_id))
+          .map((a) => upsertEmployeeAdjustment(a)),
+        ...payrollDeductions
+          .filter((d) => !deletedIds.has(d.employee_id))
+          .map((d) => upsertPayrollDeduction(d)),
+        ...thrPayouts
+          .filter((t) => !deletedIds.has(t.employee_id))
+          .map((t) => upsertThrPayoutToSupabase(t)),
+        ...leaveRequests
+          .filter((l) => !deletedIds.has(l.employeeId))
+          .map((l) => upsertLeaveRequestToSupabase(l)),
+        ...overtimeRequests
+          .filter((o) => !deletedIds.has(o.employeeId))
+          .map((o) => upsertOvertimeRequestToSupabase(o)),
+        ...reimbursements
+          .filter((r) => !deletedIds.has(r.employeeId))
+          .map((r) => upsertReimbursementToSupabase(r)),
+        ...cashAdvances
+          .filter((c) => !deletedIds.has(c.employeeId))
+          .map((c) => upsertCashAdvanceToSupabase(c)),
+        ...payrolls
+          .filter((p) => !deletedIds.has(p.employeeId))
+          .map((p) => upsertPayrollToSupabase(p)),
+        upsertCompanyConfigToSupabase(companyConfig),
+      ]);
+
+      await refreshSupabaseStatus();
+      notifySupabaseSyncStatus({
+        ok: true,
+        module: 'Supabase Cloud',
+        message: 'Seluruh data berhasil disinkronkan ke Supabase Cloud dan siap diakses dari semua perangkat.',
+      });
     } catch (e) {
       console.error('Trigger seed error:', e);
     } finally {
@@ -2160,7 +2376,19 @@ export default function App() {
   };
 
   useEffect(() => {
-    // Only fetch sensitive employee & payroll records after session authentication is verified
+    // Cloud-First: Selalu tarik data terbaru dari Supabase saat halaman dibuka/di-refresh (bahkan sebelum login agar daftar karyawan di layar login & PIN selalu sinkron antar-perangkat)
+    refreshSupabaseStatus();
+
+    const handleWindowFocus = () => {
+      refreshSupabaseStatus();
+    };
+    window.addEventListener('focus', handleWindowFocus);
+    return () => {
+      window.removeEventListener('focus', handleWindowFocus);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!isSessionAuthenticated) {
       return;
     }
@@ -2443,6 +2671,68 @@ export default function App() {
           }
         }
       )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'tgi_employee_bonuses' },
+        () => {
+          fetchEmployeeBonuses().then((list) => setEmployeeBonuses(list));
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'employee_bonuses' },
+        () => {
+          fetchEmployeeBonuses().then((list) => setEmployeeBonuses(list));
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'employee_adjustments' },
+        () => {
+          fetchEmployeeAdjustments().then((list) => setEmployeeAdjustments(list));
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'payroll_deductions' },
+        () => {
+          fetchPayrollDeductions().then((list) => setPayrollDeductions(list));
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'tgi_thr_payouts' },
+        () => {
+          fetchThrPayoutsFromSupabase().then((list) => setThrPayouts(list));
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'tgi_parttime_logs' },
+        () => {
+          fetchPartTimeLogsFromSupabase().then((list) => setPartTimeLogs(list));
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'cash_advances' },
+        () => {
+          fetchCashAdvancesFromSupabase().then((list) => {
+            if (list) setCashAdvances(list);
+          });
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'company_settings' },
+        () => {
+          fetchCompanyConfigFromSupabase().then((cfg) => {
+            if (cfg && Object.keys(cfg).length > 0) {
+              setCompanyConfig((prev) => ({ ...prev, ...cfg }));
+            }
+          });
+        }
+      )
       .subscribe();
 
     return () => {
@@ -2661,7 +2951,10 @@ export default function App() {
     setEmployees((prev) => {
       const remaining = prev.filter((e) => e.id !== id);
       try {
-        localStorage.setItem('tgi_employees_data', JSON.stringify(remaining));
+        localStorage.setItem(
+          'tgi_employees_data',
+          JSON.stringify(sanitizeEmployeesListForStorage(remaining))
+        );
       } catch (err) {
         console.error('Storage error', err);
       }
@@ -2822,6 +3115,22 @@ export default function App() {
           : waivedIdsForPeriod.includes(emp.id)
       );
 
+      const empAdjustment = getEmployeeAdjustmentForPeriod(
+        employeeAdjustments,
+        emp,
+        currentPeriod
+      );
+      const empDeduction = getEmployeePayrollDeductionForPeriod(
+        payrollDeductions,
+        emp,
+        currentPeriod
+      );
+      const empThr = getActiveEmployeeThrForPayslip(
+        thrPayouts,
+        emp,
+        currentPeriod
+      );
+
       const computed = calculatePayroll(
         emp,
         currentPeriod,
@@ -2846,6 +3155,10 @@ export default function App() {
           originalLateDeduction: penaltySummary.totalDeductionAmount,
           waiverReason: existingRecord?.waiverReason || 'Dispensasi Tugas Luar / HR',
           penaltyPolicy: companyConfig.attendancePenaltyPolicy,
+          employeeAdjustment: empAdjustment,
+          payrollDeduction: empDeduction,
+          thrPayout: empThr,
+          leaveRequests,
         }
       );
 
@@ -2879,10 +3192,14 @@ export default function App() {
   const handleChangePayrollPeriod = (newPeriod: string) => {
     if (!newPeriod || newPeriod === companyConfig.currentPayrollPeriod) return;
     const prevPeriod = companyConfig.currentPayrollPeriod;
-    setCompanyConfig((prev) => ({
-      ...prev,
-      currentPayrollPeriod: newPeriod,
-    }));
+    setCompanyConfig((prev) => {
+      const next = {
+        ...prev,
+        currentPayrollPeriod: newPeriod,
+      };
+      void upsertCompanyConfigToSupabase(next);
+      return next;
+    });
 
     setPayrolls((prev) =>
       prev.map((p) => {
@@ -2919,10 +3236,14 @@ export default function App() {
       : [...currentLocked, targetPeriod];
     const nowIso = new Date().toISOString();
 
-    setCompanyConfig((prev) => ({
-      ...prev,
-      lockedPayrollPeriods: nextLocked,
-    }));
+    setCompanyConfig((prev) => {
+      const next = {
+        ...prev,
+        lockedPayrollPeriods: nextLocked,
+      };
+      void upsertCompanyConfigToSupabase(next);
+      return next;
+    });
 
     // Snapshot & freeze current syncedPayrolls into payrolls state & Supabase so THP will not change when locked
     const frozenRecords = syncedPayrolls.map((rec) => {
@@ -3188,6 +3509,19 @@ export default function App() {
               )
             : null;
 
+        const mergedPhotoIn =
+          existingSameDay.facePhotoSnapshot ||
+          existingSameDay.photoIn ||
+          normalizedAtt.facePhotoSnapshot ||
+          normalizedAtt.photoIn;
+        const mergedPhotoOut = alreadyHasCheckOut
+          ? existingSameDay.checkOutPhotoSnapshot ||
+            existingSameDay.facePhotoOut ||
+            existingSameDay.photoOut
+          : normalizedAtt.checkOutPhotoSnapshot ||
+            normalizedAtt.facePhotoOut ||
+            normalizedAtt.photoOut;
+
         recordToPersist = {
           ...existingSameDay,
           ...normalizedAtt,
@@ -3195,16 +3529,27 @@ export default function App() {
           checkIn: finalCheckIn,
           checkInFullTimestamp:
             existingSameDay.checkInFullTimestamp || normalizedAtt.checkInFullTimestamp,
-          facePhotoSnapshot: existingSameDay.facePhotoSnapshot || normalizedAtt.facePhotoSnapshot,
+          facePhotoSnapshot: mergedPhotoIn,
+          photoIn: mergedPhotoIn,
           locationCoords: existingSameDay.locationCoords || normalizedAtt.locationCoords,
           locationAddress: existingSameDay.locationAddress || normalizedAtt.locationAddress,
           checkOut: finalCheckOut,
           checkOutFullTimestamp: alreadyHasCheckOut
             ? existingSameDay.checkOutFullTimestamp
             : normalizedAtt.checkOutFullTimestamp,
-          checkOutPhotoSnapshot: alreadyHasCheckOut
-            ? existingSameDay.checkOutPhotoSnapshot
-            : normalizedAtt.checkOutPhotoSnapshot,
+          checkOutPhotoSnapshot: mergedPhotoOut,
+          photoOut: mergedPhotoOut,
+          facePhotoOut: mergedPhotoOut,
+          checkOutLocationCoords:
+            normalizedAtt.checkOutLocationCoords || existingSameDay.checkOutLocationCoords,
+          checkOutLocationAddress:
+            normalizedAtt.checkOutLocationAddress || existingSameDay.checkOutLocationAddress,
+          checkOutDistanceMeters:
+            normalizedAtt.checkOutDistanceMeters ?? existingSameDay.checkOutDistanceMeters,
+          isInOfficeRadius:
+            normalizedAtt.isInOfficeRadius !== undefined
+              ? normalizedAtt.isInOfficeRadius
+              : existingSameDay.isInOfficeRadius,
           status: mergedEval ? mergedEval.status : normalizedAtt.status,
           lateMinutes: mergedEval ? mergedEval.lateMinutes : 0,
           earlyLeaveMinutes: mergedEval
@@ -3414,6 +3759,7 @@ export default function App() {
       } catch (err) {
         console.error('Failed to persist company config', err);
       }
+      void upsertCompanyConfigToSupabase(updatedConfig);
       return updatedConfig;
     });
 
@@ -3431,7 +3777,10 @@ export default function App() {
       });
       if (hasReassigned) {
         try {
-          localStorage.setItem('tgi_employees_data', JSON.stringify(next));
+          localStorage.setItem(
+            'tgi_employees_data',
+            JSON.stringify(sanitizeEmployeesListForStorage(next))
+          );
         } catch {
           // ignore
         }
@@ -3836,6 +4185,7 @@ export default function App() {
     };
 
     setCashAdvances((prev) => [newAdvance, ...prev]);
+    void upsertCashAdvanceToSupabase(newAdvance);
 
     sendNotification({
       recipientType: 'admin',
@@ -3871,18 +4221,14 @@ export default function App() {
     if (!target) return;
 
     const approverName = adminUser?.name || 'Administrator Utama (TGI)';
-    setCashAdvances((prev) =>
-      prev.map((c) =>
-        c.id === id
-          ? {
-              ...c,
-              status: 'approved',
-              approvedAt: new Date().toISOString(),
-              approvedBy: approverName,
-            }
-          : c
-      )
-    );
+    const updatedCa: CashAdvance = {
+      ...target,
+      status: 'approved',
+      approvedAt: new Date().toISOString(),
+      approvedBy: approverName,
+    };
+    setCashAdvances((prev) => prev.map((c) => (c.id === id ? updatedCa : c)));
+    void upsertCashAdvanceToSupabase(updatedCa);
 
     sendNotification({
       recipientType: 'employee',
@@ -3915,19 +4261,15 @@ export default function App() {
     if (!target) return;
 
     const rejecterName = adminUser?.name || 'Administrator Utama (TGI)';
-    setCashAdvances((prev) =>
-      prev.map((c) =>
-        c.id === id
-          ? {
-              ...c,
-              status: 'rejected',
-              rejectedAt: new Date().toISOString(),
-              rejectedBy: rejecterName,
-              rejectionReason: reason,
-            }
-          : c
-      )
-    );
+    const updatedCa: CashAdvance = {
+      ...target,
+      status: 'rejected',
+      rejectedAt: new Date().toISOString(),
+      rejectedBy: rejecterName,
+      rejectionReason: reason,
+    };
+    setCashAdvances((prev) => prev.map((c) => (c.id === id ? updatedCa : c)));
+    void upsertCashAdvanceToSupabase(updatedCa);
 
     sendNotification({
       recipientType: 'employee',
@@ -3967,20 +4309,16 @@ export default function App() {
     if (!target) return;
 
     const disburserName = adminUser?.name || 'Finance & Payroll TGI';
-    setCashAdvances((prev) =>
-      prev.map((c) =>
-        c.id === id
-          ? {
-              ...c,
-              status: 'disbursed',
-              disbursedAt: new Date().toISOString(),
-              disbursedBy: disburserName,
-              disbursementMethod: details.method,
-              disbursementReference: details.reference,
-            }
-          : c
-      )
-    );
+    const updatedCa: CashAdvance = {
+      ...target,
+      status: 'disbursed',
+      disbursedAt: new Date().toISOString(),
+      disbursedBy: disburserName,
+      disbursementMethod: details.method,
+      disbursementReference: details.reference,
+    };
+    setCashAdvances((prev) => prev.map((c) => (c.id === id ? updatedCa : c)));
+    void upsertCashAdvanceToSupabase(updatedCa);
 
     sendNotification({
       recipientType: 'employee',
@@ -4023,26 +4361,24 @@ export default function App() {
     const newRemaining = Math.max(0, target.amount - newTotalPaid);
     const isNowFullyPaid = newRemaining === 0;
 
-    setCashAdvances((prev) =>
-      prev.map((c) => {
-        if (c.id !== advanceId) return c;
-        return {
-          ...c,
-          totalPaid: newTotalPaid,
-          remainingBalance: newRemaining,
-          status: isNowFullyPaid ? 'paid' : 'disbursed',
-          installments: c.installments.map((inst) =>
-            inst.installmentNumber === installmentNumber
-              ? {
-                  ...inst,
-                  status: 'deducted',
-                  deductedAt: new Date().toISOString(),
-                }
-              : inst
-          ),
-        };
-      })
-    );
+    const updatedCa: CashAdvance = {
+      ...target,
+      totalPaid: newTotalPaid,
+      remainingBalance: newRemaining,
+      status: isNowFullyPaid ? 'paid' : 'disbursed',
+      installments: target.installments.map((inst) =>
+        inst.installmentNumber === installmentNumber
+          ? {
+              ...inst,
+              status: 'deducted',
+              deductedAt: new Date().toISOString(),
+            }
+          : inst
+      ),
+    };
+
+    setCashAdvances((prev) => prev.map((c) => (c.id === advanceId ? updatedCa : c)));
+    void upsertCashAdvanceToSupabase(updatedCa);
 
     // Sync deduction directly into the employee's PayrollRecord
     setPayrolls((prev) =>
@@ -4155,7 +4491,7 @@ export default function App() {
         assetCode: asset.assetCode,
         assetName: asset.name,
         action: 'Penghapusan Aset',
-        date: new Date().toISOString().slice(0, 10),
+        date: getJakartaDateString(),
         condition: asset.condition,
         notes: `Aset dihapuskan dari inventaris aktif oleh admin.`,
         adminName: adminUser?.name || 'Administrator Utama (TGI)',
@@ -4622,6 +4958,7 @@ export default function App() {
             if (!base.includes('bonus_management')) base.push('bonus_management');
             if (!base.includes('payroll_adjustments')) base.push('payroll_adjustments');
             if (!base.includes('payroll_deductions')) base.push('payroll_deductions');
+            if (!base.includes('thr_management')) base.push('thr_management');
             if (!base.includes('part_time_payroll')) base.push('part_time_payroll');
           }
           return base;
@@ -4630,13 +4967,14 @@ export default function App() {
   // Redirect if current tab is restricted for this role
   useEffect(() => {
     if (adminUser && currentRole !== 'Super Admin' && userAllowedModules && userAllowedModules.length > 0) {
-      // Never block settings, roles_management, bonus_management, payroll_adjustments, payroll_deductions, or part_time_payroll for admin dashboard users
+      // Never block settings, roles_management, bonus_management, payroll_adjustments, payroll_deductions, thr_management, or part_time_payroll for admin dashboard users
       if (
         activeTab === 'settings' ||
         activeTab === 'roles_management' ||
         activeTab === 'bonus_management' ||
         activeTab === 'payroll_adjustments' ||
         activeTab === 'payroll_deductions' ||
+        activeTab === 'thr_management' ||
         activeTab === 'part_time_payroll'
       ) {
         return;
@@ -4679,8 +5017,12 @@ export default function App() {
   }
 
   // View: Mode Portal Layanan Mandiri Karyawan (Self-Service)
-  if (dashboardMode === 'employee' || !isAdminUnlocked || !isAdminSessionVerified()) {
-    const canSwitchToAdmin = Boolean(isAdminUnlocked && isAdminSessionVerified());
+  const verifiedAdminEmail = adminUser?.email || getVerifiedAdminEmail();
+  const isGenuineOfficialAdmin = Boolean(
+    isAdminUnlocked && isAdminSessionVerified() && isOfficialAdminEmail(verifiedAdminEmail)
+  );
+  if (dashboardMode === 'employee' || !isGenuineOfficialAdmin) {
+    const canSwitchToAdmin = isGenuineOfficialAdmin;
     const safePayrolls = canSwitchToAdmin
       ? syncedPayrolls
       : syncedPayrolls.filter((p) => p.employeeId === currentEmployee?.id);
@@ -4760,6 +5102,7 @@ export default function App() {
                 employeeBonuses={employeeBonuses}
                 employeeAdjustments={employeeAdjustments}
                 payrollDeductions={payrollDeductions}
+                thrPayouts={thrPayouts}
                 onMarkBonusAsRead={handleMarkBonusAsRead}
                 leaveRequests={leaveRequests}
                 overtimeRequests={overtimeRequests}
@@ -4823,6 +5166,7 @@ export default function App() {
           employeeBonuses={employeeBonuses}
           employeeAdjustments={employeeAdjustments}
           payrollDeductions={payrollDeductions}
+          thrPayouts={thrPayouts}
           onClose={() => setSelectedPayslip(null)}
         />
 
@@ -4910,7 +5254,9 @@ export default function App() {
             onQuickBroadcastReminder={() =>
               handleSendDeadlineReminder({
                 period: companyConfig.currentPayrollPeriod,
-                deadlineDate: '25 Oktober 2026',
+                deadlineDate: formatEndOfPeriodPrintDate(
+                  companyConfig.currentPayrollPeriod
+                ),
                 pendingCount: Math.max(1, employees.length - reviews.length),
               })
             }
@@ -5035,6 +5381,29 @@ export default function App() {
                 onRefreshDeductions={async () => {
                   const fresh = await fetchPayrollDeductions();
                   setPayrollDeductions(fresh);
+                }}
+              />
+            )}
+
+            {activeTab === 'thr_management' && (
+              <ThrManagementPanel
+                employees={employees}
+                thrPayouts={thrPayouts}
+                partTimeLogs={partTimeLogs}
+                attendances={attendances}
+                currentPayrollPeriod={companyConfig.currentPayrollPeriod}
+                adminName={adminUser?.name || 'Administrator HR'}
+                onSaveThrPayout={handleSaveThrPayout}
+                onBatchSaveThrPayouts={handleBatchSaveThrPayouts}
+                onOpenPayslipByEmployeeId={(empId) => {
+                  const payRec = syncedPayrolls.find((p) => p.employeeId === empId);
+                  if (payRec) {
+                    handleOpenPayslip(payRec);
+                  }
+                }}
+                onRefreshThrPayouts={async () => {
+                  const fresh = await fetchThrPayoutsFromSupabase();
+                  setThrPayouts(fresh);
                 }}
               />
             )}
@@ -5183,6 +5552,7 @@ export default function App() {
                 employees={employees}
                 payrolls={syncedPayrolls}
                 companyConfig={companyConfig}
+                thrPayouts={thrPayouts}
               />
             )}
 
@@ -5309,6 +5679,7 @@ export default function App() {
                   }
 
                   setCompanyConfig(newConfig);
+                  void upsertCompanyConfigToSupabase(newConfig);
                   if (adminUser) {
                     const matched = newConfig.allowedGoogleAdmins?.find(
                       (a) => a.email.toLowerCase() === adminUser.email.toLowerCase()
@@ -5352,6 +5723,45 @@ export default function App() {
         </div>
       </div>
 
+      {/* Notifikasi Toast Status Penyimpanan Supabase Cloud */}
+      {Boolean(supabaseToast) && (
+        <div
+          className={`fixed bottom-5 right-5 z-50 max-w-md w-full p-4 rounded-2xl shadow-2xl border flex items-start justify-between gap-3 animate-in fade-in slide-in-from-bottom-4 ${
+            supabaseToast?.ok
+              ? 'bg-emerald-950 text-emerald-50 border-emerald-700'
+              : 'bg-rose-950 text-rose-50 border-rose-700'
+          }`}
+        >
+          <div className="space-y-1">
+            <p className="text-xs font-extrabold uppercase tracking-wider">
+              {supabaseToast?.ok
+                ? `✓ Tersimpan di Supabase Cloud (${supabaseToast?.module})`
+                : `⚠ Peringatan Cloud Sync (${supabaseToast?.module})`}
+            </p>
+            <p className="text-xs opacity-90 leading-relaxed">{supabaseToast?.message}</p>
+            {!supabaseToast?.ok && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSupabaseToast(null);
+                  setIsSupabaseModalOpen(true);
+                }}
+                className="mt-1.5 inline-block text-[11px] font-bold underline text-amber-300 hover:text-amber-200 cursor-pointer"
+              >
+                Buka Skrip SQL Supabase →
+              </button>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => setSupabaseToast(null)}
+            className="text-xs font-bold opacity-75 hover:opacity-100 px-1.5 py-0.5 rounded cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* Slip Gaji Modal (Printable) */}
       <PayslipModal
         payroll={liveComputedPayslip}
@@ -5364,12 +5774,17 @@ export default function App() {
         employeeBonuses={employeeBonuses}
         employeeAdjustments={employeeAdjustments}
         payrollDeductions={payrollDeductions}
+        thrPayouts={thrPayouts}
         onClose={() => setSelectedPayslip(null)}
         onUpdateSignatories={(newSigConfig) => {
-          setCompanyConfig((prev) => ({
-            ...prev,
-            payrollSignatories: newSigConfig,
-          }));
+          setCompanyConfig((prev) => {
+            const next = {
+              ...prev,
+              payrollSignatories: newSigConfig,
+            };
+            void upsertCompanyConfigToSupabase(next);
+            return next;
+          });
         }}
       />
 

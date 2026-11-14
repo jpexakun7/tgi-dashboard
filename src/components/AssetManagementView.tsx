@@ -41,7 +41,12 @@ import {
   Employee,
   GoogleAdminUser,
 } from '../types';
-import { formatRupiah } from '../utils/formatters';
+import {
+  formatRupiah,
+  getJakartaDateString,
+  getJakartaDateParts,
+  addDaysToDateString,
+} from '../utils/formatters';
 
 interface AssetManagementViewProps {
   assets: CompanyAsset[];
@@ -121,7 +126,7 @@ export const AssetManagementView: React.FC<AssetManagementViewProps> = ({
     name: '',
     category: 'Elektronik & Laptop' as AssetCategory,
     condition: 'Baik' as AssetCondition,
-    purchaseDate: new Date().toISOString().slice(0, 10),
+    purchaseDate: getJakartaDateString(),
     purchaseCost: 2500000,
     status: 'Tersedia' as AssetStatus,
     warrantyExpiry: '',
@@ -133,14 +138,14 @@ export const AssetManagementView: React.FC<AssetManagementViewProps> = ({
   // Form State: Assign Asset
   const [assignForm, setAssignForm] = useState({
     employeeId: employees[0]?.id || '',
-    assignDate: new Date().toISOString().slice(0, 10),
+    assignDate: getJakartaDateString(),
     condition: 'Baik' as AssetCondition,
     notes: 'Unit diserahkan dalam kondisi lengkap dan berfungsi baik.',
   });
 
   // Form State: Return Asset
   const [returnForm, setReturnForm] = useState({
-    returnDate: new Date().toISOString().slice(0, 10),
+    returnDate: getJakartaDateString(),
     condition: 'Baik' as AssetCondition,
     notes: 'Aset dikembalikan oleh karyawan dalam kondisi baik dan lengkap.',
   });
@@ -184,16 +189,18 @@ export const AssetManagementView: React.FC<AssetManagementViewProps> = ({
   // Open Create Modal
   const handleOpenCreateModal = () => {
     const nextNum = String(assets.length + 1).padStart(3, '0');
+    const todayWib = getJakartaDateString();
+    const yr = getJakartaDateParts().year;
     setAssetForm({
-      assetCode: `TGI-AST-2026-${nextNum}`,
+      assetCode: `TGI-AST-${yr}-${nextNum}`,
       serialNumber: '',
       name: '',
       category: 'Elektronik & Laptop',
       condition: 'Baik',
-      purchaseDate: new Date().toISOString().slice(0, 10),
+      purchaseDate: todayWib,
       purchaseCost: 3500000,
       status: 'Tersedia',
-      warrantyExpiry: new Date(Date.now() + 365 * 24 * 3600 * 1000).toISOString().slice(0, 10),
+      warrantyExpiry: addDaysToDateString(todayWib, 365),
       location: 'Kantor Pusat Jakarta',
       specifications: '',
       handoverConditionNotes: '',
@@ -274,7 +281,7 @@ export const AssetManagementView: React.FC<AssetManagementViewProps> = ({
     setAssigningAsset(asset);
     setAssignForm({
       employeeId: employees[0]?.id || '',
-      assignDate: new Date().toISOString().slice(0, 10),
+      assignDate: getJakartaDateString(),
       condition: asset.condition,
       notes: `Penyerahan fasilitas ${asset.name} untuk operasional kerja harian.`,
     });
@@ -303,7 +310,7 @@ export const AssetManagementView: React.FC<AssetManagementViewProps> = ({
   const handleOpenReturnModal = (asset: CompanyAsset) => {
     setReturningAsset(asset);
     setReturnForm({
-      returnDate: new Date().toISOString().slice(0, 10),
+      returnDate: getJakartaDateString(),
       condition: asset.condition,
       notes: `Pengembalian aset oleh ${asset.assignedToEmployeeName || 'karyawan'}.`,
     });

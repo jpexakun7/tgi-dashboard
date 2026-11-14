@@ -29,6 +29,8 @@ import {
   getOvertimeMinutes,
   formatOvertimeMinutes,
   calculateMinutesBetweenTimes,
+  getJakartaDateString,
+  getJakartaFullDateTimeLabel,
 } from '../utils/formatters';
 import {
   getLeaveStatusWhatsAppUrl,
@@ -67,8 +69,8 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
   // Leave Form State
   const [leaveEmpId, setLeaveEmpId] = useState(employees[0]?.id || '');
   const [leaveType, setLeaveType] = useState<LeaveRequest['type']>('Cuti Tahunan');
-  const [leaveStart, setLeaveStart] = useState(new Date().toISOString().split('T')[0]);
-  const [leaveEnd, setLeaveEnd] = useState(new Date().toISOString().split('T')[0]);
+  const [leaveStart, setLeaveStart] = useState(() => getJakartaDateString());
+  const [leaveEnd, setLeaveEnd] = useState(() => getJakartaDateString());
   const [leaveDays, setLeaveDays] = useState(1);
   const [leaveReason, setLeaveReason] = useState('');
   const [leaveAttachmentUrl, setLeaveAttachmentUrl] = useState('');
@@ -93,7 +95,7 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
 
   // Overtime Form State (Hitungan Per Menit)
   const [otEmpId, setOtEmpId] = useState(employees[0]?.id || '');
-  const [otDate, setOtDate] = useState(new Date().toISOString().split('T')[0]);
+  const [otDate, setOtDate] = useState(() => getJakartaDateString());
   const [otMinutes, setOtMinutes] = useState<number>(90);
   const [otStartTime, setOtStartTime] = useState<string>('17:30');
   const [otEndTime, setOtEndTime] = useState<string>('19:00');
@@ -135,11 +137,7 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
 
   const handleSaveLeave = (e: React.FormEvent) => {
     e.preventDefault();
-    const nowTimestamp = `${new Date().toLocaleDateString('id-ID', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
-    })} • ${new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} WIB`;
+    const nowTimestamp = getJakartaFullDateTimeLabel().compactLabel;
 
     const newReq: LeaveRequest = {
       id: `leave-${Date.now()}`,
@@ -150,7 +148,7 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
       totalDays: Number(leaveDays),
       reason: leaveReason || 'Keperluan pribadi',
       status: 'Menunggu Persetujuan',
-      appliedAt: new Date().toISOString().split('T')[0],
+      appliedAt: getJakartaDateString(),
       attachmentUrl: leaveAttachmentUrl || undefined,
       attachmentName: leaveAttachmentName || undefined,
       attachmentUploadedAt: leaveAttachmentUrl ? nowTimestamp : undefined,

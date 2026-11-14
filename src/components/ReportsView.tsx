@@ -24,23 +24,44 @@ import {
   AreaChart,
   Area,
 } from 'recharts';
-import { Employee, PayrollRecord, CompanyConfig } from '../types';
-import { formatRupiah } from '../utils/formatters';
+import { Employee, PayrollRecord, CompanyConfig, ThrPayoutRecord } from '../types';
+import { formatRupiah, getActiveEmployeeThrForPayslip } from '../utils/formatters';
+import { getSavedThrPayouts } from '../services/supabaseService';
 import { EmployeeDemographicsCharts } from './EmployeeDemographicsCharts';
 
 interface ReportsViewProps {
   employees: Employee[];
   payrolls: PayrollRecord[];
   companyConfig: CompanyConfig;
+  thrPayouts?: ThrPayoutRecord[];
 }
 
 export const ReportsView: React.FC<ReportsViewProps> = ({
   employees,
   payrolls,
   companyConfig,
+  thrPayouts,
 }) => {
   const [selectedReport, setSelectedReport] = useState<'payroll' | 'bpjs' | 'tax' | 'demografi'>('payroll');
   const [chartType, setChartType] = useState<'bar' | 'area'>('bar');
+
+  const resolvedThrPayouts = React.useMemo(
+    () => (Array.isArray(thrPayouts) && thrPayouts.length > 0 ? thrPayouts : getSavedThrPayouts()),
+    [thrPayouts]
+  );
+
+  const activeCheckedThrList = React.useMemo(
+    () =>
+      resolvedThrPayouts.filter(
+        (t) => (t.show_in_payslip === true || t.payment_status === 'Sudah Dibayar') && Number(t.total_thr_amount) > 0
+      ),
+    [resolvedThrPayouts]
+  );
+
+  const totalThrDisbursed = activeCheckedThrList.reduce(
+    (sum, t) => sum + (Number(t.total_thr_amount) || 0),
+    0
+  );
 
   const totalBase = payrolls.reduce((a, b) => a + b.baseSalary, 0);
   const totalTunjangan = payrolls.reduce(
@@ -184,6 +205,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       'Tunjangan',
       'Lembur',
       'Bonus',
+      'Tunjangan Hari Raya (THR)',
       'Gaji Bruto',
       'Potongan PPh 21',
       'Potongan BPJS',
@@ -194,6 +216,15 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       const tunj =
         p.allowancePosition + p.allowanceTransport + p.allowanceMeal + p.allowanceCommunication;
       const bpjsTotalEmp = p.bpjsKesehatanEmployee + p.bpjsJhtEmployee + p.bpjsJpEmployee;
+      const activeThr = emp
+        ? getActiveEmployeeThrForPayslip(resolvedThrPayouts, emp, p.period)
+        : null;
+      const thrVal =
+        activeThr && activeThr.show_in_payslip === true
+          ? Math.max(0, Math.round(Number(activeThr.total_thr_amount) || 0))
+          : p.thrShowInPayslip === true
+          ? Math.max(0, Math.round(Number(p.thrAmount) || 0))
+          : 0;
       return [
         p.referenceNumber,
         `"${emp?.fullName || ''}"`,
@@ -202,6 +233,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         tunj,
         p.overtimePay,
         p.bonus,
+        thrVal,
         p.totalGrossSalary,
         p.pph21TER,
         bpjsTotalEmp,
@@ -493,7 +525,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       {/* REPORT CONTENT */}
       {selectedReport === 'payroll' && (
         <div className="space-y-6">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
             <div className="bg-white p-4 rounded-2xl border border-slate-200">
               <span className="text-xs text-slate-500">Total Gaji Pokok</span>
               <h3 className="text-lg font-bold text-slate-900 mt-1">{formatRupiah(totalBase)}</h3>
@@ -506,8 +538,14 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               <span className="text-xs text-slate-500">Total Upah Lembur</span>
               <h3 className="text-lg font-bold text-slate-900 mt-1">{formatRupiah(totalLembur)}</h3>
             </div>
+            <div className="bg-white p-4 rounded-2xl border border-emerald-200 bg-emerald-50/40">
+              <span className="text-xs text-emerald-800 font-semibold">Total Pengeluaran THR</span>
+              <h3 className="text-lg font-bold text-emerald-800 mt-1">
+                {formatRupiah(totalThrDisbursed)}
+              </h3>
+            </div>
             <div className="bg-white p-4 rounded-2xl border border-slate-200">
-              <span className="text-xs text-slate-500">Gaji Bersih Dicarikan (THP)</span>
+              <span className="text-xs text-slate-500">Gaji Bersih Dicairkan (THP)</span>
               <h3 className="text-lg font-bold text-emerald-600 mt-1">{formatRupiah(totalTHP)}</h3>
             </div>
           </div>
@@ -523,6 +561,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                   <th className="p-3">Gaji Pokok</th>
                   <th className="p-3">Tunjangan</th>
                   <th className="p-3">Lembur/Bonus</th>
+                  <th className="p-3">THR (Jika Aktif)</th>
                   <th className="p-3">Potongan</th>
                   <th className="p-3 font-bold text-right">Take Home Pay</th>
                 </tr>
@@ -535,12 +574,24 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                     p.allowanceTransport +
                     p.allowanceMeal +
                     p.allowanceCommunication;
+                  const activeThr = emp
+                    ? getActiveEmployeeThrForPayslip(resolvedThrPayouts, emp, p.period)
+                    : null;
+                  const thrVal =
+                    activeThr && activeThr.show_in_payslip === true
+                      ? Math.max(0, Math.round(Number(activeThr.total_thr_amount) || 0))
+                      : p.thrShowInPayslip === true
+                      ? Math.max(0, Math.round(Number(p.thrAmount) || 0))
+                      : 0;
                   return (
                     <tr key={p.id}>
                       <td className="p-3 font-semibold text-slate-800">{emp?.fullName}</td>
                       <td className="p-3">{formatRupiah(p.baseSalary)}</td>
                       <td className="p-3">{formatRupiah(tunj)}</td>
                       <td className="p-3">{formatRupiah(p.overtimePay + p.bonus)}</td>
+                      <td className="p-3 font-semibold text-emerald-700">
+                        {thrVal > 0 ? formatRupiah(thrVal) : '-'}
+                      </td>
                       <td className="p-3 text-rose-600">({formatRupiah(p.totalDeductions)})</td>
                       <td className="p-3 font-bold text-emerald-700 text-right">
                         {formatRupiah(p.takeHomePay)}
@@ -551,6 +602,69 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               </tbody>
             </table>
           </div>
+
+          {activeCheckedThrList.length > 0 && (
+            <div className="bg-white rounded-2xl border border-emerald-200 overflow-hidden shadow-xs">
+              <div className="p-4 border-b border-emerald-100 bg-emerald-50/60 flex items-center justify-between text-xs">
+                <div>
+                  <span className="font-bold text-emerald-950 block">
+                    Laporan Pengeluaran Tunjangan Hari Raya (THR) Tercatat
+                  </span>
+                  <span className="text-[11px] text-emerald-700">
+                    Mencakup karyawan PKWTT, PKWT, dan Part-Time yang telah dicentang &amp; dicairkan oleh Admin
+                  </span>
+                </div>
+                <span className="font-extrabold text-emerald-900">
+                  Total THR: {formatRupiah(totalThrDisbursed)}
+                </span>
+              </div>
+              <table className="w-full text-xs text-left">
+                <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
+                  <tr>
+                    <th className="p-3">Karyawan</th>
+                    <th className="p-3">Status Kerja &amp; Masa Kerja</th>
+                    <th className="p-3">Hari Raya &amp; Rumus</th>
+                    <th className="p-3">Status Pembayaran</th>
+                    <th className="p-3 font-bold text-right">Nominal THR</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {activeCheckedThrList.map((t) => (
+                    <tr key={t.id}>
+                      <td className="p-3 font-semibold text-slate-800">
+                        {t.employee_name}{' '}
+                        <span className="text-[10px] text-slate-400">({t.employee_nik})</span>
+                      </td>
+                      <td className="p-3">
+                        <span className="font-semibold text-slate-700">{t.employment_type}</span> •{' '}
+                        <span className="text-slate-500">{t.tenure_label}</span>
+                      </td>
+                      <td className="p-3">
+                        <span className="font-medium text-slate-800">{t.holiday_name}</span>
+                        <span className="block text-[10px] text-slate-500">
+                          {t.proportion_formula}
+                        </span>
+                      </td>
+                      <td className="p-3">
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            t.payment_status === 'Sudah Dibayar'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : 'bg-amber-100 text-amber-800'
+                          }`}
+                        >
+                          {t.payment_status}
+                        </span>
+                      </td>
+                      <td className="p-3 font-bold text-emerald-700 text-right">
+                        {formatRupiah(t.total_thr_amount)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 

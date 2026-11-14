@@ -1,4 +1,4 @@
-import { supabase } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import {
   Employee,
   CompanyAsset,
@@ -15,6 +15,9 @@ import {
   EmployeeBonus,
   EmployeeAdjustment,
   PayrollDeductionRecord,
+  CashAdvance,
+  CompanyConfig,
+  ThrPayoutRecord,
 } from '../types';
 import {
   normalizeEmploymentType,
@@ -23,13 +26,56 @@ import {
   calculateCappedDailyWorkHours,
   STANDARD_WORK_HOURS_PER_DAY,
   getEmployeeStandardDailyHours,
+  getApprovedOvertimeHoursForEmployeeDate,
+  getJakartaDateString,
+  getJakartaYearMonth,
+  getJakartaIsoTimestamp,
+  getJakartaDateParts,
+  getCurrentRealTimePayrollPeriod,
 } from '../utils/formatters';
 import {
   sanitizeEmployeesListForStorage,
   updateEmployeePinSecure,
   sanitizeSafeText,
+  sanitizeNonNegativeAmount,
   validatePositiveIntegerAmount,
+  obfuscateSensitiveField,
+  deobfuscateSensitiveField,
+  isAdminSessionVerified,
 } from './authSecurityService';
+
+export const EMPLOYEE_SAFE_SELECT_COLUMNS =
+  'id, nik, full_name, email, google_email, phone, avatar_url, face_photo_url, ktp_number, ktp_photo_url, role, gender, department, employment_status, employment_type, join_date, shift_id, standard_daily_hours, base_salary, daily_salary, hourly_rate, overtime_rate, allowances, bank_name, bank_account_number, bank_account_holder, npwp, ptkp_status, bpjs_kesehatan_no, bpjs_ketenagakerjaan_no, remaining_leave_days, is_active, approval_status, is_host, host_commission_pct, host_commission_per_pcs, is_co_host, co_host_commission_pct, co_host_commission_per_pcs, access_pin_hash, created_at, updated_at';
+
+export const EMPLOYEE_CORE_SAFE_SELECT_COLUMNS =
+  'id, nik, full_name, email, google_email, phone, avatar_url, face_photo_url, role, gender, department, employment_status, join_date, base_salary, allowances, bank_name, bank_account_number, bank_account_holder, npwp, ptkp_status, bpjs_kesehatan_no, bpjs_ketenagakerjaan_no, remaining_leave_days, is_active, approval_status, created_at, updated_at';
+
+export interface SupabaseSyncToastPayload {
+  ok: boolean;
+  module: string;
+  message: string;
+  timestamp: string;
+}
+
+export function notifySupabaseSyncStatus(payload: {
+  ok: boolean;
+  module: string;
+  message: string;
+}): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.dispatchEvent(
+      new CustomEvent<SupabaseSyncToastPayload>('tgi_supabase_sync_toast', {
+        detail: {
+          ...payload,
+          timestamp: new Date().toISOString(),
+        },
+      })
+    );
+  } catch {
+    // ignore dispatch errors
+  }
+}
 
 const EMP_EMPLOYMENT_META_STORAGE_KEY = 'tgi_emp_employment_meta_v2';
 const PARTTIME_OVERRIDES_STORAGE_KEY = 'tgi_parttime_overrides';
@@ -374,6 +420,11 @@ export interface SupabaseSyncStatus {
     leave_requests: boolean;
     overtime_requests: boolean;
     reimbursements: boolean;
+    tgi_employee_bonuses?: boolean;
+    employee_adjustments?: boolean;
+    payroll_deductions?: boolean;
+    cash_advances?: boolean;
+    company_settings?: boolean;
   };
 }
 
@@ -432,7 +483,7 @@ export function employeeToDb(emp: Employee) {
     gender: emp.gender || 'Laki-laki',
     department: emp.department || 'Operasional',
     employment_status: resolvedEmploymentStatus,
-    join_date: emp.joinDate || new Date().toISOString().split('T')[0],
+    join_date: emp.joinDate || getJakartaDateString(),
     base_salary: Number(emp.baseSalary) || resolvedDailySalary * 25,
     allowances: {
       position: Number(rawAllowances.position) || 0,
@@ -513,6 +564,13 @@ export function employeeToDb(emp: Employee) {
 
 export function dbToEmployee(row: any): Employee {
   const rawAllowances = row.allowances || {};
+  // Strip any legacy plaintext PIN immediately so it never enters React state or DevTools
+  const hasConfiguredPin = Boolean(
+    row.access_pin_hash || row.access_pin || rawAllowances._hasConfiguredPin || rawAllowances._accessPin
+  );
+  delete row.access_pin;
+  delete rawAllowances._accessPin;
+
   if (Array.isArray(rawAllowances._workShifts) && rawAllowances._workShifts.length > 0) {
     try {
       const rawCfg = localStorage.getItem('tgi_company_config');
@@ -523,10 +581,6 @@ export function dbToEmployee(row: any): Employee {
       // ignore
     }
   }
-  // Jangan ekspos PIN plaintext ke state React / DevTools; hanya tandai status terkonfigurasi
-  const hasConfiguredPin = Boolean(
-    row.access_pin_hash || row.access_pin || rawAllowances._hasConfiguredPin || rawAllowances._accessPin
-  );
 
   const localMeta = getEmployeeEmploymentMetaLocal(row.id, row.nik);
   const allowanceEmpType = normalizeEmploymentType(
@@ -536,23 +590,24 @@ export function dbToEmployee(row: any): Employee {
     row.employment_type ?? row.employmentType ?? row.employment_status ?? row.status
   );
 
-  // JANGAN menimpa employment_type kembali menjadi 'Full-Time' atau status ke 'PKWT' jika di local state / allowances / DB nilainya sudah 'Part-Time'
-  const isLockedPartTime =
-    localMeta?.employmentType === 'Part-Time' ||
-    localMeta?.status === 'Part-Time' ||
-    allowanceEmpType === 'Part-Time' ||
-    rowEmpType === 'Part-Time';
+  // Cloud-First: Utamakan status dari Supabase (row / rawAllowances) agar pembaruan antar-perangkat langsung sinkron
+  const cloudHasExplicitType = Boolean(allowanceEmpType || rowEmpType);
+  const isPartTimeResolved = cloudHasExplicitType
+    ? allowanceEmpType === 'Part-Time' || rowEmpType === 'Part-Time'
+    : localMeta?.employmentType === 'Part-Time' || localMeta?.status === 'Part-Time';
 
-  const resolvedEmploymentType: EmploymentType = isLockedPartTime
+  const resolvedEmploymentType: EmploymentType = isPartTimeResolved
     ? 'Part-Time'
-    : localMeta?.employmentType ||
-      allowanceEmpType ||
+    : allowanceEmpType ||
       rowEmpType ||
+      localMeta?.employmentType ||
       (row.employment_status === 'PKWTT (Tetap)' ? 'Full-Time' : 'Contract');
 
-  const resolvedEmploymentStatus = isLockedPartTime
+  const resolvedEmploymentStatus = isPartTimeResolved
     ? 'Part-Time'
-    : (row.employment_status as any) || 'PKWT (Kontrak)';
+    : (rawAllowances._employmentStatus as any) ||
+      (row.employment_status as any) ||
+      'PKWT (Kontrak)';
 
   const standardDailyHours =
     Number(
@@ -659,7 +714,7 @@ export function dbToEmployee(row: any): Employee {
     status: resolvedEmploymentStatus,
     employmentType: resolvedEmploymentType,
     employment_type: resolvedEmploymentType,
-    joinDate: row.join_date || new Date().toISOString().split('T')[0],
+    joinDate: row.join_date || getJakartaDateString(),
     baseSalary: baseSalary || dailySalary * 25,
     hourlyRate,
     hourly_rate: hourlyRate,
@@ -801,8 +856,31 @@ export function dbToPayroll(row: any): PayrollRecord {
 }
 
 export async function checkSupabaseStatus(): Promise<SupabaseSyncStatus> {
+  if (!isSupabaseConfigured()) {
+    return {
+      isConnected: false,
+      isTablesCreated: false,
+      statusText: 'Mode Offline / Lokal',
+      lastSyncTime: null,
+      error: 'Variabel VITE_SUPABASE_URL atau VITE_SUPABASE_ANON_KEY belum dikonfigurasi.',
+    };
+  }
+
   try {
-    const [empRes, astRes, payRes, attRes, lveRes, ovtRes, rmbRes] = await Promise.all([
+    const [
+      empRes,
+      astRes,
+      payRes,
+      attRes,
+      lveRes,
+      ovtRes,
+      rmbRes,
+      bonRes,
+      adjRes,
+      dedRes,
+      caRes,
+      cfgRes,
+    ] = await Promise.all([
       supabase.from('employees').select('id', { count: 'exact', head: true }),
       supabase.from('company_assets').select('id', { count: 'exact', head: true }),
       supabase.from('payrolls').select('id', { count: 'exact', head: true }),
@@ -810,6 +888,11 @@ export async function checkSupabaseStatus(): Promise<SupabaseSyncStatus> {
       supabase.from('leave_requests').select('id', { count: 'exact', head: true }),
       supabase.from('overtime_requests').select('id', { count: 'exact', head: true }),
       supabase.from('reimbursements').select('id', { count: 'exact', head: true }),
+      supabase.from('tgi_employee_bonuses').select('id', { count: 'exact', head: true }),
+      supabase.from('employee_adjustments').select('id', { count: 'exact', head: true }),
+      supabase.from('payroll_deductions').select('id', { count: 'exact', head: true }),
+      supabase.from('cash_advances').select('id', { count: 'exact', head: true }),
+      supabase.from('company_settings').select('id', { count: 'exact', head: true }),
     ]);
 
     const isConnectionError =
@@ -822,7 +905,7 @@ export async function checkSupabaseStatus(): Promise<SupabaseSyncStatus> {
       return {
         isConnected: false,
         isTablesCreated: false,
-        statusText: 'Gagal Menghubungi Supabase',
+        statusText: 'Mode Offline / Lokal',
         lastSyncTime: null,
         error: empRes.error?.message,
       };
@@ -836,6 +919,11 @@ export async function checkSupabaseStatus(): Promise<SupabaseSyncStatus> {
       leave_requests: !lveRes.error,
       overtime_requests: !ovtRes.error,
       reimbursements: !rmbRes.error,
+      tgi_employee_bonuses: !bonRes.error,
+      employee_adjustments: !adjRes.error,
+      payroll_deductions: !dedRes.error,
+      cash_advances: !caRes.error,
+      company_settings: !cfgRes.error,
     };
 
     const isCoreCreated = tableDetails.employees;
@@ -844,20 +932,20 @@ export async function checkSupabaseStatus(): Promise<SupabaseSyncStatus> {
     return {
       isConnected: true,
       isTablesCreated: isCoreCreated,
-      statusText: allTablesCreated
-        ? 'Terhubung & 7 Tabel Aktif Sinkronisasi Real-time'
-        : 'Terhubung ke Supabase (Sebagian Tabel Belum Dibuat)',
+      statusText: isCoreCreated
+        ? 'Supabase Cloud (Sinkron Antar-Perangkat)'
+        : 'Terhubung ke Supabase (Perlu Jalankan SQL Schema)',
       lastSyncTime: new Date(),
       error: allTablesCreated
         ? null
-        : 'Tabel Presensi, Cuti, Lembur, atau Reimbursement belum dibuat. Jalankan skrip SQL tambahan.',
+        : 'Beberapa tabel modul tambahan belum dibuat di Supabase. Klik untuk menyalin & menjalankan Skrip SQL Lengkap.',
       tableDetails,
     };
   } catch (err: any) {
     return {
       isConnected: false,
       isTablesCreated: false,
-      statusText: 'Offline / Menggunakan Local Storage',
+      statusText: 'Mode Offline / Lokal',
       lastSyncTime: null,
       error: err?.message || 'Koneksi gagal',
     };
@@ -1152,7 +1240,10 @@ export async function syncEmployeeLiveColumnsToSupabase(emp: Employee): Promise<
 export async function fetchEmployeesFromSupabase(): Promise<Employee[] | null> {
   try {
     const [empRes, tgiEmpRes, liveSessionsRes] = await Promise.allSettled([
-      supabase.from('employees').select('*').order('created_at', { ascending: false }),
+      supabase
+        .from('employees')
+        .select(EMPLOYEE_SAFE_SELECT_COLUMNS)
+        .order('created_at', { ascending: false }),
       supabase.from('tgi_employees').select('*'),
       supabase
         .from('tgi_livestream_sessions')
@@ -1160,12 +1251,20 @@ export async function fetchEmployeesFromSupabase(): Promise<Employee[] | null> {
         .order('session_date', { ascending: false }),
     ]);
 
-    if (
-      empRes.status !== 'fulfilled' ||
-      empRes.value.error ||
-      !empRes.value.data
-    ) {
-      return null;
+    let empRowsData: any[] | null =
+      empRes.status === 'fulfilled' && !empRes.value.error && Array.isArray(empRes.value.data)
+        ? empRes.value.data
+        : null;
+
+    if (!empRowsData) {
+      const fallbackEmpRes = await supabase
+        .from('employees')
+        .select(EMPLOYEE_CORE_SAFE_SELECT_COLUMNS)
+        .order('created_at', { ascending: false });
+      if (fallbackEmpRes.error || !Array.isArray(fallbackEmpRes.data)) {
+        return null;
+      }
+      empRowsData = fallbackEmpRes.data;
     }
 
     const tgiEmpMap = new Map<string, any>();
@@ -1208,7 +1307,7 @@ export async function fetchEmployeesFromSupabase(): Promise<Employee[] | null> {
     }
 
     const deletedIds = new Set(getDeletedEmployeeIds());
-    const allMapped = empRes.value.data.map((row: any) => {
+    const allMapped = empRowsData.map((row: any) => {
       const tgiRow =
         tgiEmpMap.get(String(row.id)) ||
         (row.nik ? tgiEmpByNik.get(String(row.nik).trim().toLowerCase()) : undefined) ||
@@ -1241,16 +1340,14 @@ export async function fetchEmployeesFromSupabase(): Promise<Employee[] | null> {
       }
     }
 
-    const filteredEmps = applyPartTimeOverridesToEmployees(
-      allMapped.filter((emp) => !deletedIds.has(emp.id))
-    );
+    // Cloud-First: Data dari Supabase menimpa cache lokal agar seluruh perangkat melihat data yang 100% identik
+    const filteredEmps = allMapped.filter((emp) => !deletedIds.has(emp.id));
     try {
-      if (filteredEmps.length > 0) {
-        localStorage.setItem(
-          'tgi_employees_data',
-          JSON.stringify(sanitizeEmployeesListForStorage(filteredEmps))
-        );
-      }
+      filteredEmps.forEach((emp) => saveEmployeeEmploymentMetaLocal(emp));
+      localStorage.setItem(
+        'tgi_employees_data',
+        JSON.stringify(sanitizeEmployeesListForStorage(filteredEmps))
+      );
     } catch {
       // ignore storage errors
     }
@@ -1265,15 +1362,29 @@ export async function insertEmployeeToSupabase(emp: Employee): Promise<boolean> 
     removeDeletedEmployeeId(emp.id);
     markEmployeesModified();
     const row = employeeToDb(emp);
-    const { error } = await supabase.from('employees').insert([row]);
+    const { error } = await supabase.from('employees').upsert([row], { onConflict: 'id' });
     if (error) {
       console.warn('Supabase insert employee error (fallback to local):', error.message);
+      if (isSupabaseConfigured()) {
+        notifySupabaseSyncStatus({
+          ok: false,
+          module: 'Data Karyawan',
+          message: `Gagal menyimpan karyawan ${emp.fullName} ke Supabase Cloud: ${error.message}`,
+        });
+      }
       return false;
     }
     syncEmployeeLiveColumnsToSupabase(emp).catch(() => {});
     return true;
-  } catch (err) {
+  } catch (err: any) {
     console.warn('Supabase insert employee error:', err);
+    if (isSupabaseConfigured()) {
+      notifySupabaseSyncStatus({
+        ok: false,
+        module: 'Data Karyawan',
+        message: `Gagal menyimpan karyawan ke Supabase Cloud: ${err?.message || 'Gangguan jaringan'}`,
+      });
+    }
     return false;
   }
 }
@@ -1282,15 +1393,29 @@ export async function updateEmployeeInSupabase(emp: Employee): Promise<boolean> 
   try {
     markEmployeesModified();
     const row = employeeToDb(emp);
-    const { error } = await supabase.from('employees').update(row).eq('id', emp.id);
+    const { error } = await supabase.from('employees').upsert(row, { onConflict: 'id' });
     syncEmployeeLiveColumnsToSupabase(emp).catch(() => {});
     if (error) {
       console.warn('Supabase update employee error:', error.message);
+      if (isSupabaseConfigured()) {
+        notifySupabaseSyncStatus({
+          ok: false,
+          module: 'Data Karyawan',
+          message: `Gagal memperbarui data ${emp.fullName} di Supabase Cloud: ${error.message}`,
+        });
+      }
       return false;
     }
     return true;
-  } catch (err) {
+  } catch (err: any) {
     console.warn('Supabase update employee error:', err);
+    if (isSupabaseConfigured()) {
+      notifySupabaseSyncStatus({
+        ok: false,
+        module: 'Data Karyawan',
+        message: `Gagal memperbarui data karyawan di Supabase Cloud: ${err?.message || 'Gangguan jaringan'}`,
+      });
+    }
     return false;
   }
 }
@@ -1424,13 +1549,60 @@ export async function upsertPayrollToSupabase(record: PayrollRecord): Promise<bo
 // -----------------------------------------------------------------------------
 // ATTENDANCES (Presensi)
 // -----------------------------------------------------------------------------
+export function getEmployeeTargetDailyHoursLocal(
+  employeeId?: string | null,
+  nik?: string | null
+): number {
+  if (typeof window === 'undefined') return STANDARD_WORK_HOURS_PER_DAY;
+  const cleanId = String(employeeId || '').trim();
+  const cleanNik = String(nik || '').trim().toLowerCase();
+  try {
+    const rawOverrides = localStorage.getItem(PARTTIME_OVERRIDES_STORAGE_KEY);
+    const overrides: Record<string, any> = rawOverrides ? JSON.parse(rawOverrides) : {};
+    const metaMap = getSavedEmploymentMetaMap();
+    const idMeta = cleanId ? overrides[cleanId] || metaMap[cleanId] : undefined;
+    if (idMeta?.standard_daily_hours || idMeta?.standardDailyHours) {
+      const h = Number(idMeta.standard_daily_hours ?? idMeta.standardDailyHours);
+      if (!isNaN(h) && h > 0 && h <= 24) return Number(h.toFixed(2));
+    }
+    const nikMeta = cleanNik ? overrides[`nik:${cleanNik}`] || metaMap[`nik:${cleanNik}`] : undefined;
+    if (nikMeta?.standard_daily_hours || nikMeta?.standardDailyHours) {
+      const h = Number(nikMeta.standard_daily_hours ?? nikMeta.standardDailyHours);
+      if (!isNaN(h) && h > 0 && h <= 24) return Number(h.toFixed(2));
+    }
+    const rawEmps = localStorage.getItem('tgi_employees_data');
+    if (rawEmps) {
+      const parsed = JSON.parse(rawEmps);
+      if (Array.isArray(parsed)) {
+        const matched = parsed.find(
+          (e: any) =>
+            (cleanId && String(e?.id || '').trim() === cleanId) ||
+            (cleanNik && String(e?.nik || '').trim().toLowerCase() === cleanNik)
+        );
+        if (matched) {
+          return getEmployeeStandardDailyHours(matched);
+        }
+      }
+    }
+  } catch {
+    // ignore storage errors
+  }
+  return STANDARD_WORK_HOURS_PER_DAY;
+}
+
 export function attendanceToDb(att: AttendanceRecord) {
-  const computedWorkHours = calculateCappedDailyWorkHours(
+  const empStdHours = getEmployeeTargetDailyHoursLocal(att.employeeId);
+  const approvedOtHours = getApprovedOvertimeHoursForEmployeeDate(att.employeeId, att.date);
+  const cappedRes = calculateCappedDailyWorkHours(
     att.checkIn,
     att.checkOut,
     att.workHours,
-    STANDARD_WORK_HOURS_PER_DAY
-  ).cappedWorkHours;
+    empStdHours,
+    approvedOtHours,
+    att.date
+  );
+  const photoInVal = att.facePhotoSnapshot || att.photoIn || null;
+  const photoOutVal = att.checkOutPhotoSnapshot || att.facePhotoOut || att.photoOut || null;
 
   return {
     id: att.id,
@@ -1439,45 +1611,76 @@ export function attendanceToDb(att: AttendanceRecord) {
     check_in: att.checkIn || '',
     check_out: att.checkOut || '',
     status: att.status || 'Hadir Tepat Waktu',
-    work_hours: computedWorkHours,
+    work_hours: cappedRes.cappedWorkHours,
+    overtime_hours: cappedRes.overtimeHours,
     late_minutes: Number(att.lateMinutes) || 0,
     notes: att.notes || null,
     face_scan_verified: att.faceScanVerified ?? false,
     face_confidence: Number(att.faceConfidence) || 0,
-    face_photo_snapshot: att.facePhotoSnapshot || null,
+    face_photo_snapshot: photoInVal,
+    photo_in: photoInVal,
+    check_out_photo_snapshot: photoOutVal,
+    photo_out: photoOutVal,
+    face_photo_out: photoOutVal,
     location_coords: att.locationCoords || null,
     location_address: att.locationAddress || null,
+    check_out_location_coords: att.checkOutLocationCoords || null,
+    check_out_location_address: att.checkOutLocationAddress || null,
     is_in_office_radius: att.isInOfficeRadius ?? true,
     distance_meters: Number(att.distanceMeters) || 0,
+    check_out_distance_meters:
+      att.checkOutDistanceMeters !== undefined
+        ? Number(att.checkOutDistanceMeters) || 0
+        : Number(att.distanceMeters) || 0,
     updated_at: new Date().toISOString(),
   };
 }
 
 export function dbToAttendance(row: any): AttendanceRecord {
-  const checkInStr = row.check_in || '';
-  const checkOutStr = row.check_out || '';
-  const computedWorkHours = calculateCappedDailyWorkHours(
+  const checkInStr = row.check_in || row.clock_in || '';
+  const checkOutStr = row.check_out || row.clock_out || '';
+  const empId = String(row.employee_id || '');
+  const dateStr = String(row.date || '');
+  const empStdHours = getEmployeeTargetDailyHoursLocal(empId);
+  const approvedOtHours = getApprovedOvertimeHoursForEmployeeDate(empId, dateStr);
+  const cappedRes = calculateCappedDailyWorkHours(
     checkInStr,
     checkOutStr,
-    row.work_hours,
-    STANDARD_WORK_HOURS_PER_DAY
-  ).cappedWorkHours;
+    row.work_hours ?? row.total_hours,
+    empStdHours,
+    approvedOtHours,
+    dateStr
+  );
+  const photoInVal = row.face_photo_snapshot || row.photo_in || undefined;
+  const photoOutVal =
+    row.check_out_photo_snapshot || row.face_photo_out || row.photo_out || undefined;
 
   return {
     id: row.id,
-    employeeId: row.employee_id,
-    date: row.date,
+    employeeId: empId,
+    date: dateStr,
     checkIn: checkInStr,
     checkOut: checkOutStr,
     status: row.status || 'Hadir Tepat Waktu',
-    workHours: computedWorkHours,
+    workHours: cappedRes.cappedWorkHours,
+    overtimeHours: cappedRes.overtimeHours,
     lateMinutes: Number(row.late_minutes) || 0,
     notes: row.notes || undefined,
-    faceScanVerified: Boolean(row.face_scan_verified),
+    faceScanVerified: Boolean(row.face_scan_verified ?? Boolean(photoInVal)),
     faceConfidence: Number(row.face_confidence) || 0,
-    facePhotoSnapshot: row.face_photo_snapshot || undefined,
+    facePhotoSnapshot: photoInVal,
+    photoIn: photoInVal,
+    checkOutPhotoSnapshot: photoOutVal,
+    photoOut: photoOutVal,
+    facePhotoOut: photoOutVal,
     locationCoords: row.location_coords || undefined,
     locationAddress: row.location_address || undefined,
+    checkOutLocationCoords: row.check_out_location_coords || undefined,
+    checkOutLocationAddress: row.check_out_location_address || undefined,
+    checkOutDistanceMeters:
+      row.check_out_distance_meters !== undefined && row.check_out_distance_meters !== null
+        ? Number(row.check_out_distance_meters) || 0
+        : undefined,
     isInOfficeRadius: row.is_in_office_radius ?? true,
     distanceMeters: Number(row.distance_meters) || 0,
   };
@@ -1543,16 +1746,135 @@ export async function fetchAttendancesFromSupabase(): Promise<AttendanceRecord[]
 
 export async function upsertAttendanceToSupabase(att: AttendanceRecord): Promise<boolean> {
   try {
+    const isNonPresentStatus = ['Sakit', 'Izin', 'Cuti', 'Alpa'].includes(att.status);
+    const isAdminAction = Boolean(att.isManualStatus || isAdminSessionVerified());
+
+    // Validasi ketat untuk presensi Portal Karyawan (Clock-In & Clock-Out):
+    // 1. Wajib is_in_office_radius === true
+    // 2. Wajib face_scan_verified === true & bukti foto selfie Clock-In (dan foto selfie Clock-Out saat Check-Out)
+    if (!isNonPresentStatus && !isAdminAction) {
+      if (att.isInOfficeRadius === false) {
+        notifySupabaseSyncStatus({
+          ok: false,
+          module: 'Presensi / Absensi',
+          message:
+            'Presensi ditolak: Anda berada di luar radius titik koordinat kantor/gudang (is_in_office_radius = false).',
+        });
+        return false;
+      }
+
+      const photoInProof = (att.facePhotoSnapshot || att.photoIn || '').trim();
+      if (!att.faceScanVerified || photoInProof.length < 20) {
+        notifySupabaseSyncStatus({
+          ok: false,
+          module: 'Presensi / Absensi',
+          message:
+            'Presensi Clock-In ditolak: Wajib mengambil foto selfie wajah secara langsung (face_scan_verified = true).',
+        });
+        return false;
+      }
+
+      const hasClockOut = Boolean(
+        att.checkOut && att.checkOut.trim() !== '' && att.checkOut.trim() !== '-'
+      );
+      if (hasClockOut) {
+        const photoOutProof = (
+          att.checkOutPhotoSnapshot ||
+          att.facePhotoOut ||
+          att.photoOut ||
+          ''
+        ).trim();
+        if (photoOutProof.length < 20) {
+          notifySupabaseSyncStatus({
+            ok: false,
+            module: 'Presensi / Absensi',
+            message:
+              'Presensi Clock-Out ditolak: Wajib mengambil foto selfie wajah secara langsung saat Clock-Out.',
+          });
+          return false;
+        }
+      }
+    }
+
     removeDeletedAttendanceKey(att.id, att.employeeId, att.date);
     const row = attendanceToDb(att);
-    const { error } = await supabase.from('attendances').upsert(row, { onConflict: 'id' });
+    let { error } = await supabase.from('attendances').upsert(row, { onConflict: 'id' });
+
+    // Fallback jika tabel attendances di Supabase belum menjalankan migrasi kolom baru
+    if (error && error.message?.includes('column')) {
+      const legacyRow = {
+        id: row.id,
+        employee_id: row.employee_id,
+        date: row.date,
+        check_in: row.check_in,
+        check_out: row.check_out,
+        status: row.status,
+        work_hours: row.work_hours,
+        late_minutes: row.late_minutes,
+        notes: row.notes,
+        face_scan_verified: row.face_scan_verified,
+        face_confidence: row.face_confidence,
+        face_photo_snapshot: row.face_photo_snapshot,
+        location_coords: row.location_coords,
+        location_address: row.location_address,
+        is_in_office_radius: row.is_in_office_radius,
+        distance_meters: row.distance_meters,
+        updated_at: row.updated_at,
+      };
+      const retry = await supabase.from('attendances').upsert(legacyRow, { onConflict: 'id' });
+      error = retry.error;
+    }
+
+    // Sinkronkan juga ke tabel attendance_logs (lengkap dengan photo_in, photo_out, face_photo_out, is_in_office_radius, distance_meters)
+    try {
+      const logRow = {
+        id: row.id,
+        employee_id: row.employee_id,
+        date: row.date,
+        clock_in: row.check_in,
+        clock_out: row.check_out,
+        total_hours: row.work_hours,
+        overtime_hours: row.overtime_hours,
+        status: row.status,
+        late_minutes: row.late_minutes,
+        photo_in: row.photo_in,
+        photo_out: row.photo_out,
+        face_photo_out: row.face_photo_out,
+        face_scan_verified: row.face_scan_verified,
+        is_in_office_radius: row.is_in_office_radius,
+        location_lat: row.location_coords?.latitude ?? null,
+        location_lng: row.location_coords?.longitude ?? null,
+        distance_meters: row.distance_meters,
+        check_out_distance_meters: row.check_out_distance_meters,
+        notes: row.notes,
+        updated_at: row.updated_at,
+      };
+      await supabase.from('attendance_logs').upsert(logRow, { onConflict: 'id' });
+    } catch {
+      // ignore if attendance_logs table has different schema
+    }
+
     if (error) {
       console.warn('Supabase upsert attendance error:', error.message);
+      if (isSupabaseConfigured()) {
+        notifySupabaseSyncStatus({
+          ok: false,
+          module: 'Presensi / Absensi',
+          message: `Gagal menyimpan presensi ke Supabase Cloud: ${error.message}`,
+        });
+      }
       return false;
     }
     return true;
-  } catch (err) {
+  } catch (err: any) {
     console.warn('Supabase upsert attendance error:', err);
+    if (isSupabaseConfigured()) {
+      notifySupabaseSyncStatus({
+        ok: false,
+        module: 'Presensi / Absensi',
+        message: `Gagal menyimpan presensi ke Supabase Cloud: ${err?.message || 'Gangguan jaringan'}`,
+      });
+    }
     return false;
   }
 }
@@ -1924,7 +2246,7 @@ export async function fetchEmployeeByIdFromSupabase(employeeId: string): Promise
   if (!employeeId) return null;
   try {
     const [empRes, tgiEmpRes, sessionsRes] = await Promise.allSettled([
-      supabase.from('employees').select('*').eq('id', employeeId).single(),
+      supabase.from('employees').select(EMPLOYEE_SAFE_SELECT_COLUMNS).eq('id', employeeId).single(),
       supabase.from('tgi_employees').select('*').eq('id', employeeId).single(),
       supabase
         .from('tgi_livestream_sessions')
@@ -1933,8 +2255,16 @@ export async function fetchEmployeeByIdFromSupabase(employeeId: string): Promise
         .order('session_date', { ascending: false }),
     ]);
 
-    const empRow =
+    let empRow: any =
       empRes.status === 'fulfilled' && !empRes.value.error ? empRes.value.data : null;
+    if (!empRow) {
+      const fb = await supabase
+        .from('employees')
+        .select(EMPLOYEE_CORE_SAFE_SELECT_COLUMNS)
+        .eq('id', employeeId)
+        .single();
+      if (!fb.error && fb.data) empRow = fb.data;
+    }
     const tgiRow =
       tgiEmpRes.status === 'fulfilled' && !tgiEmpRes.value.error ? tgiEmpRes.value.data : null;
 
@@ -2036,13 +2366,13 @@ export function livestreamSessionToDb(rec: LiveStreamSalesRecord) {
     employee_name: rec.employeeName || rec.employee_name || '',
     role_type: roleType,
     platform: rec.platform || 'TikTok Shop Live',
-    session_date: rec.date || rec.session_date || new Date().toISOString().split('T')[0],
+    session_date: rec.date || rec.session_date || getJakartaDateString(),
     omset: omsetVal,
     pcs_sold: pcsVal,
     commission_pct_used: pctVal,
     commission_per_pcs_used: perPcsVal,
     total_commission: totalCommVal,
-    period: rec.period || 'Maret 2026',
+    period: rec.period || getCurrentRealTimePayrollPeriod(),
     notes: rec.notes || rec.sessionTitle || null,
   };
 
@@ -2070,7 +2400,7 @@ export function dbToLivestreamSession(row: any): LiveStreamSalesRecord {
       ? row.session_date.slice(0, 10)
       : typeof row.date === 'string'
       ? row.date.slice(0, 10)
-      : new Date().toISOString().split('T')[0];
+      : getJakartaDateString();
 
   return {
     id: String(row.id || generateSessionUuid()),
@@ -2080,7 +2410,7 @@ export function dbToLivestreamSession(row: any): LiveStreamSalesRecord {
     employee_name: row.employee_name || '',
     date: dateStr,
     session_date: dateStr,
-    period: row.period || 'Maret 2026',
+    period: row.period || getCurrentRealTimePayrollPeriod(),
     platform: (row.platform as LiveStreamPlatform) || 'TikTok Shop Live',
     sessionRole,
     role_type: roleType,
@@ -2265,7 +2595,13 @@ export function getSavedPartTimePayouts(): PartTimeWeeklyPayout[] {
     const raw = localStorage.getItem(PART_TIME_PAYOUTS_STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((item: any) => ({
+      ...item,
+      bankAccountNumber: item?.bankAccountNumber
+        ? deobfuscateSensitiveField(String(item.bankAccountNumber))
+        : item?.bankAccountNumber,
+    }));
   } catch {
     return [];
   }
@@ -2273,7 +2609,13 @@ export function getSavedPartTimePayouts(): PartTimeWeeklyPayout[] {
 
 export function savePartTimePayoutsLocal(payouts: PartTimeWeeklyPayout[]): void {
   try {
-    localStorage.setItem(PART_TIME_PAYOUTS_STORAGE_KEY, JSON.stringify(payouts));
+    const sanitized = (Array.isArray(payouts) ? payouts : []).map((item) => ({
+      ...item,
+      bankAccountNumber: item?.bankAccountNumber
+        ? obfuscateSensitiveField(String(item.bankAccountNumber))
+        : item?.bankAccountNumber,
+    }));
+    localStorage.setItem(PART_TIME_PAYOUTS_STORAGE_KEY, JSON.stringify(sanitized));
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('tgi_part_time_updated'));
     }
@@ -2287,39 +2629,51 @@ export function partTimeLogToDb(log: PartTimeWorkLog) {
   const clockOut = log.clockOut || log.clock_out || '';
   const hasIn = Boolean(clockIn && clockIn.trim() !== '' && clockIn !== '-');
   const hasOut = Boolean(clockOut && clockOut.trim() !== '' && clockOut !== '-');
+  const empId = String(log.employeeId || log.employee_id || '');
+  const empNik = String(log.employeeNik || '');
+  const workDate = String(log.date || log.work_date || getJakartaDateString());
+  const empStdHours = getEmployeeTargetDailyHoursLocal(empId, empNik);
+  const approvedOtHours = getApprovedOvertimeHoursForEmployeeDate(empId, workDate);
 
   let normalHrs = 0;
   let otHrs = 0;
   let totalHrs = 0;
 
   if (hasIn && (!hasOut || clockIn.trim() === clockOut.trim())) {
-    // Jika clock_out belum diisi (baru Clock-In) atau sama dengan clock_in, actualHours = 0 dan daily_wage = 0
-    normalHrs = 0;
+    const cappedMissing = calculateCappedDailyWorkHours(
+      clockIn,
+      clockOut,
+      0,
+      empStdHours,
+      approvedOtHours,
+      workDate
+    );
+    normalHrs = cappedMissing.cappedWorkHours;
     otHrs = 0;
-    totalHrs = 0;
+    totalHrs = normalHrs;
   } else if (hasIn && hasOut) {
     const cappedRes = calculateCappedDailyWorkHours(
       clockIn,
       clockOut,
       0,
-      STANDARD_WORK_HOURS_PER_DAY
+      empStdHours,
+      approvedOtHours,
+      workDate
     );
     normalHrs = cappedRes.cappedWorkHours;
-    otHrs = Math.max(0, Number(log.overtimeHours ?? log.overtime_hours) || 0);
+    otHrs = cappedRes.overtimeHours;
     totalHrs = Number((normalHrs + otHrs).toFixed(2));
   } else {
     const hrs = Math.max(0, Number(log.hoursWorked ?? log.hours_worked) || 0);
     normalHrs =
       log.normalHours !== undefined || log.normal_hours !== undefined
-        ? Math.min(
-            STANDARD_WORK_HOURS_PER_DAY,
-            Math.max(0, Number(log.normalHours ?? log.normal_hours) || 0)
-          )
-        : Math.min(STANDARD_WORK_HOURS_PER_DAY, hrs);
-    otHrs =
+        ? Math.min(empStdHours, Math.max(0, Number(log.normalHours ?? log.normal_hours) || 0))
+        : Math.min(empStdHours, hrs);
+    const rawOt =
       log.overtimeHours !== undefined || log.overtime_hours !== undefined
         ? Math.max(0, Number(log.overtimeHours ?? log.overtime_hours) || 0)
         : 0;
+    otHrs = approvedOtHours > 0 ? Number(Math.min(rawOt || approvedOtHours, approvedOtHours).toFixed(2)) : 0;
     totalHrs = Number((normalHrs + otHrs).toFixed(2));
   }
 
@@ -2333,11 +2687,11 @@ export function partTimeLogToDb(log: PartTimeWorkLog) {
   const wage = Math.round(normalHrs * rate + otHrs * otRate);
 
   const payload: Record<string, any> = {
-    employee_id: log.employeeId || log.employee_id || '',
+    employee_id: empId,
     employee_name: log.employeeName || log.employee_name || '',
     employee_nik: log.employeeNik || null,
     department: log.department || 'Operasional',
-    work_date: log.date || log.work_date || new Date().toISOString().split('T')[0],
+    work_date: workDate,
     clock_in: clockIn || null,
     clock_out: clockOut || null,
     normal_hours: normalHrs,
@@ -2365,38 +2719,56 @@ export function dbToPartTimeLog(row: any): PartTimeWorkLog {
   const clockOut = row?.clock_out || row?.clockOut || '';
   const hasIn = Boolean(clockIn && String(clockIn).trim() !== '' && clockIn !== '-');
   const hasOut = Boolean(clockOut && String(clockOut).trim() !== '' && clockOut !== '-');
+  const empId = String(row?.employee_id || row?.employeeId || '');
+  const empNik = String(row?.employee_nik || row?.employeeNik || '');
+  const dateStr =
+    typeof row?.work_date === 'string'
+      ? row.work_date.slice(0, 10)
+      : typeof row?.date === 'string'
+      ? row.date.slice(0, 10)
+      : getJakartaDateString();
+  const empStdHours = getEmployeeTargetDailyHoursLocal(empId, empNik);
+  const approvedOtHours = getApprovedOvertimeHoursForEmployeeDate(empId, dateStr);
 
   let normalHrs = 0;
   let otHrs = 0;
   let totalHrs = 0;
 
   if (hasIn && (!hasOut || String(clockIn).trim() === String(clockOut).trim())) {
-    normalHrs = 0;
+    const cappedMissing = calculateCappedDailyWorkHours(
+      String(clockIn),
+      String(clockOut),
+      0,
+      empStdHours,
+      approvedOtHours,
+      dateStr
+    );
+    normalHrs = cappedMissing.cappedWorkHours;
     otHrs = 0;
-    totalHrs = 0;
+    totalHrs = normalHrs;
   } else if (hasIn && hasOut) {
     const cappedRes = calculateCappedDailyWorkHours(
       String(clockIn),
       String(clockOut),
       0,
-      STANDARD_WORK_HOURS_PER_DAY
+      empStdHours,
+      approvedOtHours,
+      dateStr
     );
     normalHrs = cappedRes.cappedWorkHours;
-    otHrs = Math.max(0, Number(row?.overtime_hours ?? row?.overtimeHours) || 0);
+    otHrs = cappedRes.overtimeHours;
     totalHrs = Number((normalHrs + otHrs).toFixed(2));
   } else {
-    const hrs = Math.max(0, Number(row?.hours_worked ?? row?.hoursWorked) || 0);
+    const hrs = Math.max(0, Number(row?.hours_worked ?? row?.hoursWorked ?? row?.total_hours) || 0);
     normalHrs =
       row?.normal_hours !== undefined || row?.normalHours !== undefined
-        ? Math.min(
-            STANDARD_WORK_HOURS_PER_DAY,
-            Math.max(0, Number(row?.normal_hours ?? row?.normalHours) || 0)
-          )
-        : Math.min(STANDARD_WORK_HOURS_PER_DAY, hrs);
-    otHrs =
+        ? Math.min(empStdHours, Math.max(0, Number(row?.normal_hours ?? row?.normalHours) || 0))
+        : Math.min(empStdHours, hrs);
+    const rawOt =
       row?.overtime_hours !== undefined || row?.overtimeHours !== undefined
         ? Math.max(0, Number(row?.overtime_hours ?? row?.overtimeHours) || 0)
         : 0;
+    otHrs = approvedOtHours > 0 ? Number(Math.min(rawOt || approvedOtHours, approvedOtHours).toFixed(2)) : 0;
     totalHrs = Number((normalHrs + otHrs).toFixed(2));
   }
 
@@ -2408,12 +2780,6 @@ export function dbToPartTimeLog(row: any): PartTimeWorkLog {
     Math.max(0, Math.round(Number(row?.overtime_rate ?? row?.overtimeRate) || 0)) ||
     Math.round(rate * 1.5);
   const wage = Math.round(normalHrs * rate + otHrs * otRate);
-  const dateStr =
-    typeof row?.work_date === 'string'
-      ? row.work_date.slice(0, 10)
-      : typeof row?.date === 'string'
-      ? row.date.slice(0, 10)
-      : new Date().toISOString().split('T')[0];
 
   return {
     id: String(row?.id || generateSessionUuid()),
@@ -2550,25 +2916,29 @@ export function dbToPartTimePayout(row: any): PartTimeWeeklyPayout {
 export async function fetchPartTimeLogsFromSupabase(): Promise<PartTimeWorkLog[]> {
   const localLogs = getSavedPartTimeLogs();
   try {
-    const [res1, res2] = await Promise.allSettled([
+    const [res1, res2, res3] = await Promise.allSettled([
       supabase.from('tgi_parttime_logs').select('*').order('work_date', { ascending: false }),
       supabase.from('tgi_part_time_logs').select('*').order('work_date', { ascending: false }),
+      supabase.from('parttime_logs').select('*').order('work_date', { ascending: false }),
     ]);
 
-    const rows1 =
-      res1.status === 'fulfilled' && !res1.value.error && Array.isArray(res1.value.data)
-        ? res1.value.data
-        : [];
-    const rows2 =
-      res2.status === 'fulfilled' && !res2.value.error && Array.isArray(res2.value.data)
-        ? res2.value.data
-        : [];
+    const ok1 = res1.status === 'fulfilled' && !res1.value.error && Array.isArray(res1.value.data);
+    const ok2 = res2.status === 'fulfilled' && !res2.value.error && Array.isArray(res2.value.data);
+    const ok3 = res3.status === 'fulfilled' && !res3.value.error && Array.isArray(res3.value.data);
 
-    const dbLogs = [...rows1, ...rows2].map(dbToPartTimeLog);
+    if (!ok1 && !ok2 && !ok3) {
+      return localLogs;
+    }
+
+    const rows1: any[] = ok1 && Array.isArray(res1.value.data) ? res1.value.data : [];
+    const rows2: any[] = ok2 && Array.isArray(res2.value.data) ? res2.value.data : [];
+    const rows3: any[] = ok3 && Array.isArray(res3.value.data) ? res3.value.data : [];
+
+    const dbLogs = [...rows1, ...rows2, ...rows3].map(dbToPartTimeLog);
+    // Cloud-First: Jika tabel Supabase sudah ada dan mengembalikan data (atau masih kosong namun localLogs ada yang belum ter-upload), sinkronkan
+    const sourceList = dbLogs.length > 0 ? dbLogs : localLogs;
     const mergedMap = new Map<string, PartTimeWorkLog>();
-    // Deduplicate by (employeeId + date), preserving clockIn/clockOut if present in localLogs
-    // and strictly excluding PKWTT (Karyawan Tetap) / non-Part-Time employees
-    for (const item of [...dbLogs, ...localLogs]) {
+    for (const item of sourceList) {
       if (!item?.id) continue;
       if (isEmployeePkwttOrNonPartTimeLocal(item.employeeId, item.employeeNik)) continue;
       const key = `${item.employeeId}_${item.date}`;
@@ -2860,13 +3230,13 @@ export async function resetPartTimeLogsPaidInSupabase(
 export const EMPLOYEE_BONUSES_STORAGE_KEY = 'tgi_employee_bonuses';
 
 export function dbToEmployeeBonus(row: any): EmployeeBonus {
-  const rawDate = row?.date_awarded || row?.dateAwarded || row?.created_at || new Date().toISOString();
+  const rawDate = row?.date_awarded || row?.dateAwarded || row?.created_at || getJakartaIsoTimestamp();
   const rawPeriod =
     row?.period_month ||
     row?.periodMonth ||
     (typeof rawDate === 'string' && rawDate.length >= 7
       ? rawDate.slice(0, 7)
-      : new Date().toISOString().slice(0, 7));
+      : getJakartaYearMonth());
 
   const validAmount = validatePositiveIntegerAmount(row?.amount) ?? 0;
 
@@ -2887,13 +3257,13 @@ export function dbToEmployeeBonus(row: any): EmployeeBonus {
 
 export function employeeBonusToDb(bonus: EmployeeBonus) {
   return {
-    id: bonus.id,
-    employee_id: bonus.employee_id,
-    employee_nik: bonus.employee_nik,
-    employee_name: bonus.employee_name,
-    amount: Math.max(0, Math.round(Number(bonus.amount) || 0)),
-    reason_note: bonus.reason_note || '',
-    period_month: bonus.period_month,
+    id: sanitizeSafeText(bonus.id, 80),
+    employee_id: sanitizeSafeText(bonus.employee_id, 80),
+    employee_nik: sanitizeSafeText(bonus.employee_nik, 60),
+    employee_name: sanitizeSafeText(bonus.employee_name, 150),
+    amount: sanitizeNonNegativeAmount(bonus.amount, 1_000_000_000),
+    reason_note: sanitizeSafeText(bonus.reason_note || '', 500),
+    period_month: sanitizeSafeText(bonus.period_month, 20),
     date_awarded: bonus.date_awarded || new Date().toISOString(),
     is_read: Boolean(bonus.is_read),
   };
@@ -2928,29 +3298,37 @@ export function saveEmployeeBonusesLocal(bonuses: EmployeeBonus[]): void {
 export async function fetchEmployeeBonuses(): Promise<EmployeeBonus[]> {
   const localBonuses = getSavedEmployeeBonuses();
   try {
-    const { data, error } = await supabase
-      .from('tgi_employee_bonuses')
-      .select('*')
-      .order('date_awarded', { ascending: false });
+    const [res1, res2] = await Promise.allSettled([
+      supabase.from('tgi_employee_bonuses').select('*').order('date_awarded', { ascending: false }),
+      supabase.from('employee_bonuses').select('*').order('date_awarded', { ascending: false }),
+    ]);
 
-    if (error || !Array.isArray(data)) {
+    const ok1 = res1.status === 'fulfilled' && !res1.value.error && Array.isArray(res1.value.data);
+    const ok2 = res2.status === 'fulfilled' && !res2.value.error && Array.isArray(res2.value.data);
+
+    if (!ok1 && !ok2) {
       return localBonuses;
     }
 
-    const dbBonuses = data.map(dbToEmployeeBonus);
+    const rows1: any[] = ok1 && Array.isArray(res1.value.data) ? res1.value.data : [];
+    const rows2: any[] = ok2 && Array.isArray(res2.value.data) ? res2.value.data : [];
+    const dbBonuses = [...rows1, ...rows2].map(dbToEmployeeBonus);
+
+    // Cloud-First: Jika tabel Supabase mengembalikan data, timpa cache lokal sepenuhnya agar penghapusan di perangkat lain juga sinkron!
+    // Jika tabel di Supabase baru dibuat (masih 0 baris) sementara perangkat ini punya data lokal, unggah data lokal ke Supabase sekali.
+    if (dbBonuses.length === 0 && localBonuses.length > 0) {
+      const payloads = localBonuses.map(employeeBonusToDb);
+      await Promise.allSettled([
+        supabase.from('tgi_employee_bonuses').upsert(payloads, { onConflict: 'id' }),
+        supabase.from('employee_bonuses').upsert(payloads, { onConflict: 'id' }),
+      ]);
+      return localBonuses;
+    }
+
     const mergedMap = new Map<string, EmployeeBonus>();
-    for (const item of [...dbBonuses, ...localBonuses]) {
+    for (const item of dbBonuses) {
       if (!item?.id || !(Number(item.amount) > 0)) continue;
-      const existing = mergedMap.get(item.id);
-      if (!existing) {
-        mergedMap.set(item.id, item);
-      } else {
-        mergedMap.set(item.id, {
-          ...existing,
-          ...item,
-          is_read: Boolean(existing.is_read || item.is_read),
-        });
-      }
+      mergedMap.set(item.id, item);
     }
 
     const merged = Array.from(mergedMap.values()).sort((a, b) =>
@@ -2985,11 +3363,28 @@ export async function addEmployeeBonus(
   saveEmployeeBonusesLocal(next);
 
   try {
-    await supabase
-      .from('tgi_employee_bonuses')
-      .upsert(employeeBonusToDb(normalized), { onConflict: 'id' });
-  } catch {
-    // fallback handled by localStorage
+    const dbPayload = employeeBonusToDb(normalized);
+    const [r1, r2] = await Promise.allSettled([
+      supabase.from('tgi_employee_bonuses').upsert(dbPayload, { onConflict: 'id' }),
+      supabase.from('employee_bonuses').upsert(dbPayload, { onConflict: 'id' }),
+    ]);
+    const err1 = r1.status === 'fulfilled' ? r1.value.error : r1.reason;
+    const err2 = r2.status === 'fulfilled' ? r2.value.error : r2.reason;
+    if (err1 && err2 && isSupabaseConfigured()) {
+      notifySupabaseSyncStatus({
+        ok: false,
+        module: 'Manajemen Bonus',
+        message: `Gagal menyimpan bonus ke Supabase Cloud: ${err1?.message || 'Tabel tgi_employee_bonuses belum dibuat (jalankan SQL Schema)'}`,
+      });
+    }
+  } catch (err: any) {
+    if (isSupabaseConfigured()) {
+      notifySupabaseSyncStatus({
+        ok: false,
+        module: 'Manajemen Bonus',
+        message: `Gagal menyimpan bonus ke Supabase Cloud: ${err?.message || 'Gangguan jaringan'}`,
+      });
+    }
   }
 
   return normalized;
@@ -3004,10 +3399,10 @@ export async function markBonusAsRead(bonusId: string): Promise<boolean> {
   saveEmployeeBonusesLocal(next);
 
   try {
-    await supabase
-      .from('tgi_employee_bonuses')
-      .update({ is_read: true })
-      .eq('id', bonusId);
+    await Promise.allSettled([
+      supabase.from('tgi_employee_bonuses').update({ is_read: true }).eq('id', bonusId),
+      supabase.from('employee_bonuses').update({ is_read: true }).eq('id', bonusId),
+    ]);
     return true;
   } catch {
     return true;
@@ -3021,7 +3416,10 @@ export async function deleteEmployeeBonus(bonusId: string): Promise<boolean> {
   saveEmployeeBonusesLocal(next);
 
   try {
-    await supabase.from('tgi_employee_bonuses').delete().eq('id', bonusId);
+    await Promise.allSettled([
+      supabase.from('tgi_employee_bonuses').delete().eq('id', bonusId),
+      supabase.from('employee_bonuses').delete().eq('id', bonusId),
+    ]);
     return true;
   } catch {
     return true;
@@ -3048,7 +3446,7 @@ export function getSavedEmployeeAdjustments(): EmployeeAdjustment[] {
         employee_id: String(item.employee_id || ''),
         employee_nik: String(item.employee_nik || ''),
         employee_name: String(item.employee_name || ''),
-        period_month: String(item.period_month || new Date().toISOString().slice(0, 7)),
+        period_month: String(item.period_month || getJakartaYearMonth()),
         tunjangan_kerajinan: Math.max(0, Math.round(Number(item.tunjangan_kerajinan) || 0)),
         tunjangan_kedisiplinan: Math.max(0, Math.round(Number(item.tunjangan_kedisiplinan) || 0)),
         kesalahan_count: Math.max(0, Math.round(Number(item.kesalahan_count) || 0)),
@@ -3089,7 +3487,7 @@ function dbToEmployeeAdjustment(row: any): EmployeeAdjustment {
     employee_nik: String(row.employee_nik || row.employeeNik || ''),
     employee_name: String(row.employee_name || row.employeeName || ''),
     period_month: String(
-      row.period_month || row.periodMonth || new Date().toISOString().slice(0, 7)
+      row.period_month || row.periodMonth || getJakartaYearMonth()
     ),
     tunjangan_kerajinan: Math.max(
       0,
@@ -3122,13 +3520,34 @@ export async function fetchEmployeeAdjustments(): Promise<EmployeeAdjustment[]> 
       .select('*')
       .order('updated_at', { ascending: false });
 
-    if (error || !data) {
+    if (error || !Array.isArray(data)) {
       return localAdjustments;
     }
 
     const dbList = data.map(dbToEmployeeAdjustment);
+
+    // Cloud-First: Jika tabel di Supabase baru dibuat (masih 0 baris) tapi ada data di localStorage perangkat ini, sinkronkan ke Cloud sekali.
+    if (dbList.length === 0 && localAdjustments.length > 0) {
+      const payloads = localAdjustments.map((a) => ({
+        id: a.id,
+        employee_id: a.employee_id,
+        employee_nik: a.employee_nik,
+        employee_name: a.employee_name,
+        period_month: a.period_month,
+        tunjangan_kerajinan: a.tunjangan_kerajinan,
+        tunjangan_kedisiplinan: a.tunjangan_kedisiplinan,
+        kesalahan_count: a.kesalahan_count,
+        kesalahan_rate: a.kesalahan_rate,
+        catatan_kesalahan: a.catatan_kesalahan || '',
+        updated_at: a.updated_at,
+      }));
+      await supabase.from('employee_adjustments').upsert(payloads, { onConflict: 'id' });
+      return localAdjustments;
+    }
+
+    // Cloud-First: Gunakan data dari Supabase sebagai Single Source of Truth dan timpa cache lokal!
     const map = new Map<string, EmployeeAdjustment>();
-    for (const item of [...localAdjustments, ...dbList]) {
+    for (const item of dbList) {
       if (!item) continue;
       const key = `${item.employee_id || item.employee_nik}::${item.period_month}`;
       const existing = map.get(key);
@@ -3155,7 +3574,7 @@ export async function upsertEmployeeAdjustment(
 ): Promise<EmployeeAdjustment> {
   const localAdjustments = getSavedEmployeeAdjustments();
   const normalizedPeriod = String(
-    payload.period_month || new Date().toISOString().slice(0, 7)
+    payload.period_month || getJakartaYearMonth()
   ).trim();
   const existingIdx = localAdjustments.findIndex(
     (a) =>
@@ -3218,7 +3637,8 @@ export async function upsertEmployeeAdjustment(
   saveEmployeeAdjustmentsLocal(updated);
 
   try {
-    await supabase.from('employee_adjustments').upsert(
+    // Kirim hanya kolom skema utama agar tidak pernah gagal jika kolom opsional department/role tidak ada di tabel Supabase
+    const { error } = await supabase.from('employee_adjustments').upsert(
       {
         id: newAdjustment.id,
         employee_id: newAdjustment.employee_id,
@@ -3231,13 +3651,24 @@ export async function upsertEmployeeAdjustment(
         kesalahan_rate: newAdjustment.kesalahan_rate,
         catatan_kesalahan: newAdjustment.catatan_kesalahan,
         updated_at: newAdjustment.updated_at,
-        department: newAdjustment.department || null,
-        role: newAdjustment.role || null,
       },
       { onConflict: 'id' }
     );
-  } catch {
-    // Fallback to localStorage already saved
+    if (error && isSupabaseConfigured()) {
+      notifySupabaseSyncStatus({
+        ok: false,
+        module: 'Tunjangan & Kedisiplinan',
+        message: `Gagal menyimpan ke Supabase Cloud: ${error.message}. Pastikan skrip SQL employee_adjustments sudah dijalankan.`,
+      });
+    }
+  } catch (err: any) {
+    if (isSupabaseConfigured()) {
+      notifySupabaseSyncStatus({
+        ok: false,
+        module: 'Tunjangan & Kedisiplinan',
+        message: `Gagal menyimpan ke Supabase Cloud: ${err?.message || 'Gangguan jaringan'}`,
+      });
+    }
   }
 
   return newAdjustment;
@@ -3281,7 +3712,7 @@ export function getSavedPayrollDeductions(): PayrollDeductionRecord[] {
           employee_id: String(item.employee_id || ''),
           employee_nik: String(item.employee_nik || ''),
           employee_name: String(item.employee_name || ''),
-          period_month: String(item.period_month || new Date().toISOString().slice(0, 7)),
+          period_month: String(item.period_month || getJakartaYearMonth()),
           tanpa_keterangan_hari: Math.max(0, Number(item.tanpa_keterangan_hari) || 0),
           tanpa_keterangan_rate: Math.max(0, Math.round(Number(item.tanpa_keterangan_rate) || 0)),
           izin_jam_menit: Math.max(0, Math.round(Number(item.izin_jam_menit) || 0)),
@@ -3348,13 +3779,30 @@ function dbToPayrollDeduction(row: any): PayrollDeductionRecord {
   const cicilanBulanIni = sisaLalu > 0 ? Math.min(sisaLalu, rawCicilan) : rawCicilan;
   const sisaDepan = Math.max(0, sisaLalu - cicilanBulanIni);
 
+  let cleanNote = String(row.catatan_potongan ?? row.catatanPotongan ?? '');
+  let embeddedBpjsTk = 0;
+  let embeddedBpjsKes = 0;
+  let embeddedPph21 = 0;
+  if (cleanNote.includes('__TGI_BPJS_MANUAL__:')) {
+    const parts = cleanNote.split('__TGI_BPJS_MANUAL__:');
+    cleanNote = parts[0] || '';
+    try {
+      const parsed = JSON.parse(parts[1] || '{}');
+      embeddedBpjsTk = Number(parsed.tk) || 0;
+      embeddedBpjsKes = Number(parsed.kes) || 0;
+      embeddedPph21 = Number(parsed.pph) || 0;
+    } catch {
+      // ignore
+    }
+  }
+
   return {
     id: String(row.id || generateSessionUuid()),
     employee_id: String(row.employee_id || row.employeeId || ''),
     employee_nik: String(row.employee_nik || row.employeeNik || ''),
     employee_name: String(row.employee_name || row.employeeName || ''),
     period_month: String(
-      row.period_month || row.periodMonth || new Date().toISOString().slice(0, 7)
+      row.period_month || row.periodMonth || getJakartaYearMonth()
     ),
     tanpa_keterangan_hari: Math.max(
       0,
@@ -3385,17 +3833,17 @@ function dbToPayrollDeduction(row: any): PayrollDeductionRecord {
     sisa_kasbon_depan: sisaDepan,
     bpjs_tk_manual: Math.max(
       0,
-      Math.round(Number(row.bpjs_tk_manual ?? row.bpjsTkManual) || 0)
+      Math.round(Number(row.bpjs_tk_manual ?? row.bpjsTkManual ?? embeddedBpjsTk) || 0)
     ),
     bpjs_kesehatan_manual: Math.max(
       0,
-      Math.round(Number(row.bpjs_kesehatan_manual ?? row.bpjsKesehatanManual) || 0)
+      Math.round(Number(row.bpjs_kesehatan_manual ?? row.bpjsKesehatanManual ?? embeddedBpjsKes) || 0)
     ),
     pph21_manual: Math.max(
       0,
-      Math.round(Number(row.pph21_manual ?? row.pph21Manual) || 0)
+      Math.round(Number(row.pph21_manual ?? row.pph21Manual ?? embeddedPph21) || 0)
     ),
-    catatan_potongan: String(row.catatan_potongan ?? row.catatanPotongan ?? ''),
+    catatan_potongan: cleanNote,
     updated_at: String(row.updated_at || row.updatedAt || new Date().toISOString()),
     department: row.department ? String(row.department) : undefined,
     role: row.role ? String(row.role) : undefined,
@@ -3411,13 +3859,23 @@ export async function fetchPayrollDeductions(): Promise<PayrollDeductionRecord[]
       .select('*')
       .order('updated_at', { ascending: false });
 
-    if (error || !data) {
+    if (error || !Array.isArray(data)) {
       return localDeductions;
     }
 
     const dbList = data.map(dbToPayrollDeduction);
+
+    // Cloud-First: Jika tabel di Supabase baru dibuat (masih 0 baris) tapi perangkat ini memiliki data lokal, unggah ke Cloud sekali.
+    if (dbList.length === 0 && localDeductions.length > 0) {
+      for (const d of localDeductions) {
+        await upsertPayrollDeduction(d);
+      }
+      return localDeductions;
+    }
+
+    // Cloud-First: Gunakan data dari Supabase sebagai Single Source of Truth dan timpa cache lokal!
     const map = new Map<string, PayrollDeductionRecord>();
-    for (const item of [...localDeductions, ...dbList]) {
+    for (const item of dbList) {
       if (!item) continue;
       const key = `${item.employee_id || item.employee_nik}::${item.period_month}`;
       const existing = map.get(key);
@@ -3445,7 +3903,7 @@ export async function upsertPayrollDeduction(
 ): Promise<PayrollDeductionRecord> {
   const localDeductions = getSavedPayrollDeductions();
   const normalizedPeriod = String(
-    payload.period_month || new Date().toISOString().slice(0, 7)
+    payload.period_month || getJakartaYearMonth()
   ).trim();
   const existingIdx = localDeductions.findIndex(
     (d) =>
@@ -3545,35 +4003,70 @@ export async function upsertPayrollDeduction(
   savePayrollDeductionsLocal(updated);
 
   try {
-    await supabase.from('payroll_deductions').upsert(
+    const baseRow = {
+      id: newDeduction.id,
+      employee_id: newDeduction.employee_id,
+      employee_nik: newDeduction.employee_nik,
+      employee_name: newDeduction.employee_name,
+      period_month: newDeduction.period_month,
+      tanpa_keterangan_hari: newDeduction.tanpa_keterangan_hari,
+      tanpa_keterangan_rate: newDeduction.tanpa_keterangan_rate,
+      izin_jam_menit: newDeduction.izin_jam_menit,
+      izin_jam_rate: newDeduction.izin_jam_rate,
+      izin_hari_jumlah: newDeduction.izin_hari_jumlah,
+      izin_hari_rate: newDeduction.izin_hari_rate,
+      sisa_kasbon_lalu: newDeduction.sisa_kasbon_lalu,
+      cicilan_kasbon_bulan_ini: newDeduction.cicilan_kasbon_bulan_ini,
+      sisa_kasbon_depan: newDeduction.sisa_kasbon_depan,
+      catatan_potongan: newDeduction.catatan_potongan,
+      updated_at: newDeduction.updated_at,
+    };
+
+    const { error } = await supabase.from('payroll_deductions').upsert(
       {
-        id: newDeduction.id,
-        employee_id: newDeduction.employee_id,
-        employee_nik: newDeduction.employee_nik,
-        employee_name: newDeduction.employee_name,
-        period_month: newDeduction.period_month,
-        tanpa_keterangan_hari: newDeduction.tanpa_keterangan_hari,
-        tanpa_keterangan_rate: newDeduction.tanpa_keterangan_rate,
-        izin_jam_menit: newDeduction.izin_jam_menit,
-        izin_jam_rate: newDeduction.izin_jam_rate,
-        izin_hari_jumlah: newDeduction.izin_hari_jumlah,
-        izin_hari_rate: newDeduction.izin_hari_rate,
-        sisa_kasbon_lalu: newDeduction.sisa_kasbon_lalu,
-        cicilan_kasbon_bulan_ini: newDeduction.cicilan_kasbon_bulan_ini,
-        sisa_kasbon_depan: newDeduction.sisa_kasbon_depan,
+        ...baseRow,
         bpjs_tk_manual: newDeduction.bpjs_tk_manual,
         bpjs_kesehatan_manual: newDeduction.bpjs_kesehatan_manual,
         pph21_manual: newDeduction.pph21_manual,
-        catatan_potongan: newDeduction.catatan_potongan,
-        updated_at: newDeduction.updated_at,
-        department: newDeduction.department || null,
-        role: newDeduction.role || null,
-        employment_status: newDeduction.employment_status || null,
       },
       { onConflict: 'id' }
     );
-  } catch {
-    // Fallback to localStorage already saved
+
+    if (error) {
+      // Jika tabel payroll_deductions di Supabase belum memiliki kolom bpjs_tk_manual, simpan di catatan_potongan dengan marker agar tetap tersinkronisasi antar perangkat!
+      const fallbackNote =
+        newDeduction.bpjs_tk_manual > 0 ||
+        newDeduction.bpjs_kesehatan_manual > 0 ||
+        newDeduction.pph21_manual > 0
+          ? `${newDeduction.catatan_potongan}__TGI_BPJS_MANUAL__:${JSON.stringify({
+              tk: newDeduction.bpjs_tk_manual,
+              kes: newDeduction.bpjs_kesehatan_manual,
+              pph: newDeduction.pph21_manual,
+            })}`
+          : newDeduction.catatan_potongan;
+      const retry = await supabase.from('payroll_deductions').upsert(
+        {
+          ...baseRow,
+          catatan_potongan: fallbackNote,
+        },
+        { onConflict: 'id' }
+      );
+      if (retry.error && isSupabaseConfigured()) {
+        notifySupabaseSyncStatus({
+          ok: false,
+          module: 'Potongan Absensi & Kasbon',
+          message: `Gagal menyimpan ke Supabase Cloud: ${retry.error.message}. Pastikan skrip SQL payroll_deductions sudah dijalankan.`,
+        });
+      }
+    }
+  } catch (err: any) {
+    if (isSupabaseConfigured()) {
+      notifySupabaseSyncStatus({
+        ok: false,
+        module: 'Potongan Absensi & Kasbon',
+        message: `Gagal menyimpan ke Supabase Cloud: ${err?.message || 'Gangguan jaringan'}`,
+      });
+    }
   }
 
   return newDeduction;
@@ -3591,5 +4084,434 @@ export async function deletePayrollDeduction(deductionId: string): Promise<void>
     // Fallback to localStorage already saved
   }
 }
+
+// ============================================================================
+// CASH ADVANCES / KASBON CLOUD-FIRST SYNC (cash_advances)
+// ============================================================================
+
+export function cashAdvanceToDb(ca: CashAdvance) {
+  return {
+    id: ca.id,
+    employee_id: ca.employeeId,
+    employee_nik: ca.employeeNik,
+    employee_name: ca.employeeName,
+    department: ca.department || '',
+    amount: Math.max(0, Math.round(Number(ca.amount) || 0)),
+    tenor_months: Math.max(1, Math.round(Number(ca.tenorMonths) || 1)),
+    monthly_installment: Math.max(0, Math.round(Number(ca.monthlyInstallment) || 0)),
+    total_paid: Math.max(0, Math.round(Number(ca.totalPaid) || 0)),
+    remaining_balance: Math.max(0, Math.round(Number(ca.remainingBalance) || 0)),
+    reason: ca.reason || '',
+    status: ca.status || 'pending',
+    installments: Array.isArray(ca.installments) ? ca.installments : [],
+    created_at: ca.createdAt || new Date().toISOString(),
+    approved_at: ca.approvedAt || null,
+    approved_by: ca.approvedBy || null,
+    rejected_at: ca.rejectedAt || null,
+    rejected_by: ca.rejectedBy || null,
+    rejection_reason: ca.rejectionReason || null,
+    disbursed_at: ca.disbursedAt || null,
+    disbursed_by: ca.disbursedBy || null,
+    disbursement_method: ca.disbursementMethod || null,
+    disbursement_reference: ca.disbursementReference || null,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+export function dbToCashAdvance(row: any): CashAdvance {
+  const amt = Math.max(0, Math.round(Number(row.amount) || 0));
+  const baseSal = Math.max(0, Math.round(Number(row.base_salary ?? row.baseSalary) || amt * 2));
+  return {
+    id: String(row.id),
+    employeeId: String(row.employee_id || row.employeeId || ''),
+    employeeNik: String(row.employee_nik || row.employeeNik || ''),
+    employeeName: String(row.employee_name || row.employeeName || ''),
+    department: String(row.department || ''),
+    position: String(row.position || 'Staff'),
+    baseSalary: baseSal,
+    maxAllowedAmount: Math.max(amt, Math.round(baseSal * 0.5)),
+    amount: amt,
+    tenorMonths: Math.max(1, Math.round(Number(row.tenor_months ?? row.tenorMonths) || 1)) as any,
+    monthlyInstallment: Math.max(
+      0,
+      Math.round(Number(row.monthly_installment ?? row.monthlyInstallment) || 0)
+    ),
+    totalPaid: Math.max(0, Math.round(Number(row.total_paid ?? row.totalPaid) || 0)),
+    remainingBalance: Math.max(
+      0,
+      Math.round(Number(row.remaining_balance ?? row.remainingBalance) || 0)
+    ),
+    reason: String(row.reason || ''),
+    status: (row.status as any) || 'pending',
+    installments: Array.isArray(row.installments) ? row.installments : [],
+    createdAt: row.created_at || row.createdAt || new Date().toISOString(),
+    approvedAt: row.approved_at || row.approvedAt || undefined,
+    approvedBy: row.approved_by || row.approvedBy || undefined,
+    rejectedAt: row.rejected_at || row.rejectedAt || undefined,
+    rejectedBy: row.rejected_by || row.rejectedBy || undefined,
+    rejectionReason: row.rejection_reason || row.rejectionReason || undefined,
+    disbursedAt: row.disbursed_at || row.disbursedAt || undefined,
+    disbursedBy: row.disbursed_by || row.disbursedBy || undefined,
+    disbursementMethod: row.disbursement_method || row.disbursementMethod || undefined,
+    disbursementReference:
+      row.disbursement_reference || row.disbursementReference || undefined,
+  };
+}
+
+export async function fetchCashAdvancesFromSupabase(): Promise<CashAdvance[] | null> {
+  try {
+    const { data, error } = await supabase
+      .from('cash_advances')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (error || !Array.isArray(data)) return null;
+    const deletedIds = new Set(getDeletedEmployeeIds());
+    const list = data.map(dbToCashAdvance).filter((c) => !deletedIds.has(c.employeeId));
+    try {
+      localStorage.setItem('tgi_cash_advances_data', JSON.stringify(list));
+    } catch {
+      // ignore
+    }
+    return list;
+  } catch {
+    return null;
+  }
+}
+
+export async function upsertCashAdvanceToSupabase(ca: CashAdvance): Promise<boolean> {
+  try {
+    const row = cashAdvanceToDb(ca);
+    const { error } = await supabase.from('cash_advances').upsert(row, { onConflict: 'id' });
+    if (error) {
+      console.warn('Supabase upsert cash_advances error:', error.message);
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function deleteCashAdvanceFromSupabase(id: string): Promise<boolean> {
+  if (!id) return false;
+  try {
+    const { error } = await supabase.from('cash_advances').delete().eq('id', id);
+    return !error;
+  } catch {
+    return false;
+  }
+}
+
+// ============================================================================
+// COMPANY SETTINGS CLOUD-FIRST SYNC (company_settings)
+// ============================================================================
+
+export async function fetchCompanyConfigFromSupabase(): Promise<Partial<CompanyConfig> | null> {
+  try {
+    const { data, error } = await supabase
+      .from('company_settings')
+      .select('*')
+      .eq('id', 'tgi-main-config')
+      .maybeSingle();
+    if (error || !data || !data.config_json) return null;
+    const cfg = typeof data.config_json === 'object' ? data.config_json : {};
+    return cfg as Partial<CompanyConfig>;
+  } catch {
+    return null;
+  }
+}
+
+export async function upsertCompanyConfigToSupabase(config: CompanyConfig): Promise<boolean> {
+  try {
+    const { error } = await supabase.from('company_settings').upsert(
+      {
+        id: 'tgi-main-config',
+        company_name: config.companyName || 'PT LUPYTA MAJU PERKASA',
+        current_payroll_period: config.currentPayrollPeriod || getCurrentRealTimePayrollPeriod(),
+        config_json: config,
+        updated_at: getJakartaIsoTimestamp(),
+      },
+      { onConflict: 'id' }
+    );
+    return !error;
+  } catch {
+    return false;
+  }
+}
+
+// ============================================================================
+// THR (TUNJANGAN HARI RAYA) CLOUD-FIRST SYNC (tgi_thr_payouts)
+// ============================================================================
+
+const THR_PAYOUTS_STORAGE_KEY = 'tgi_thr_payouts';
+
+export function getSavedThrPayouts(): ThrPayoutRecord[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(THR_PAYOUTS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveThrPayoutsLocal(payouts: ThrPayoutRecord[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(THR_PAYOUTS_STORAGE_KEY, JSON.stringify(payouts));
+    window.dispatchEvent(new CustomEvent('tgi_thr_payouts_updated', { detail: payouts }));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+export function dbToThrPayout(row: any): ThrPayoutRecord {
+  const calcThr = Math.max(0, Math.round(Number(row.calculated_thr_amount ?? row.calculatedThrAmount) || 0));
+  const manualAdj = Math.round(Number(row.manual_adjustment_amount ?? row.manualAdjustmentAmount) || 0);
+  const totalThr =
+    row.total_thr_amount !== undefined || row.totalThrAmount !== undefined
+      ? Math.max(0, Math.round(Number(row.total_thr_amount ?? row.totalThrAmount) || 0))
+      : Math.max(0, calcThr + manualAdj);
+
+  return {
+    id: String(row.id || generateSessionUuid()),
+    employee_id: String(row.employee_id || row.employeeId || ''),
+    employee_nik: String(row.employee_nik || row.employeeNik || ''),
+    employee_name: String(row.employee_name || row.employeeName || ''),
+    department: String(row.department || 'Operasional'),
+    role: String(row.role || 'Staff'),
+    employment_type: String(row.employment_type || row.employmentType || 'PKWT (Kontrak)'),
+    join_date:
+      typeof row.join_date === 'string'
+        ? row.join_date.slice(0, 10)
+        : getJakartaDateString(),
+    thr_year: Number(row.thr_year ?? row.thrYear) || getJakartaDateParts().year,
+    holiday_name: String(row.holiday_name || row.holidayName || 'Hari Raya Idul Fitri'),
+    holiday_date:
+      typeof row.holiday_date === 'string'
+        ? row.holiday_date.slice(0, 10)
+        : getJakartaDateString(),
+    period_month: String(row.period_month || row.periodMonth || getJakartaYearMonth()),
+    tenure_months: Math.max(0, Math.round(Number(row.tenure_months ?? row.tenureMonths) || 0)),
+    tenure_days: Math.max(0, Math.round(Number(row.tenure_days ?? row.tenureDays) || 0)),
+    tenure_label: String(row.tenure_label || row.tenureLabel || ''),
+    eligibility_status: (row.eligibility_status || row.eligibilityStatus || 'Berhak Penuh (100%)') as any,
+    proportion_formula: String(row.proportion_formula || row.proportionFormula || ''),
+    base_salary_component: Math.max(
+      0,
+      Math.round(Number(row.base_salary_component ?? row.baseSalaryComponent) || 0)
+    ),
+    fixed_allowance_component: Math.max(
+      0,
+      Math.round(Number(row.fixed_allowance_component ?? row.fixedAllowanceComponent) || 0)
+    ),
+    parttime_avg_monthly_wage: Math.max(
+      0,
+      Math.round(Number(row.parttime_avg_monthly_wage ?? row.parttimeAvgMonthlyWage) || 0)
+    ),
+    calculation_basis_amount: Math.max(
+      0,
+      Math.round(Number(row.calculation_basis_amount ?? row.calculationBasisAmount) || 0)
+    ),
+    calculated_thr_amount: calcThr,
+    manual_adjustment_amount: manualAdj,
+    total_thr_amount: totalThr,
+    // WAJIB default false kecuali secara eksplisit true
+    show_in_payslip: Boolean(row.show_in_payslip === true || row.showInPayslip === true),
+    payment_status:
+      row.payment_status === 'Sudah Dibayar' || row.paymentStatus === 'Sudah Dibayar'
+        ? 'Sudah Dibayar'
+        : 'Belum Cair',
+    paid_at: row.paid_at || row.paidAt || undefined,
+    paid_by: row.paid_by || row.paidBy || undefined,
+    payment_method: (row.payment_method || row.paymentMethod || 'Transfer Bank') as any,
+    reference_number: row.reference_number || row.referenceNumber || undefined,
+    notes: String(row.notes || ''),
+    created_at: String(row.created_at || row.createdAt || new Date().toISOString()),
+    updated_at: String(row.updated_at || row.updatedAt || new Date().toISOString()),
+  };
+}
+
+export function thrPayoutToDb(record: ThrPayoutRecord) {
+  return {
+    id: record.id,
+    employee_id: record.employee_id,
+    employee_nik: sanitizeSafeText(record.employee_nik || '', 60),
+    employee_name: sanitizeSafeText(record.employee_name || '', 150),
+    department: sanitizeSafeText(record.department || 'Operasional', 100),
+    role: sanitizeSafeText(record.role || 'Staff', 100),
+    employment_type: sanitizeSafeText(record.employment_type || 'PKWT (Kontrak)', 80),
+    join_date: record.join_date ? record.join_date.slice(0, 10) : null,
+    thr_year: Number(record.thr_year) || getJakartaDateParts().year,
+    holiday_name: sanitizeSafeText(record.holiday_name || 'Hari Raya Idul Fitri', 120),
+    holiday_date: record.holiday_date ? record.holiday_date.slice(0, 10) : getJakartaDateString(),
+    period_month: sanitizeSafeText(record.period_month || getJakartaYearMonth(), 20),
+    tenure_months: Math.max(0, Math.round(Number(record.tenure_months) || 0)),
+    tenure_days: Math.max(0, Math.round(Number(record.tenure_days) || 0)),
+    tenure_label: sanitizeSafeText(record.tenure_label || '', 80),
+    eligibility_status: sanitizeSafeText(record.eligibility_status || 'Belum Berhak THR', 60),
+    proportion_formula: sanitizeSafeText(record.proportion_formula || '', 150),
+    base_salary_component: Math.max(0, Math.round(Number(record.base_salary_component) || 0)),
+    fixed_allowance_component: Math.max(0, Math.round(Number(record.fixed_allowance_component) || 0)),
+    parttime_avg_monthly_wage: Math.max(0, Math.round(Number(record.parttime_avg_monthly_wage) || 0)),
+    calculation_basis_amount: Math.max(0, Math.round(Number(record.calculation_basis_amount) || 0)),
+    calculated_thr_amount: Math.max(0, Math.round(Number(record.calculated_thr_amount) || 0)),
+    manual_adjustment_amount: Math.round(Number(record.manual_adjustment_amount) || 0),
+    total_thr_amount: Math.max(0, Math.round(Number(record.total_thr_amount) || 0)),
+    show_in_payslip: Boolean(record.show_in_payslip === true),
+    payment_status: record.payment_status === 'Sudah Dibayar' ? 'Sudah Dibayar' : 'Belum Cair',
+    paid_at: record.paid_at || null,
+    paid_by: record.paid_by ? sanitizeSafeText(record.paid_by, 120) : null,
+    payment_method: record.payment_method || 'Transfer Bank',
+    reference_number: record.reference_number ? sanitizeSafeText(record.reference_number, 80) : null,
+    notes: sanitizeSafeText(record.notes || '', 500),
+    updated_at: record.updated_at || new Date().toISOString(),
+  };
+}
+
+export async function fetchThrPayoutsFromSupabase(): Promise<ThrPayoutRecord[]> {
+  const localPayouts = getSavedThrPayouts();
+  try {
+    const { data, error } = await supabase
+      .from('tgi_thr_payouts')
+      .select('*')
+      .order('updated_at', { ascending: false });
+
+    if (error || !Array.isArray(data)) {
+      return localPayouts;
+    }
+
+    const deletedIds = new Set(getDeletedEmployeeIds());
+    const dbList = data
+      .map(dbToThrPayout)
+      .filter((item) => !deletedIds.has(item.employee_id));
+
+    if (dbList.length === 0 && localPayouts.length > 0) {
+      await batchUpsertThrPayoutsToSupabase(localPayouts);
+      return localPayouts;
+    }
+
+    const map = new Map<string, ThrPayoutRecord>();
+    for (const item of dbList) {
+      if (!item) continue;
+      const key = `${item.employee_id || item.employee_nik}::${item.thr_year}`;
+      const existing = map.get(key);
+      if (!existing || (item.updated_at || '') >= (existing.updated_at || '')) {
+        map.set(key, item);
+      }
+    }
+
+    const merged = Array.from(map.values()).sort((a, b) =>
+      (a.employee_name || '').localeCompare(b.employee_name || '')
+    );
+    saveThrPayoutsLocal(merged);
+    return merged;
+  } catch {
+    return localPayouts;
+  }
+}
+
+export async function upsertThrPayoutToSupabase(record: ThrPayoutRecord): Promise<ThrPayoutRecord> {
+  const localPayouts = getSavedThrPayouts();
+  const normalized: ThrPayoutRecord = {
+    ...record,
+    id: record.id || `thr-${record.thr_year}-${record.employee_id}`,
+    show_in_payslip: Boolean(record.show_in_payslip === true),
+    total_thr_amount: Math.max(
+      0,
+      Math.round(
+        Number(record.calculated_thr_amount || 0) + Number(record.manual_adjustment_amount || 0)
+      )
+    ),
+    updated_at: new Date().toISOString(),
+  };
+
+  const filtered = localPayouts.filter(
+    (p) =>
+      p.id !== normalized.id &&
+      !(p.employee_id === normalized.employee_id && Number(p.thr_year) === Number(normalized.thr_year))
+  );
+  const updated = [normalized, ...filtered];
+  saveThrPayoutsLocal(updated);
+
+  try {
+    const row = thrPayoutToDb(normalized);
+    const { error } = await supabase.from('tgi_thr_payouts').upsert(row, { onConflict: 'id' });
+    if (error && isSupabaseConfigured()) {
+      console.warn('Supabase upsert tgi_thr_payouts error:', error.message);
+    }
+  } catch (err) {
+    console.warn('Supabase upsert tgi_thr_payouts exception:', err);
+  }
+
+  return normalized;
+}
+
+export async function batchUpsertThrPayoutsToSupabase(
+  records: ThrPayoutRecord[]
+): Promise<ThrPayoutRecord[]> {
+  if (!Array.isArray(records) || records.length === 0) return getSavedThrPayouts();
+  const localPayouts = getSavedThrPayouts();
+  const byKey = new Map<string, ThrPayoutRecord>();
+
+  for (const item of localPayouts) {
+    if (!item) continue;
+    byKey.set(`${item.employee_id}::${item.thr_year}`, item);
+  }
+
+  const rowsToUpsert: any[] = [];
+  for (const rec of records) {
+    if (!rec) continue;
+    const normalized: ThrPayoutRecord = {
+      ...rec,
+      id: rec.id || `thr-${rec.thr_year}-${rec.employee_id}`,
+      show_in_payslip: Boolean(rec.show_in_payslip === true),
+      total_thr_amount: Math.max(
+        0,
+        Math.round(
+          Number(rec.calculated_thr_amount || 0) + Number(rec.manual_adjustment_amount || 0)
+        )
+      ),
+      updated_at: new Date().toISOString(),
+    };
+    byKey.set(`${normalized.employee_id}::${normalized.thr_year}`, normalized);
+    rowsToUpsert.push(thrPayoutToDb(normalized));
+  }
+
+  const merged = Array.from(byKey.values());
+  saveThrPayoutsLocal(merged);
+
+  try {
+    if (rowsToUpsert.length > 0) {
+      const { error } = await supabase
+        .from('tgi_thr_payouts')
+        .upsert(rowsToUpsert, { onConflict: 'id' });
+      if (error && isSupabaseConfigured()) {
+        console.warn('Supabase batch upsert tgi_thr_payouts error:', error.message);
+      }
+    }
+  } catch (err) {
+    console.warn('Supabase batch upsert tgi_thr_payouts exception:', err);
+  }
+
+  return merged;
+}
+
+export async function deleteThrPayoutFromSupabase(id: string): Promise<void> {
+  if (!id) return;
+  const current = getSavedThrPayouts();
+  const updated = current.filter((p) => p.id !== id);
+  saveThrPayoutsLocal(updated);
+
+  try {
+    await supabase.from('tgi_thr_payouts').delete().eq('id', id);
+  } catch {
+    // ignore
+  }
+}
+
+
 
 

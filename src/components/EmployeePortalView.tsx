@@ -76,6 +76,7 @@ import {
   EmployeeBonus,
   EmployeeAdjustment,
   PayrollDeductionRecord,
+  ThrPayoutRecord,
 } from '../types';
 import {
   formatCurrency,
@@ -100,6 +101,7 @@ import {
   getEmployeeDailySalary,
   getEmployeeHourlyRate,
   getEmployeeStandardDailyHours,
+   getApprovedOvertimeHoursForEmployeeDate,
   STANDARD_WORK_HOURS_PER_DAY,
   calculateCappedDailyWorkHours,
   calculateEmployeeLiveSalesCommission,
@@ -108,6 +110,10 @@ import {
   formatYearMonthToIndo,
   getPayrollSignatoriesConfig,
   isEmployeePartTime,
+  getJakartaDateString,
+  getJakartaYearMonth,
+  getJakartaTimeString,
+  getJakartaFullDateTimeLabel,
 } from '../utils/formatters';
 import { OfficialPayslipDocument, computeOfficialPayslipData } from './PayslipModal';
 import { formatWhatsAppPhone } from '../utils/notificationHelper';
@@ -125,12 +131,15 @@ import {
   fetchEmployeeAdjustments,
   getSavedPayrollDeductions,
   fetchPayrollDeductions,
+  getSavedThrPayouts,
+  fetchThrPayoutsFromSupabase,
 } from '../services/supabaseService';
 import {
   verifyEmployeeLoginSecure,
   updateEmployeePinSecure,
   sanitizeSafeText,
   validateNikKtp16Digits,
+  isAdminSessionVerified,
 } from '../services/authSecurityService';
 import { supabase } from '../lib/supabase';
 import { validateImageFile, compressImage, compressVideoFrame } from '../utils/imageUtils';
@@ -177,6 +186,7 @@ interface EmployeePortalViewProps {
   employeeBonuses?: EmployeeBonus[];
   employeeAdjustments?: EmployeeAdjustment[];
   payrollDeductions?: PayrollDeductionRecord[];
+  thrPayouts?: ThrPayoutRecord[];
   onMarkBonusAsRead?: (bonusId: string) => void;
 }
 
@@ -234,6 +244,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
   employeeBonuses = [],
   employeeAdjustments = [],
   payrollDeductions = [],
+  thrPayouts = [],
   onMarkBonusAsRead,
 }) => {
   const [activePortalTab, setActivePortalTab] = useState<'home' | 'payroll' | 'attendance' | 'leave' | 'claims' | 'cash_advance' | 'assets' | 'performance' | 'profile' | 'live_commission' | 'my_bonuses'>('home');
@@ -257,6 +268,9 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
   const [syncedPayrollDeductions, setSyncedPayrollDeductions] = useState<PayrollDeductionRecord[]>(
     () => getSavedPayrollDeductions()
   );
+  const [syncedThrPayouts, setSyncedThrPayouts] = useState<ThrPayoutRecord[]>(
+    () => getSavedThrPayouts()
+  );
 
   // Kasbon (Cash Advance) Form State
   const [isCashAdvanceModalOpen, setIsCashAdvanceModalOpen] = useState(false);
@@ -277,6 +291,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     setSyncedEmployeeBonuses(getSavedEmployeeBonuses());
     setSyncedEmployeeAdjustments(getSavedEmployeeAdjustments());
     setSyncedPayrollDeductions(getSavedPayrollDeductions());
+    setSyncedThrPayouts(getSavedThrPayouts());
   }, [currentEmployee.id]);
 
   React.useEffect(() => {
@@ -284,7 +299,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     let isMounted = true;
 
     const refreshLiveRoleAndSessions = async () => {
-      const [dbEmp, dbSessions, dbBonuses, dbAdjustments, dbDeductions] = await Promise.all([
+      const [dbEmp, dbSessions, dbBonuses, dbAdjustments, dbDeductions, dbThr] = await Promise.all([
         fetchEmployeeByIdFromSupabase(currentEmployee.id),
         fetchLivestreamSessionsFromSupabase(
           currentEmployee.id,
@@ -293,6 +308,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
         fetchEmployeeBonuses(),
         fetchEmployeeAdjustments(),
         fetchPayrollDeductions(),
+        fetchThrPayoutsFromSupabase(),
       ]);
       if (!isMounted) return;
       if (dbEmp) {
@@ -309,6 +325,9 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       }
       if (Array.isArray(dbDeductions)) {
         setSyncedPayrollDeductions(dbDeductions);
+      }
+      if (Array.isArray(dbThr)) {
+        setSyncedThrPayouts(dbThr);
       }
     };
 
@@ -334,10 +353,15 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       setSyncedPayrollDeductions(getSavedPayrollDeductions());
     };
 
+    const handleThrUpdated = () => {
+      setSyncedThrPayouts(getSavedThrPayouts());
+    };
+
     const handleStorageOrFocus = () => {
       setSyncedEmployeeBonuses(getSavedEmployeeBonuses());
       setSyncedEmployeeAdjustments(getSavedEmployeeAdjustments());
       setSyncedPayrollDeductions(getSavedPayrollDeductions());
+      setSyncedThrPayouts(getSavedThrPayouts());
       refreshLiveRoleAndSessions();
     };
 
@@ -346,6 +370,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     window.addEventListener('tgi_employee_bonuses_updated', handleBonusesUpdated);
     window.addEventListener('tgi_employee_adjustments_updated', handleAdjustmentsUpdated);
     window.addEventListener('tgi_payroll_deductions_updated', handleDeductionsUpdated);
+    window.addEventListener('tgi_thr_payouts_updated', handleThrUpdated);
     window.addEventListener('storage', handleStorageOrFocus);
     window.addEventListener('focus', handleStorageOrFocus);
 
@@ -371,6 +396,15 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
         },
         () => refreshLiveRoleAndSessions()
       )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'tgi_thr_payouts',
+        },
+        () => refreshLiveRoleAndSessions()
+      )
       .subscribe();
 
     return () => {
@@ -380,6 +414,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       window.removeEventListener('tgi_employee_bonuses_updated', handleBonusesUpdated);
       window.removeEventListener('tgi_employee_adjustments_updated', handleAdjustmentsUpdated);
       window.removeEventListener('tgi_payroll_deductions_updated', handleDeductionsUpdated);
+      window.removeEventListener('tgi_thr_payouts_updated', handleThrUpdated);
       window.removeEventListener('storage', handleStorageOrFocus);
       window.removeEventListener('focus', handleStorageOrFocus);
       supabase.removeChannel(channel);
@@ -665,7 +700,21 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     [effectivePortalEmployee, myAttendances, companyConfig.workShifts, penaltyPolicy]
   );
 
-  const todayDateStr = new Date().toISOString().split('T')[0];
+  // Real-time ticking clock in Asia/Jakarta (WIB)
+  const [portalWibNow, setPortalWibNow] = useState<Date>(() => new Date());
+  React.useEffect(() => {
+    const timer = setInterval(() => {
+      setPortalWibNow(new Date());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const portalLiveClockLabel = useMemo(
+    () => getJakartaFullDateTimeLabel(portalWibNow, true),
+    [portalWibNow]
+  );
+
+  const todayDateStr = useMemo(() => getJakartaDateString(portalWibNow), [portalWibNow]);
   const todayAttendance = useMemo(() => {
     return myAttendances.find((a) => a.date === todayDateStr);
   }, [myAttendances, todayDateStr]);
@@ -698,9 +747,21 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       cleanOut && cleanOut !== '-' && cleanOut.includes(':') && cleanIn !== cleanOut
     );
 
+    const approvedOtForDate = getApprovedOvertimeHoursForEmployeeDate(
+      currentEmployee.id,
+      params.date,
+      myOvertimeRequests
+    );
+
     const computed =
       hasValidIn && hasValidOut
-        ? computeHoursFromClockInOut(cleanIn, cleanOut, myStandardDailyHours)
+        ? computeHoursFromClockInOut(
+            cleanIn,
+            cleanOut,
+            myStandardDailyHours,
+            approvedOtForDate,
+            params.date
+          )
         : {
             totalHours: 0,
             normalHours: 0,
@@ -754,8 +815,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
   };
 
   const shiftEvalPreview = useMemo(() => {
-    const now = new Date();
-    const nowStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const nowStr = getJakartaTimeString(portalWibNow, false);
     const targetIn = isAdminSimulationActive ? customClockInTime : todayAttendance?.checkIn || nowStr;
     const targetOut = isAdminSimulationActive ? customClockOutTime : todayAttendance?.checkOut || myShift.checkOutTime;
     const effectiveGrace = penaltyPolicy.useShiftGracePeriod
@@ -769,6 +829,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       myStandardDailyHours
     );
   }, [
+    portalWibNow,
     isAdminSimulationActive,
     customClockInTime,
     customClockOutTime,
@@ -873,14 +934,14 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
 
   // Leave Form State (with Evidence Photo Upload)
   const [isLeaveModalOpen, setIsLeaveModalOpen] = useState(false);
-  const [leaveForm, setLeaveForm] = useState({
+  const [leaveForm, setLeaveForm] = useState(() => ({
     type: 'Cuti Tahunan' as LeaveRequest['type'],
-    startDate: new Date().toISOString().slice(0, 10),
-    endDate: new Date().toISOString().slice(0, 10),
+    startDate: getJakartaDateString(),
+    endDate: getJakartaDateString(),
     reason: '',
     attachmentUrl: '',
     attachmentName: '',
-  });
+  }));
   const [isCompressingLeavePhoto, setIsCompressingLeavePhoto] = useState(false);
 
   const handleUploadLeaveAttachment = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -911,8 +972,8 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
   // Calculate days for leave form
   const calculatedLeaveDays = useMemo(() => {
     if (!leaveForm.startDate || !leaveForm.endDate) return 1;
-    const start = new Date(leaveForm.startDate);
-    const end = new Date(leaveForm.endDate);
+    const start = new Date(`${leaveForm.startDate}T00:00:00+07:00`);
+    const end = new Date(`${leaveForm.endDate}T00:00:00+07:00`);
     const diffTime = end.getTime() - start.getTime();
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
     return Math.max(1, diffDays);
@@ -920,13 +981,13 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
 
   // Overtime Form State (Hitungan Per Menit)
   const [isOvertimeModalOpen, setIsOvertimeModalOpen] = useState(false);
-  const [overtimeForm, setOvertimeForm] = useState({
-    date: new Date().toISOString().slice(0, 10),
+  const [overtimeForm, setOvertimeForm] = useState(() => ({
+    date: getJakartaDateString(),
     minutes: 90,
     startTime: '17:30',
     endTime: '19:00',
     taskDescription: '',
-  });
+  }));
 
   const myOvertimeRatePerMinute = useMemo(() => {
     return getOvertimeRatePerMinute(currentEmployee, companyConfig.defaultOvertimeMultiplier || 1.5);
@@ -1055,11 +1116,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     const dataUrl = compressVideoFrame(video, 800, 800, 0.8, true);
     if (!dataUrl) return;
 
-    const nowTimestamp = `${new Date().toLocaleDateString('id-ID', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
-    })} • ${new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} WIB`;
+    const nowTimestamp = getJakartaFullDateTimeLabel(new Date(), false).compactLabel;
 
     const cleanNikKtp = (profileForm.ktpNumber || '').replace(/\D/g, '').trim();
     const validNikKtp = /^\d{16}$/.test(cleanNikKtp) ? cleanNikKtp : currentEmployee.ktpNumber;
@@ -1110,11 +1167,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       setIsProcessingProfilePhoto(true);
       // Kompresi otomatis maksimal lebar 800px, format JPEG kualitas 0.8
       const compressedDataUrl = await compressImage(file, 800, 800, 0.8);
-      const nowTimestamp = `${new Date().toLocaleDateString('id-ID', {
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric',
-      })} • ${new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} WIB`;
+      const nowTimestamp = getJakartaFullDateTimeLabel(new Date(), false).compactLabel;
 
       setProfileForm((prev) => ({ ...prev, avatarUrl: compressedDataUrl }));
 
@@ -1195,11 +1248,8 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       return;
     }
 
-    const nowTimestamp = `${new Date().toLocaleDateString('id-ID', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
-    })} • ${new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} WIB`;
+    const nowTimestamp = getJakartaFullDateTimeLabel(new Date(), false).compactLabel;
+    const todayWib = getJakartaDateString();
 
     const newReq: LeaveRequest = {
       id: `leave-${Date.now().toString().slice(-6)}`,
@@ -1210,7 +1260,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       totalDays: calculatedLeaveDays,
       reason: leaveForm.reason.trim(),
       status: 'Menunggu Persetujuan',
-      appliedAt: new Date().toISOString().slice(0, 10),
+      appliedAt: todayWib,
       attachmentUrl: leaveForm.attachmentUrl || undefined,
       attachmentName: leaveForm.attachmentName || undefined,
       attachmentUploadedAt: leaveForm.attachmentUrl ? nowTimestamp : undefined,
@@ -1221,8 +1271,8 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     setLeaveError(null);
     setLeaveForm({
       type: 'Cuti Tahunan',
-      startDate: new Date().toISOString().slice(0, 10),
-      endDate: new Date().toISOString().slice(0, 10),
+      startDate: todayWib,
+      endDate: todayWib,
       reason: '',
       attachmentUrl: '',
       attachmentName: '',
@@ -1253,7 +1303,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     onApplyOvertime(newReq);
     setIsOvertimeModalOpen(false);
     setOvertimeForm({
-      date: new Date().toISOString().slice(0, 10),
+      date: getJakartaDateString(),
       minutes: 90,
       startTime: '17:30',
       endTime: '19:00',
@@ -1267,11 +1317,14 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     if (!reimbursementForm.description.trim() || reimbursementForm.amount <= 0) return;
 
     const randomNum = Math.floor(100 + Math.random() * 900);
+    const todayWib = getJakartaDateString();
+    const currentYm = getJakartaYearMonth();
+    const nowTimeWib = getJakartaTimeString(new Date(), false);
     const newClaim: ReimbursementClaim = {
       id: `rmb-${Date.now().toString().slice(-6)}`,
-      claimNumber: `RMB-2026-10-${randomNum}`,
+      claimNumber: `RMB-${currentYm}-${randomNum}`,
       employeeId: currentEmployee.id,
-      date: new Date().toISOString().slice(0, 10),
+      date: todayWib,
       category: reimbursementForm.category,
       amount: Number(reimbursementForm.amount),
       description: reimbursementForm.description.trim(),
@@ -1282,7 +1335,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
         reimbursementForm.receiptPhotoUrl ||
         'https://images.unsplash.com/photo-1554415707-9e4466bfe0dc?auto=format&fit=crop&w=600&h=800&q=80',
       status: 'Menunggu Persetujuan',
-      appliedAt: `${new Date().toISOString().slice(0, 10)} ${new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} WIB`,
+      appliedAt: `${todayWib} ${nowTimeWib} WIB`,
       paymentMethod: reimbursementForm.paymentMethod,
     };
 
@@ -1667,10 +1720,18 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     return Array.from(map.values());
   }, [syncedPayrollDeductions, payrollDeductions]);
 
+  const allCombinedThrPayouts = useMemo(() => {
+    const map = new Map<string, ThrPayoutRecord>();
+    for (const t of [...syncedThrPayouts, ...thrPayouts]) {
+      if (t?.id) map.set(t.id, t);
+    }
+    return Array.from(map.values());
+  }, [syncedThrPayouts, thrPayouts]);
+
   const myPeriodDeduction = useMemo(() => {
     const targetPeriodYm =
       normalizePeriodToYearMonth(currentPay?.period || companyConfig.currentPayrollPeriod) ||
-      new Date().toISOString().slice(0, 7);
+      getJakartaYearMonth();
     return (
       allCombinedDeductions.find(
         (d) =>
@@ -1700,7 +1761,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       id: currentPay?.id || `pay-portal-${effectivePortalEmployee.id}`,
       employeeId: effectivePortalEmployee.id,
       period: currentPay?.period || companyConfig.currentPayrollPeriod,
-      createdAt: currentPay?.createdAt || new Date().toISOString().slice(0, 10),
+      createdAt: currentPay?.createdAt || getJakartaDateString(),
       baseSalary: baseSal,
       dailySalary: myDailySalary,
       hourlyRate: myHourlyRate,
@@ -1800,6 +1861,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
         employeeBonuses: allCombinedBonuses,
         employeeAdjustments: allCombinedAdjustments,
         payrollDeductions: allCombinedDeductions,
+        thrPayouts: allCombinedThrPayouts,
         cashAdvances: myCashAdvances,
         leaveRequests: myLeaveRequests,
         overtimeRequests: myOvertimeRequests,
@@ -1812,6 +1874,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       allCombinedBonuses,
       allCombinedAdjustments,
       allCombinedDeductions,
+      allCombinedThrPayouts,
       myCashAdvances,
       myLeaveRequests,
       myOvertimeRequests,
@@ -1827,6 +1890,12 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     ...fallbackPayRecord,
     salesCommission: salesCommissionPay,
     salesCommissionNotes: fallbackPayRecord.salesCommissionNotes,
+    thrAmount: officialPayslipData.thrShowInPayslip ? officialPayslipData.thrAmount : 0,
+    thrShowInPayslip: officialPayslipData.thrShowInPayslip,
+    thrHolidayName: officialPayslipData.thrHolidayName,
+    thrTenureLabel: officialPayslipData.thrTenureLabel,
+    thrProportionFormula: officialPayslipData.thrProportionFormula,
+    thrPaymentStatus: officialPayslipData.thrPaymentStatus,
     totalGrossSalary: grossSalary,
     totalDeductions: totalDeduct,
     takeHomePay,
@@ -1861,6 +1930,10 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
               <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
                 <span className="px-2.5 py-0.5 rounded-full text-[10px] sm:text-xs font-bold bg-white/20 backdrop-blur-xs text-white border border-white/20">
                   Portal Karyawan
+                </span>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] sm:text-xs font-mono font-bold bg-slate-900/50 text-emerald-100 border border-emerald-400/35 inline-flex items-center gap-1">
+                  <Clock className="w-3 h-3 text-emerald-300" />
+                  <span>{portalLiveClockLabel.compactLabel}</span>
                 </span>
                 <span className="px-2.5 py-0.5 rounded-full text-[10px] sm:text-xs font-semibold bg-emerald-400/30 text-emerald-100 border border-emerald-300/30">
                   {currentEmployee.employmentStatus}
@@ -1974,8 +2047,8 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
             </div>
           </div>
 
-          {/* Action Switchers: Sesi Login Ketat — Saat karyawan login dengan NIK & PIN (!isAdminUnlocked || !onSwitchToAdminMode), kunci tampilan hanya di Portal Karyawan mereka sendiri & sembunyikan seluruh tombol navigasi ke Dashboard Admin HR */}
-          {!Boolean(isAdminUnlocked && onSwitchToAdminMode) ? (
+          {/* Action Switchers: Sesi Login Ketat — Hapus total fitur Admin Preview / Switch Karyawan jika sesi yang aktif bukan sesi Admin resmi terverifikasi */}
+          {!Boolean(isAdminUnlocked && isAdminSessionVerified() && onSwitchToAdminMode) ? (
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
               <div className="inline-flex items-center justify-between sm:justify-start gap-2 px-3.5 py-2 bg-emerald-950/45 border border-emerald-400/35 rounded-xl text-emerald-100 text-xs">
                 <div className="flex items-center gap-1.5 min-w-0">
@@ -2003,14 +2076,18 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
             </div>
           ) : (
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-              {/* Quick Employee Selector for Admin Preview */}
-              {onSelectEmployee && allEmployees.length > 1 && (
+              {/* Quick Employee Selector for Verified Official Admin Only */}
+              {isAdminSessionVerified() && onSelectEmployee && allEmployees.length > 1 && (
                 <div className="relative">
                   <select
                     value={currentEmployee.id}
-                    onChange={(e) => onSelectEmployee(e.target.value)}
+                    onChange={(e) => {
+                      if (isAdminSessionVerified()) {
+                        onSelectEmployee(e.target.value);
+                      }
+                    }}
                     className="w-full sm:w-auto px-3 py-2 text-xs font-semibold bg-white/10 hover:bg-white/20 border border-white/30 rounded-xl text-white focus:outline-hidden cursor-pointer"
-                    title="Admin Preview: Simulasi Karyawan"
+                    title="Admin Preview: Simulasi Karyawan (Khusus Sesi Admin Resmi)"
                   >
                     {allEmployees.map((emp) => (
                       <option key={emp.id} value={emp.id} className="text-slate-800 bg-white">
@@ -2024,7 +2101,11 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
               {/* Back to Admin Panel Button */}
               <button
                 type="button"
-                onClick={onSwitchToAdminMode}
+                onClick={() => {
+                  if (isAdminSessionVerified() && onSwitchToAdminMode) {
+                    onSwitchToAdminMode();
+                  }
+                }}
                 className="inline-flex items-center justify-center gap-2 px-4 py-2 text-xs sm:text-sm font-bold bg-white text-emerald-800 hover:bg-emerald-50 rounded-xl shadow-xs transition-all cursor-pointer hover:shadow-md"
               >
                 <Shield className="w-4 h-4 text-emerald-600 shrink-0" />
@@ -3216,9 +3297,10 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 customClockInTime={customClockInTime}
                 customClockOutTime={customClockOutTime}
                 clockInNotes={clockInNotes}
+                overtimeRequests={myOvertimeRequests}
                 onChangeNotes={setClockInNotes}
                 onSubmitAttendance={(record, mode) => {
-                  // Optimistic real-time update agar tabel riwayat presensi, durasi jam kerja aktual (maks. 9 jam/hari), dan Slip Gaji langsung terupdate seketika
+                  // Optimistic real-time update agar tabel riwayat presensi, durasi jam kerja aktual (sesuai target harian 5/6/9 jam), dan Slip Gaji langsung terupdate seketika
                   setLocalCapturedAttendances((prev) => {
                     const existingIdx = prev.findIndex(
                       (a) => a.employeeId === record.employeeId && a.date === record.date
@@ -3231,14 +3313,19 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                         checkIn: record.checkIn || prevRec.checkIn,
                         checkOut: record.checkOut || prevRec.checkOut,
                         facePhotoSnapshot: record.facePhotoSnapshot || prevRec.facePhotoSnapshot,
+                        photoIn: record.photoIn || record.facePhotoSnapshot || prevRec.photoIn || prevRec.facePhotoSnapshot,
                         checkOutPhotoSnapshot:
                           record.checkOutPhotoSnapshot || prevRec.checkOutPhotoSnapshot,
+                        photoOut: record.photoOut || record.checkOutPhotoSnapshot || prevRec.photoOut || prevRec.checkOutPhotoSnapshot,
+                        facePhotoOut: record.facePhotoOut || record.checkOutPhotoSnapshot || prevRec.facePhotoOut || prevRec.checkOutPhotoSnapshot,
                         locationCoords: record.locationCoords || prevRec.locationCoords,
                         locationAddress: record.locationAddress || prevRec.locationAddress,
                         checkOutLocationCoords:
                           record.checkOutLocationCoords || prevRec.checkOutLocationCoords,
                         checkOutLocationAddress:
                           record.checkOutLocationAddress || prevRec.checkOutLocationAddress,
+                        checkOutDistanceMeters:
+                          record.checkOutDistanceMeters ?? prevRec.checkOutDistanceMeters,
                       };
                       const next = [...prev];
                       next[existingIdx] = merged;

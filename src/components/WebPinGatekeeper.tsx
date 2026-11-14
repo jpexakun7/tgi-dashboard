@@ -12,6 +12,7 @@ import {
   Building2,
   Mail,
   CheckCircle2,
+  Clock,
 } from 'lucide-react';
 import { CompanyConfig, Employee } from '../types';
 import {
@@ -19,6 +20,9 @@ import {
   verifyEmployeeLoginSecure,
   updateAdminPinSecure,
   hasConfiguredAdminCredentialHash,
+  checkPinRateLimit,
+  OFFICIAL_ADMIN_EMAILS,
+  sanitizeSafeText,
 } from '../services/authSecurityService';
 
 interface WebPinGatekeeperProps {
@@ -63,7 +67,7 @@ export const WebPinGatekeeper: React.FC<WebPinGatekeeperProps> = ({
 
   const [loginRole, setLoginRole] = useState<'employee' | 'admin'>('employee');
   const [employeeIdentifier, setEmployeeIdentifier] = useState<string>('');
-  const [adminEmail, setAdminEmail] = useState<string>('jpexakun7@gmail.com');
+  const [adminEmail, setAdminEmail] = useState<string>(OFFICIAL_ADMIN_EMAILS[0]);
   const [pinInput, setPinInput] = useState('');
   const [showPin, setShowPin] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -71,8 +75,33 @@ export const WebPinGatekeeper: React.FC<WebPinGatekeeperProps> = ({
   const [isVerifying, setIsVerifying] = useState(false);
   const [isInitialAdminSetup, setIsInitialAdminSetup] = useState(false);
   const [confirmNewPin, setConfirmNewPin] = useState('');
+  const [lockoutSeconds, setLockoutSeconds] = useState<number>(0);
 
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const activeRateScope =
+    loginRole === 'admin'
+      ? `admin_pin::${adminEmail.trim().toLowerCase()}`
+      : `emp_pin::${(employeeIdentifier.trim() || 'default').toLowerCase()}`;
+
+  useEffect(() => {
+    const status = checkPinRateLimit(activeRateScope);
+    setLockoutSeconds(status.isLocked ? status.remainingSeconds : 0);
+  }, [activeRateScope, loginRole]);
+
+  useEffect(() => {
+    if (lockoutSeconds <= 0) return;
+    const timer = setInterval(() => {
+      const status = checkPinRateLimit(activeRateScope);
+      if (!status.isLocked) {
+        setLockoutSeconds(0);
+        setErrorMsg(null);
+      } else {
+        setLockoutSeconds(status.remainingSeconds);
+      }
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [lockoutSeconds, activeRateScope]);
 
   useEffect(() => {
     if (loginRole === 'admin') {
@@ -84,6 +113,7 @@ export const WebPinGatekeeper: React.FC<WebPinGatekeeperProps> = ({
   }, [loginRole, adminEmail]);
 
   const handleDigitClick = (digit: string) => {
+    if (lockoutSeconds > 0) return;
     if (pinInput.length < 16) {
       setPinInput((prev) => prev + digit);
       setErrorMsg(null);
@@ -91,11 +121,13 @@ export const WebPinGatekeeper: React.FC<WebPinGatekeeperProps> = ({
   };
 
   const handleBackspace = () => {
+    if (lockoutSeconds > 0) return;
     setPinInput((prev) => prev.slice(0, -1));
     setErrorMsg(null);
   };
 
   const handleClear = () => {
+    if (lockoutSeconds > 0) return;
     setPinInput('');
     setConfirmNewPin('');
     setErrorMsg(null);
@@ -103,6 +135,7 @@ export const WebPinGatekeeper: React.FC<WebPinGatekeeperProps> = ({
 
   const handleInitialSetupSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
+    if (lockoutSeconds > 0) return;
     const trimmed = pinInput.trim();
     if (trimmed.length < 4) {
       setErrorMsg('PIN / Kata Sandi baru minimal 4 karakter.');
@@ -143,6 +176,8 @@ export const WebPinGatekeeper: React.FC<WebPinGatekeeperProps> = ({
 
   const handleVerify = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
+    if (lockoutSeconds > 0) return;
+
     if (isInitialAdminSetup && loginRole === 'admin') {
       await handleInitialSetupSubmit();
       return;
@@ -169,6 +204,9 @@ export const WebPinGatekeeper: React.FC<WebPinGatekeeperProps> = ({
           });
           return;
         }
+        if (res.isLockedOut && res.remainingSeconds) {
+          setLockoutSeconds(res.remainingSeconds);
+        }
         if (res.requiresInitialSetup) {
           setIsInitialAdminSetup(true);
           setErrorMsg(res.message || null);
@@ -177,11 +215,12 @@ export const WebPinGatekeeper: React.FC<WebPinGatekeeperProps> = ({
         setErrorMsg(res.message || 'PIN / Kata Sandi Admin tidak valid.');
         setPinInput('');
       } else {
-        if (!employeeIdentifier.trim()) {
+        const sanitizedId = sanitizeSafeText(employeeIdentifier, 100);
+        if (!sanitizedId) {
           setErrorMsg('Masukkan NIK, ID Karyawan, atau Email Anda terlebih dahulu.');
           return;
         }
-        const res = await verifyEmployeeLoginSecure(employeeIdentifier, trimmed);
+        const res = await verifyEmployeeLoginSecure(sanitizedId, trimmed);
         if (res.authenticated && res.employeeId) {
           emitUnlock({
             mode: 'employee',
@@ -191,12 +230,21 @@ export const WebPinGatekeeper: React.FC<WebPinGatekeeperProps> = ({
           });
           return;
         }
+        if (res.isLockedOut && res.remainingSeconds) {
+          setLockoutSeconds(res.remainingSeconds);
+        }
         setErrorMsg(res.message || 'NIK / ID Karyawan atau PIN Akses tidak sesuai.');
         setPinInput('');
       }
     } finally {
       setIsVerifying(false);
     }
+  };
+
+  const formatCountdown = (totalSec: number) => {
+    const mins = Math.floor(totalSec / 60);
+    const secs = totalSec % 60;
+    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   };
 
   return (
@@ -266,6 +314,24 @@ export const WebPinGatekeeper: React.FC<WebPinGatekeeperProps> = ({
 
         {/* Form Body */}
         <form onSubmit={handleVerify} className="p-4 sm:p-6 space-y-4">
+          {lockoutSeconds > 0 && (
+            <div className="p-3.5 rounded-xl bg-rose-950/90 border border-rose-500/50 flex items-start gap-3 text-rose-200 text-xs">
+              <Clock className="w-5 h-5 text-rose-400 shrink-0 mt-0.5 animate-pulse" />
+              <div className="space-y-1">
+                <div className="font-extrabold text-rose-300">
+                  Akses Diblokir Sementara (Anti Brute-Force)
+                </div>
+                <p className="text-[11px] text-rose-200/90 leading-relaxed">
+                  Terdeteksi 5 kali percobaan PIN salah berturut-turut. Silakan tunggu{' '}
+                  <span className="font-mono font-black text-white bg-rose-800/80 px-1.5 py-0.5 rounded">
+                    {formatCountdown(lockoutSeconds)}
+                  </span>{' '}
+                  sebelum mencoba kembali.
+                </p>
+              </div>
+            </div>
+          )}
+
           {loginRole === 'employee' ? (
             <div>
               <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
@@ -275,14 +341,16 @@ export const WebPinGatekeeper: React.FC<WebPinGatekeeperProps> = ({
                 <UserCheck className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
+                  maxLength={100}
+                  disabled={lockoutSeconds > 0}
                   value={employeeIdentifier}
                   onChange={(e) => {
-                    setEmployeeIdentifier(e.target.value);
+                    setEmployeeIdentifier(e.target.value.slice(0, 100));
                     setErrorMsg(null);
                   }}
                   placeholder="Contoh: TGI-2024-001 atau email@..."
                   autoComplete="username"
-                  className="w-full pl-10 pr-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs sm:text-sm text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500 transition-colors"
+                  className="w-full pl-10 pr-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs sm:text-sm text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500 transition-colors disabled:opacity-50"
                 />
               </div>
               <p className="text-[10px] text-slate-500 mt-1">
@@ -292,21 +360,25 @@ export const WebPinGatekeeper: React.FC<WebPinGatekeeperProps> = ({
           ) : (
             <div>
               <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
-                Email Administrator
+                Email Administrator Resmi
               </label>
               <div className="relative">
                 <Mail className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                <input
-                  type="email"
+                <select
+                  disabled={lockoutSeconds > 0}
                   value={adminEmail}
                   onChange={(e) => {
                     setAdminEmail(e.target.value);
                     setErrorMsg(null);
                   }}
-                  placeholder="admin@tasgrosirimport.com"
-                  autoComplete="username"
-                  className="w-full pl-10 pr-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs sm:text-sm text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500 transition-colors"
-                />
+                  className="w-full pl-10 pr-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs sm:text-sm text-white focus:outline-none focus:border-indigo-500 transition-colors disabled:opacity-50"
+                >
+                  {OFFICIAL_ADMIN_EMAILS.map((email) => (
+                    <option key={email} value={email} className="bg-slate-900 text-white">
+                      {email}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
           )}
@@ -331,9 +403,11 @@ export const WebPinGatekeeper: React.FC<WebPinGatekeeperProps> = ({
               <input
                 ref={inputRef}
                 type={showPin ? 'text' : 'password'}
+                maxLength={32}
+                disabled={lockoutSeconds > 0}
                 value={pinInput}
                 onChange={(e) => {
-                  setPinInput(e.target.value);
+                  setPinInput(e.target.value.slice(0, 32));
                   setErrorMsg(null);
                 }}
                 placeholder={
@@ -342,7 +416,7 @@ export const WebPinGatekeeper: React.FC<WebPinGatekeeperProps> = ({
                     : 'Masukkan PIN / Password'
                 }
                 autoComplete="current-password"
-                className="w-full pl-4 pr-11 py-3 bg-slate-950 border border-slate-800 rounded-xl text-center text-base sm:text-lg font-mono tracking-widest text-white placeholder:text-xs placeholder:tracking-normal placeholder:font-sans placeholder-slate-600 focus:outline-none focus:border-emerald-500"
+                className="w-full pl-4 pr-11 py-3 bg-slate-950 border border-slate-800 rounded-xl text-center text-base sm:text-lg font-mono tracking-widest text-white placeholder:text-xs placeholder:tracking-normal placeholder:font-sans placeholder-slate-600 focus:outline-none focus:border-emerald-500 disabled:opacity-50"
               />
               <button
                 type="button"
@@ -363,13 +437,15 @@ export const WebPinGatekeeper: React.FC<WebPinGatekeeperProps> = ({
               </label>
               <input
                 type={showPin ? 'text' : 'password'}
+                maxLength={32}
+                disabled={lockoutSeconds > 0}
                 value={confirmNewPin}
                 onChange={(e) => {
-                  setConfirmNewPin(e.target.value);
+                  setConfirmNewPin(e.target.value.slice(0, 32));
                   setErrorMsg(null);
                 }}
                 placeholder="Ketik ulang PIN / Kata Sandi"
-                className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-center text-sm font-mono tracking-widest text-white placeholder:text-xs placeholder:tracking-normal placeholder:font-sans placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+                className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-center text-sm font-mono tracking-widest text-white placeholder:text-xs placeholder:tracking-normal placeholder:font-sans placeholder-slate-600 focus:outline-none focus:border-indigo-500 disabled:opacity-50"
               />
               <p className="text-[10px] text-amber-300/90 mt-1.5 leading-relaxed">
                 Sistem tidak menggunakan password bawaan (hardcode). PIN/Kata Sandi Anda akan di-hash dengan SHA-256 & disimpan ke fungsi RPC Supabase.
@@ -398,30 +474,34 @@ export const WebPinGatekeeper: React.FC<WebPinGatekeeperProps> = ({
               <button
                 key={digit}
                 type="button"
+                disabled={lockoutSeconds > 0}
                 onClick={() => handleDigitClick(digit)}
-                className="py-2.5 sm:py-3 rounded-xl bg-slate-800/80 hover:bg-slate-800 active:scale-95 border border-slate-700/70 text-white font-bold text-sm sm:text-base transition-all"
+                className="py-2.5 sm:py-3 rounded-xl bg-slate-800/80 hover:bg-slate-800 active:scale-95 border border-slate-700/70 text-white font-bold text-sm sm:text-base transition-all disabled:opacity-40"
               >
                 {digit}
               </button>
             ))}
             <button
               type="button"
+              disabled={lockoutSeconds > 0}
               onClick={handleClear}
-              className="py-2.5 sm:py-3 rounded-xl bg-slate-900 hover:bg-rose-950/50 border border-slate-800 text-rose-400 font-bold text-xs transition-all"
+              className="py-2.5 sm:py-3 rounded-xl bg-slate-900 hover:bg-rose-950/50 border border-slate-800 text-rose-400 font-bold text-xs transition-all disabled:opacity-40"
             >
               Reset
             </button>
             <button
               type="button"
+              disabled={lockoutSeconds > 0}
               onClick={() => handleDigitClick('0')}
-              className="py-2.5 sm:py-3 rounded-xl bg-slate-800/80 hover:bg-slate-800 active:scale-95 border border-slate-700/70 text-white font-bold text-sm sm:text-base transition-all"
+              className="py-2.5 sm:py-3 rounded-xl bg-slate-800/80 hover:bg-slate-800 active:scale-95 border border-slate-700/70 text-white font-bold text-sm sm:text-base transition-all disabled:opacity-40"
             >
               0
             </button>
             <button
               type="button"
+              disabled={lockoutSeconds > 0}
               onClick={handleBackspace}
-              className="py-2.5 sm:py-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 flex items-center justify-center transition-all"
+              className="py-2.5 sm:py-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 flex items-center justify-center transition-all disabled:opacity-40"
               title="Hapus 1 karakter"
             >
               <Delete className="w-4 h-4" />
@@ -431,7 +511,7 @@ export const WebPinGatekeeper: React.FC<WebPinGatekeeperProps> = ({
           {/* Submit Button */}
           <button
             type="submit"
-            disabled={isVerifying}
+            disabled={isVerifying || lockoutSeconds > 0}
             className={`w-full py-3 px-4 rounded-xl font-bold text-xs sm:text-sm text-white shadow-lg flex items-center justify-center gap-2 transition-all ${
               loginRole === 'admin'
                 ? 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-600/20'
@@ -439,7 +519,9 @@ export const WebPinGatekeeper: React.FC<WebPinGatekeeperProps> = ({
             } disabled:opacity-50`}
           >
             <span>
-              {isVerifying
+              {lockoutSeconds > 0
+                ? `Terkunci (${formatCountdown(lockoutSeconds)})`
+                : isVerifying
                 ? 'Memverifikasi Kredensial...'
                 : isInitialAdminSetup && loginRole === 'admin'
                 ? 'Simpan & Masuk Panel Admin'

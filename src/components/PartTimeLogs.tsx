@@ -15,8 +15,15 @@ import {
   formatRupiah,
   formatIndoDate,
   getEmployeeHourlyRate,
+  getEmployeeStandardDailyHours,
+  getApprovedOvertimeHoursForEmployeeDate,
+  calculateCappedDailyWorkHours,
   STANDARD_WORK_HOURS_PER_DAY,
   isEmployeePartTime,
+  getJakartaDateString,
+  getJakartaIsoTimestamp,
+  addDaysToDateString,
+  getDayOfWeekFromDateString,
 } from '../utils/formatters';
 import {
   generateSessionUuid,
@@ -69,74 +76,49 @@ export function formatRoleAndDepartment(
 
 /**
  * Helper to compute the 6-day operational cycle (Monday to Saturday) containing a reference date
+ * Strictly synchronized to Asia/Jakarta (WIB) without UTC midnight shift bugs.
  */
-export function getOperationalSixDayRange(referenceDate: Date = new Date()): {
+export function getOperationalSixDayRange(referenceDate: Date | string = new Date()): {
   startDate: string;
   endDate: string;
   sundayPayoutDate: string;
 } {
-  const d = new Date(referenceDate);
-  const day = d.getDay(); // 0 = Sun, 1 = Mon, ..., 6 = Sat
+  const refDateStr =
+    typeof referenceDate === 'string' && /^\d{4}-\d{2}-\d{2}/.test(referenceDate.trim())
+      ? referenceDate.trim().slice(0, 10)
+      : getJakartaDateString(referenceDate instanceof Date ? referenceDate : new Date());
+  const day = getDayOfWeekFromDateString(refDateStr); // 0 = Sun, 1 = Mon, ..., 6 = Sat
   const diffToMonday = day === 0 ? -6 : 1 - day;
-  const monday = new Date(d);
-  monday.setDate(d.getDate() + diffToMonday);
+  const startDate = addDaysToDateString(refDateStr, diffToMonday);
+  const endDate = addDaysToDateString(startDate, 5); // 6 operational days: Mon..Sat
+  const sundayPayoutDate = addDaysToDateString(startDate, 6); // Sunday Payout
 
-  const saturday = new Date(monday);
-  saturday.setDate(monday.getDate() + 5); // 6 operational days: Mon..Sat
-
-  const sunday = new Date(monday);
-  sunday.setDate(monday.getDate() + 6); // Sunday Payout
-
-  const toIso = (dt: Date) => dt.toISOString().split('T')[0];
   return {
-    startDate: toIso(monday),
-    endDate: toIso(saturday),
-    sundayPayoutDate: toIso(sunday),
+    startDate,
+    endDate,
+    sundayPayoutDate,
   };
 }
 
 export function computeHoursFromClockInOut(
   clockIn?: string,
   clockOut?: string,
-  standardNormalHours = STANDARD_WORK_HOURS_PER_DAY
+  standardNormalHours = STANDARD_WORK_HOURS_PER_DAY,
+  approvedOvertimeHours = 0,
+  attendanceDate?: string
 ): { totalHours: number; normalHours: number; overtimeHours: number } {
-  if (!clockIn || !clockOut) {
-    return { totalHours: 0, normalHours: 0, overtimeHours: 0 };
-  }
-  const cleanIn = clockIn.trim();
-  const cleanOut = clockOut.trim();
-  if (!cleanIn || !cleanOut || cleanIn === '-' || cleanOut === '-' || cleanIn === cleanOut) {
-    return { totalHours: 0, normalHours: 0, overtimeHours: 0 };
-  }
-  const inParts = cleanIn.split(':').map(Number);
-  const outParts = cleanOut.split(':').map(Number);
-  if (
-    inParts.length < 2 ||
-    outParts.length < 2 ||
-    Number.isNaN(inParts[0]) ||
-    Number.isNaN(inParts[1]) ||
-    Number.isNaN(outParts[0]) ||
-    Number.isNaN(outParts[1])
-  ) {
-    return { totalHours: 0, normalHours: 0, overtimeHours: 0 };
-  }
-
-  const refDate = new Date(2026, 0, 1);
-  const clockInTime = new Date(refDate);
-  clockInTime.setHours(inParts[0], inParts[1], inParts[2] || 0, 0);
-
-  const clockOutTime = new Date(refDate);
-  clockOutTime.setHours(outParts[0], outParts[1], outParts[2] || 0, 0);
-
-  if (clockOutTime.getTime() < clockInTime.getTime()) {
-    clockOutTime.setDate(clockOutTime.getDate() + 1);
-  }
-
-  const diffInMinutes = (clockOutTime.getTime() - clockInTime.getTime()) / (1000 * 60);
-  const actualHours = Math.max(0, Number((diffInMinutes / 60).toFixed(2)));
-  const maxCap = Math.max(1, Number(standardNormalHours) || STANDARD_WORK_HOURS_PER_DAY);
-  const normalHours = Number(Math.min(maxCap, actualHours).toFixed(2));
-  return { totalHours: normalHours, normalHours, overtimeHours: 0 };
+  const capped = calculateCappedDailyWorkHours(
+    clockIn,
+    clockOut,
+    0,
+    standardNormalHours,
+    approvedOvertimeHours,
+    attendanceDate
+  );
+  const normalHours = capped.cappedWorkHours;
+  const overtimeHours = capped.overtimeHours;
+  const totalHours = Number((normalHours + overtimeHours).toFixed(2));
+  return { totalHours, normalHours, overtimeHours };
 }
 
 export const PartTimeLogs: React.FC<PartTimeLogsProps> = ({
@@ -194,7 +176,7 @@ export const PartTimeLogs: React.FC<PartTimeLogsProps> = ({
   // Form state
   const [editingLogId, setEditingLogId] = useState<string | null>(null);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>('');
-  const [workDate, setWorkDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [workDate, setWorkDate] = useState<string>(() => getJakartaDateString());
   const [clockInInput, setClockInInput] = useState<string>('08:00');
   const [clockOutInput, setClockOutInput] = useState<string>('16:00');
   const [normalHours, setNormalHours] = useState<number>(8);
@@ -209,10 +191,12 @@ export const PartTimeLogs: React.FC<PartTimeLogsProps> = ({
   useEffect(() => {
     if (!selectedEmployeeId && selectableEmployees.length > 0) {
       const firstEmp = selectableEmployees[0];
-      const hRate = getEmployeeHourlyRate(firstEmp, STANDARD_WORK_HOURS_PER_DAY, 25);
+      const empStd = getEmployeeStandardDailyHours(firstEmp);
+      const hRate = getEmployeeHourlyRate(firstEmp, empStd, 25);
       const otRate =
         Number(firstEmp.overtimeRate ?? firstEmp.overtime_rate) || Math.round(hRate * 1.5);
       setSelectedEmployeeId(firstEmp.id);
+      setNormalHours(empStd);
       setHourlyRateInput(hRate);
       setOvertimeRateInput(otRate);
     }
@@ -223,21 +207,46 @@ export const PartTimeLogs: React.FC<PartTimeLogsProps> = ({
     [safeEmployees, selectedEmployeeId]
   );
 
+  const selectedEmpStdHours = useMemo(
+    () => getEmployeeStandardDailyHours(selectedEmployee),
+    [selectedEmployee]
+  );
+
   const handleEmployeeSelectChange = (empId: string) => {
     setSelectedEmployeeId(empId);
     const emp = safeEmployees.find((e) => e.id === empId);
     if (emp) {
-      const hRate = getEmployeeHourlyRate(emp, STANDARD_WORK_HOURS_PER_DAY, 25);
+      const empStd = getEmployeeStandardDailyHours(emp);
+      const hRate = getEmployeeHourlyRate(emp, empStd, 25);
       const otRate = Number(emp.overtimeRate ?? emp.overtime_rate) || Math.round(hRate * 1.5);
       setHourlyRateInput(hRate);
       setOvertimeRateInput(otRate);
+      const approvedOt = getApprovedOvertimeHoursForEmployeeDate(emp.id, workDate);
+      const computed = computeHoursFromClockInOut(
+        clockInInput,
+        clockOutInput,
+        empStd,
+        approvedOt,
+        workDate
+      );
+      if (computed.totalHours > 0) {
+        setNormalHours(computed.normalHours);
+        setOvertimeHours(computed.overtimeHours);
+      }
     }
   };
 
   const handleClockChange = (newIn: string, newOut: string) => {
     setClockInInput(newIn);
     setClockOutInput(newOut);
-    const computed = computeHoursFromClockInOut(newIn, newOut, STANDARD_WORK_HOURS_PER_DAY);
+    const approvedOt = getApprovedOvertimeHoursForEmployeeDate(selectedEmployeeId, workDate);
+    const computed = computeHoursFromClockInOut(
+      newIn,
+      newOut,
+      selectedEmpStdHours,
+      approvedOt,
+      workDate
+    );
     if (computed.totalHours > 0) {
       setNormalHours(computed.normalHours);
       setOvertimeHours(computed.overtimeHours);
@@ -263,13 +272,13 @@ export const PartTimeLogs: React.FC<PartTimeLogsProps> = ({
 
   const handleResetForm = () => {
     setEditingLogId(null);
-    setWorkDate(new Date().toISOString().split('T')[0]);
+    setWorkDate(getJakartaDateString());
     setClockInInput('09:00');
     setClockOutInput('18:00');
-    setNormalHours(STANDARD_WORK_HOURS_PER_DAY);
+    setNormalHours(selectedEmpStdHours);
     setOvertimeHours(0);
     if (selectedEmployee) {
-      const hRate = getEmployeeHourlyRate(selectedEmployee, STANDARD_WORK_HOURS_PER_DAY, 25);
+      const hRate = getEmployeeHourlyRate(selectedEmployee, selectedEmpStdHours, 25);
       const otRate =
         Number(selectedEmployee.overtimeRate ?? selectedEmployee.overtime_rate) ||
         Math.round(hRate * 1.5);
@@ -323,8 +332,20 @@ export const PartTimeLogs: React.FC<PartTimeLogsProps> = ({
       const resolvedRate = Math.max(0, Math.round(Number(hourlyRateInput) || 0));
       const resolvedOtRate =
         Math.max(0, Math.round(Number(overtimeRateInput) || 0)) || Math.round(resolvedRate * 1.5);
-      const resolvedNorm = Math.max(0, Number(normalHours) || 0);
-      const resolvedOt = Math.max(0, Number(overtimeHours) || 0);
+      const empStd = getEmployeeStandardDailyHours(selectedEmployee);
+      const approvedOtForDate = getApprovedOvertimeHoursForEmployeeDate(
+        selectedEmployee.id,
+        workDate
+      );
+      const resolvedNorm = Number(
+        Math.min(empStd, Math.max(0, Number(normalHours) || 0)).toFixed(2)
+      );
+      const rawOtInput = Math.max(0, Number(overtimeHours) || 0);
+      // Kunci lembur wajib approval Admin: kelebihan jam kerja hanya boleh dihitung lembur jika ada di overtime_requests ('Disetujui')
+      const resolvedOt =
+        approvedOtForDate > 0
+          ? Number(Math.min(rawOtInput || approvedOtForDate, approvedOtForDate).toFixed(2))
+          : 0;
       const resolvedHours = Math.round((resolvedNorm + resolvedOt) * 100) / 100;
       const totalWage = Math.round(resolvedNorm * resolvedRate + resolvedOt * resolvedOtRate);
 
@@ -339,8 +360,8 @@ export const PartTimeLogs: React.FC<PartTimeLogsProps> = ({
         hourly_rate: resolvedRate,
         overtimeRate: resolvedOtRate,
         overtime_rate: resolvedOtRate,
-        dailySalary: resolvedRate * STANDARD_WORK_HOURS_PER_DAY,
-        daily_salary: resolvedRate * STANDARD_WORK_HOURS_PER_DAY,
+        dailySalary: Math.round(resolvedRate * empStd),
+        daily_salary: Math.round(resolvedRate * empStd),
       };
       saveEmployeeEmploymentMetaLocal(updatedEmp);
       if (
@@ -390,7 +411,7 @@ export const PartTimeLogs: React.FC<PartTimeLogsProps> = ({
         paid_at: existingLog?.paid_at,
         payoutPeriod: existingLog?.payoutPeriod,
         payout_period: existingLog?.payout_period,
-        createdAt: existingLog?.createdAt || new Date().toISOString(),
+        createdAt: existingLog?.createdAt || getJakartaIsoTimestamp(),
       };
 
       onSaveLog(newLog);
@@ -414,9 +435,9 @@ export const PartTimeLogs: React.FC<PartTimeLogsProps> = ({
   };
 
   const applyQuickWeekRange = (offsetWeeks: number) => {
-    const ref = new Date();
-    ref.setDate(ref.getDate() + offsetWeeks * 7);
-    const range = getOperationalSixDayRange(ref);
+    const todayWib = getJakartaDateString();
+    const targetRefDate = addDaysToDateString(todayWib, offsetWeeks * 7);
+    const range = getOperationalSixDayRange(targetRefDate);
     setFilterAllDates(false);
     setFilterStartDate(range.startDate);
     setFilterEndDate(range.endDate);
@@ -450,26 +471,40 @@ export const PartTimeLogs: React.FC<PartTimeLogsProps> = ({
         const hRate = Number(rawLog.hourlyRate ?? rawLog.hourlyRateSnapshot ?? rawLog.hourly_rate) || 0;
         const otRate = Number(rawLog.overtimeRate ?? rawLog.overtime_rate) || Math.round(hRate * 1.5);
 
-        if (hasIn && !hasOut) {
+        const emp = safeEmployees.find((e) => e.id === rawLog.employeeId);
+        const empStd = getEmployeeStandardDailyHours(emp);
+        const approvedOt = getApprovedOvertimeHoursForEmployeeDate(rawLog.employeeId, rawLog.date);
+
+        if (hasIn && (!hasOut || rawLog.clockIn?.trim() === rawLog.clockOut?.trim())) {
+          const computedMissing = computeHoursFromClockInOut(
+            rawLog.clockIn,
+            rawLog.clockOut,
+            empStd,
+            approvedOt,
+            rawLog.date
+          );
+          const wageMissing = Math.round(computedMissing.normalHours * hRate);
           return {
             ...rawLog,
-            normalHours: 0,
-            normal_hours: 0,
+            normalHours: computedMissing.normalHours,
+            normal_hours: computedMissing.normalHours,
             overtimeHours: 0,
             overtime_hours: 0,
-            hoursWorked: 0,
-            hours_worked: 0,
-            dailyWage: 0,
-            daily_wage: 0,
+            hoursWorked: computedMissing.normalHours,
+            hours_worked: computedMissing.normalHours,
+            dailyWage: wageMissing,
+            daily_wage: wageMissing,
           };
         }
         if (hasIn && hasOut) {
           const computed = computeHoursFromClockInOut(
             rawLog.clockIn,
             rawLog.clockOut,
-            STANDARD_WORK_HOURS_PER_DAY
+            empStd,
+            approvedOt,
+            rawLog.date
           );
-          const otH = Math.max(0, Number(rawLog.overtimeHours ?? rawLog.overtime_hours) || 0);
+          const otH = computed.overtimeHours;
           const totalH = Number((computed.normalHours + otH).toFixed(2));
           const wage = Math.round(computed.normalHours * hRate + otH * otRate);
           return {
@@ -528,18 +563,19 @@ export const PartTimeLogs: React.FC<PartTimeLogsProps> = ({
     let unpaidGross = 0;
     let paidGross = 0;
     filteredLogs.forEach((l) => {
+      const emp = safeEmployees.find((e) => e.id === l.employeeId);
+      const empStd = getEmployeeStandardDailyHours(emp);
+      const approvedOt = getApprovedOvertimeHoursForEmployeeDate(l.employeeId, l.date);
       const h = Math.max(0, Number(l.hoursWorked) || 0);
       const normH =
         l.normalHours !== undefined || l.normal_hours !== undefined
-          ? Math.min(
-              STANDARD_WORK_HOURS_PER_DAY,
-              Math.max(0, Number(l.normalHours ?? l.normal_hours) || 0)
-            )
-          : Math.min(STANDARD_WORK_HOURS_PER_DAY, h);
-      const otH =
+          ? Math.min(empStd, Math.max(0, Number(l.normalHours ?? l.normal_hours) || 0))
+          : Math.min(empStd, h);
+      const rawOtH =
         l.overtimeHours !== undefined || l.overtime_hours !== undefined
           ? Math.max(0, Number(l.overtimeHours ?? l.overtime_hours) || 0)
           : 0;
+      const otH = approvedOt > 0 ? Math.min(rawOtH || approvedOt, approvedOt) : 0;
       const hRate = Number(l.hourlyRate ?? l.hourlyRateSnapshot ?? l.hourly_rate) || 0;
       const otRate = Number(l.overtimeRate ?? l.overtime_rate) || Math.round(hRate * 1.5);
       const w = Math.round(normH * hRate + otH * otRate);

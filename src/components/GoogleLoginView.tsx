@@ -36,6 +36,11 @@ import {
   Employee,
 } from '../types';
 import { parseGoogleJwt, isGoogleGsiAvailable } from '../utils/googleAuth';
+import {
+  isOfficialAdminEmail,
+  verifyAdminLoginSecure,
+  OFFICIAL_ADMIN_EMAILS,
+} from '../services/authSecurityService';
 
 interface GoogleLoginViewProps {
   adminEmail: string;
@@ -97,8 +102,9 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
   onRegisterNewAdmin,
   onLoginAsEmployee,
 }) => {
-  const [customEmail, setCustomEmail] = useState('');
+  const [customEmail, setCustomEmail] = useState(OFFICIAL_ADMIN_EMAILS[0]);
   const [customName, setCustomName] = useState('');
+  const [customPin, setCustomPin] = useState('');
   const [customRole, setCustomRole] = useState<GoogleAdminRole>('Super Admin');
   const [isProcessing, setIsProcessing] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
@@ -197,6 +203,7 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
   }, [authSettings.googleClientId, activeTab]);
 
   // Handle Real Google JWT Credential Response
+  // Handle Real Google JWT Credential Response
   const handleGoogleCredentialResponse = (credentialJwt: string) => {
     setIsProcessing(true);
     const payload = parseGoogleJwt(credentialJwt);
@@ -207,74 +214,55 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
       return;
     }
 
-    processLoginForAccount(payload.email, payload.name, payload.picture);
+    processLoginForAccount(payload.email, payload.name, payload.picture, true);
   };
 
-  // Main login processor enforcing role permissions
+  // Main login processor enforcing official Admin email allowlist & role permissions
   const processLoginForAccount = (
     email: string,
     name?: string,
-    picture?: string
+    picture?: string,
+    verifiedViaGoogleOAuth = false
   ) => {
     setLoginError(null);
     setIsProcessing(true);
     const normalizedEmail = email.trim().toLowerCase();
 
-    // 1. Find if account already registered as admin
-    const matched = allowedAdmins.find(
-      (a) => a.email.trim().toLowerCase() === normalizedEmail
-    );
-
-    let resolvedRole: GoogleAdminRole;
-    let resolvedName: string = name || email.split('@')[0];
-    let resolvedPicture: string =
-      picture ||
-      `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(
-        normalizedEmail
-      )}`;
-
-    if (matched) {
-      if (matched.status === 'suspended') {
-        setIsProcessing(false);
-        setLoginError('Akun Google ini sedang ditangguhkan (Suspended) oleh Super Admin.');
-        return;
-      }
-      resolvedRole = matched.role;
-      resolvedName = matched.name;
-      if (matched.avatarUrl) resolvedPicture = matched.avatarUrl;
-    } else if (normalizedEmail === adminEmail.trim().toLowerCase()) {
-      resolvedRole = 'Super Admin';
-      resolvedName = name || 'Administrator Utama (TGI)';
-    } else if (authSettings.autoWhitelistNewUsers) {
-      // Auto-assign default configured role
-      resolvedRole =
-        authSettings.defaultNewUserRole === 'blocked'
-          ? 'Viewer / Auditor'
-          : authSettings.defaultNewUserRole;
-
-      // Register account in background
-      const newAcc: GoogleAdminAccount = {
-        id: `gadmin-${Date.now()}`,
-        email: normalizedEmail,
-        name: resolvedName,
-        role: resolvedRole,
-        avatarUrl: resolvedPicture,
-        addedAt: new Date().toISOString().split('T')[0],
-        status: 'active',
-        notes: 'Terdaftar otomatis via Login Real Google',
-      };
-      if (onRegisterNewAdmin) {
-        onRegisterNewAdmin(newAcc);
-      }
-    } else {
-      // Not allowed to self-register
+    // STRICT ALLOWLIST CHECK: Only official Admin emails may access Admin Panel
+    if (!isOfficialAdminEmail(normalizedEmail)) {
       setIsProcessing(false);
       setUnauthorizedAttempt(normalizedEmail);
       return;
     }
 
-    // 2. ENFORCE ROLE PERMISSION CHECK: Admin Panel Role Settings!
-    // Check if resolvedRole is currently allowed to access the dashboard
+    if (!verifiedViaGoogleOAuth) {
+      setIsProcessing(false);
+      setCustomEmail(normalizedEmail);
+      setActiveTab('custom');
+      setLoginError('Silakan masukkan PIN / Kata Sandi Admin untuk memverifikasi sesi Anda.');
+      return;
+    }
+
+    const matched = allowedAdmins.find(
+      (a) => a.email.trim().toLowerCase() === normalizedEmail
+    );
+
+    const resolvedRole: GoogleAdminRole = matched?.role || 'Super Admin';
+    const resolvedName: string =
+      matched?.name || name || 'Administrator PT Lupyta Maju Perkasa';
+    const resolvedPicture: string =
+      matched?.avatarUrl ||
+      picture ||
+      `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(
+        normalizedEmail
+      )}`;
+
+    if (matched?.status === 'suspended') {
+      setIsProcessing(false);
+      setLoginError('Akun Google ini sedang ditangguhkan (Suspended) oleh Super Admin.');
+      return;
+    }
+
     if (!allowedRoles.includes(resolvedRole)) {
       setIsProcessing(false);
       setRoleBlockedAttempt({
@@ -284,7 +272,6 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
       return;
     }
 
-    // 3. Login Success!
     setTimeout(() => {
       const adminUser: GoogleAdminUser = {
         id: matched?.id || `gadmin-${Date.now()}`,
@@ -299,12 +286,15 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
       };
       setIsProcessing(false);
       onLoginSuccess(adminUser);
-    }, 400);
+    }, 300);
   };
 
-  // Sign In with specific registered account card
+  // Selecting a registered account routes to PIN verification (never logs in without verifying PIN)
   const handleSelectAdmin = (acc: GoogleAdminAccount) => {
-    // Check if this role is allowed to access
+    if (!isOfficialAdminEmail(acc.email)) {
+      setUnauthorizedAttempt(acc.email);
+      return;
+    }
     if (!allowedRoles.includes(acc.role)) {
       setRoleBlockedAttempt({
         email: acc.email,
@@ -312,33 +302,39 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
       });
       return;
     }
-
-    setIsProcessing(true);
-    setTimeout(() => {
-      const adminUser: GoogleAdminUser = {
-        id: acc.id,
-        email: acc.email,
-        name: acc.name,
-        picture:
-          acc.avatarUrl ||
-          'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=256&h=256&q=80',
-        role: acc.role,
-        lastLogin: new Date().toLocaleString('id-ID', {
-          dateStyle: 'medium',
-          timeStyle: 'short',
-        }),
-        phone: acc.phone,
-      };
-      setIsProcessing(false);
-      onLoginSuccess(adminUser);
-    }, 400);
+    setCustomEmail(acc.email);
+    setCustomName(acc.name);
+    setActiveTab('custom');
+    setLoginError(null);
   };
 
-  // Custom Form Submit
-  const handleCustomSignIn = (e: React.FormEvent) => {
+  // Custom Form Submit with Mandatory Admin PIN Verification
+  const handleCustomSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!customEmail) return;
-    processLoginForAccount(customEmail, customName);
+    const normalizedEmail = customEmail.trim().toLowerCase();
+    if (!isOfficialAdminEmail(normalizedEmail)) {
+      setUnauthorizedAttempt(normalizedEmail);
+      return;
+    }
+    if (!customPin.trim()) {
+      setLoginError('Masukkan PIN atau Kata Sandi Admin terlebih dahulu.');
+      return;
+    }
+    setIsProcessing(true);
+    setLoginError(null);
+    try {
+      const verifyRes = await verifyAdminLoginSecure(normalizedEmail, customPin.trim(), 'Super Admin');
+      if (!verifyRes.authenticated) {
+        setLoginError(verifyRes.message || 'PIN / Kata Sandi Admin tidak sesuai.');
+        setIsProcessing(false);
+        return;
+      }
+      processLoginForAccount(normalizedEmail, customName, undefined, true);
+    } catch {
+      setLoginError('Gagal memverifikasi kredensial Admin.');
+      setIsProcessing(false);
+    }
   };
 
   // Real Google Sign In popup trigger helper
@@ -354,7 +350,6 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
           callback: async (tokenResponse: { access_token?: string }) => {
             if (tokenResponse.access_token) {
               try {
-                // Fetch real profile from Google UserInfo endpoint
                 const res = await fetch(
                   'https://www.googleapis.com/oauth2/v3/userinfo',
                   {
@@ -365,36 +360,30 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
                 );
                 const info = await res.json();
                 if (info.email) {
-                  processLoginForAccount(info.email, info.name, info.picture);
+                  processLoginForAccount(info.email, info.name, info.picture, true);
                 }
-              } catch (err) {
-                console.error('Error fetching Google UserInfo:', err);
+              } catch {
+                setLoginError('Gagal memverifikasi profil Google OAuth.');
               }
             }
           },
         });
         client.requestAccessToken();
         return;
-      } catch (e) {
-        console.warn('OAuth token client note:', e);
+      } catch {
+        // fallback to PIN tab
       }
     }
 
-    // Direct Real Google Sign-in Prompt if OAuth pop-up was blocked
-    const userPromptEmail = window.prompt(
-      'Masukkan alamat email Google Anda untuk masuk secara langsung (Real Google Login):',
-      'jpexakun7@gmail.com'
-    );
-    if (userPromptEmail) {
-      processLoginForAccount(userPromptEmail);
-    }
+    setActiveTab('custom');
   };
 
   const filteredAdmins = allowedAdmins.filter(
     (acc) =>
-      acc.name.toLowerCase().includes(searchAccountQuery.toLowerCase()) ||
-      acc.email.toLowerCase().includes(searchAccountQuery.toLowerCase()) ||
-      acc.role.toLowerCase().includes(searchAccountQuery.toLowerCase())
+      isOfficialAdminEmail(acc.email) &&
+      (acc.name.toLowerCase().includes(searchAccountQuery.toLowerCase()) ||
+        acc.email.toLowerCase().includes(searchAccountQuery.toLowerCase()) ||
+        acc.role.toLowerCase().includes(searchAccountQuery.toLowerCase()))
   );
 
   return (
@@ -532,7 +521,7 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
           </div>
         )}
 
-        {/* UNAUTHORIZED ALERT SCREEN */}
+        {/* UNAUTHORIZED ALERT SCREEN (NO SELF-REGISTRATION ALLOWED) */}
         {unauthorizedAttempt && !roleBlockedAttempt && (
           <div className="bg-rose-950/80 border border-rose-600/70 rounded-2xl p-5 shadow-2xl backdrop-blur-md space-y-4 animate-in fade-in zoom-in-95">
             <div className="flex items-start gap-3">
@@ -541,70 +530,20 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
               </div>
               <div className="space-y-1">
                 <h3 className="text-sm font-bold text-rose-200">
-                  Akun Belum Masuk Daftar Pengelola Resmi
+                  Akses Ditolak: Email Bukan Pengelola Admin Resmi
                 </h3>
                 <p className="text-xs text-rose-300/90 leading-relaxed">
-                  Email <span className="font-mono font-bold text-white bg-rose-900/60 px-1.5 py-0.5 rounded border border-rose-700/60">{unauthorizedAttempt}</span> belum terdaftar di daftar akun admin yang diizinkan.
+                  Email <span className="font-mono font-bold text-white bg-rose-900/60 px-1.5 py-0.5 rounded border border-rose-700/60">{unauthorizedAttempt}</span> tidak terdaftar dalam daftar email Admin resmi PT Lupyta Maju Perkasa. Pendaftaran mandiri ditutup demi keamanan data gaji & HRIS.
                 </p>
-              </div>
-            </div>
-
-            <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-700/90 text-xs text-slate-300 space-y-3">
-              <span className="font-semibold text-white block">
-                Daftarkan akun ini dengan peran yang diizinkan:
-              </span>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">
-                    Pilih Peran:
-                  </label>
-                  <select
-                    value={customRole}
-                    onChange={(e) => setCustomRole(e.target.value as GoogleAdminRole)}
-                    className="w-full px-3 py-2 text-xs bg-slate-800 border border-slate-700 rounded-lg text-white font-medium"
-                  >
-                    {allowedRoles.map((role) => (
-                      <option key={role} value={role}>
-                        {role}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="flex items-end">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const newAcc: GoogleAdminAccount = {
-                        id: `gadmin-${Date.now()}`,
-                        email: unauthorizedAttempt,
-                        name: unauthorizedAttempt.split('@')[0],
-                        role: customRole,
-                        avatarUrl: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(
-                          unauthorizedAttempt
-                        )}`,
-                        addedAt: new Date().toISOString().split('T')[0],
-                        status: 'active',
-                        notes: 'Didaftarkan dari portal login',
-                      };
-                      if (onRegisterNewAdmin) onRegisterNewAdmin(newAcc);
-                      setUnauthorizedAttempt(null);
-                      processLoginForAccount(unauthorizedAttempt, newAcc.name);
-                    }}
-                    className="w-full py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-emerald-700/40"
-                  >
-                    <UserPlus className="w-3.5 h-3.5" />
-                    <span>Daftarkan & Masuk</span>
-                  </button>
-                </div>
               </div>
             </div>
 
             <button
               type="button"
               onClick={() => setUnauthorizedAttempt(null)}
-              className="text-slate-400 hover:text-slate-200 cursor-pointer underline text-[11px]"
+              className="py-2 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 cursor-pointer text-xs font-bold"
             >
-              &larr; Batal & Kembali
+              &larr; Kembali ke Halaman Login
             </button>
           </div>
         )}
@@ -900,40 +839,45 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
               </div>
             )}
 
-            {/* TAB 3: CUSTOM EMAIL FORM */}
+            {/* TAB 3: CUSTOM EMAIL + PIN FORM */}
             {activeTab === 'custom' && (
               <form onSubmit={handleCustomSignIn} className="space-y-3.5">
                 <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-700/80 space-y-3">
                   <div className="flex items-center gap-2 text-xs font-semibold text-white">
                     <Mail className="w-4 h-4 text-emerald-400" />
-                    <span>Input Akun Google Tertentu</span>
+                    <span>Verifikasi Email & PIN Admin Resmi</span>
                   </div>
 
                   <div className="space-y-2.5">
                     <div>
                       <label className="block text-[11px] text-slate-300 mb-1 font-medium">
-                        Alamat Email Google <span className="text-rose-400">*</span>
+                        Alamat Email Admin Resmi <span className="text-rose-400">*</span>
                       </label>
-                      <input
-                        type="email"
-                        required
-                        placeholder="e.g. jpexakun7@gmail.com"
+                      <select
                         value={customEmail}
                         onChange={(e) => setCustomEmail(e.target.value)}
-                        className="w-full px-3 py-2 text-xs bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-hidden focus:border-emerald-500 font-mono"
-                      />
+                        className="w-full px-3 py-2 text-xs bg-slate-800 border border-slate-700 rounded-lg text-white focus:outline-hidden focus:border-emerald-500 font-mono"
+                      >
+                        {OFFICIAL_ADMIN_EMAILS.map((email) => (
+                          <option key={email} value={email}>
+                            {email}
+                          </option>
+                        ))}
+                      </select>
                     </div>
 
                     <div>
                       <label className="block text-[11px] text-slate-300 mb-1 font-medium">
-                        Nama Lengkap (Opsional)
+                        PIN / Kata Sandi Admin <span className="text-rose-400">*</span>
                       </label>
                       <input
-                        type="text"
-                        placeholder="Nama pengelola"
-                        value={customName}
-                        onChange={(e) => setCustomName(e.target.value)}
-                        className="w-full px-3 py-2 text-xs bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-hidden focus:border-emerald-500"
+                        type="password"
+                        required
+                        maxLength={32}
+                        placeholder="Masukkan PIN / Kata Sandi Admin"
+                        value={customPin}
+                        onChange={(e) => setCustomPin(e.target.value.slice(0, 32))}
+                        className="w-full px-3 py-2 text-xs bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-hidden focus:border-emerald-500 font-mono tracking-widest"
                       />
                     </div>
                   </div>
@@ -942,10 +886,10 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
                 <div className="flex gap-2">
                   <button
                     type="submit"
-                    disabled={isProcessing || !customEmail}
+                    disabled={isProcessing || !customEmail || !customPin}
                     className="flex-1 py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-emerald-700/30 disabled:opacity-50"
                   >
-                    <span>{isProcessing ? 'Memverifikasi...' : 'Verifikasi Akun & Masuk'}</span>
+                    <span>{isProcessing ? 'Memverifikasi...' : 'Verifikasi PIN & Masuk'}</span>
                     <ArrowRight className="w-3.5 h-3.5" />
                   </button>
 

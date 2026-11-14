@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import { Employee } from '../types';
+import { getJakartaDateString } from './formatters';
 
 // Buat dan unduh template Excel untuk data Payroll (Bonus, Lembur, Tunjangan Tambahan)
 export function downloadPayrollExcelTemplate(employees: Employee[]) {
@@ -57,7 +58,7 @@ export function downloadPayrollCSVTemplate(employees: Employee[]) {
 
 // Buat dan unduh template Excel untuk data Presensi & Absensi (Mesin Fingerprint/Aplikasi)
 export function downloadAttendanceExcelTemplate(employees: Employee[]) {
-  const today = new Date().toISOString().split('T')[0];
+  const today = getJakartaDateString();
   const sampleData = employees.map((emp, index) => ({
     NIK: emp.nik,
     'Nama Karyawan': emp.fullName,
@@ -86,7 +87,7 @@ export function downloadAttendanceExcelTemplate(employees: Employee[]) {
 
 // Buat dan unduh template CSV untuk data Presensi
 export function downloadAttendanceCSVTemplate(employees: Employee[]) {
-  const today = new Date().toISOString().split('T')[0];
+  const today = getJakartaDateString();
   const headers = ['NIK', 'Nama Karyawan', 'Tanggal', 'Jam Masuk', 'Jam Pulang', 'Status', 'Catatan'];
   const rows = employees.map((emp, index) => [
     emp.nik,

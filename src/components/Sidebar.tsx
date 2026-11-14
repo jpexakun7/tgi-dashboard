@@ -22,6 +22,7 @@ import {
   HandCoins,
   SlidersHorizontal,
   FileMinus2,
+  Gift,
 } from 'lucide-react';
 import { GoogleAdminUser, DashboardModule } from '../types';
 
@@ -30,6 +31,7 @@ export type ActiveTab =
   | 'employees'
   | 'payroll'
   | 'part_time_payroll'
+  | 'thr_management'
   | 'payroll_adjustments'
   | 'payroll_deductions'
   | 'bonus_management'
@@ -103,6 +105,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: Clock,
       badge: 'Mingguan',
       badgeColor: 'bg-orange-100 text-orange-800',
+    },
+    {
+      id: 'thr_management' as ActiveTab,
+      label: 'THR & Hari Raya',
+      icon: Gift,
+      badge: 'THR',
+      badgeColor: 'bg-emerald-100 text-emerald-800',
     },
     {
       id: 'payroll_adjustments' as ActiveTab,
@@ -342,7 +351,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
               if (
                 item.id === 'bonus_management' ||
                 item.id === 'payroll_adjustments' ||
-                item.id === 'payroll_deductions'
+                item.id === 'payroll_deductions' ||
+                item.id === 'thr_management'
               ) {
                 return (
                   allowedModules.includes('payroll' as any) ||

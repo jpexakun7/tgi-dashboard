@@ -20,10 +20,15 @@ import {
   Lock,
   ExternalLink,
 } from 'lucide-react';
-import { Employee, WorkShift, AttendanceRecord } from '../types';
+import { Employee, WorkShift, AttendanceRecord, OvertimeRequest } from '../types';
 import {
   evaluateAttendanceAgainstShift,
   getEmployeeStandardDailyHours,
+  calculateCappedDailyWorkHours,
+  getApprovedOvertimeHoursForEmployeeDate,
+  getJakartaDateParts,
+  getJakartaDateString,
+  getJakartaTimeString,
 } from '../utils/formatters';
 
 interface LiveFaceGpsAttendanceScannerProps {
@@ -35,6 +40,7 @@ interface LiveFaceGpsAttendanceScannerProps {
   customClockInTime: string;
   customClockOutTime: string;
   clockInNotes: string;
+  overtimeRequests?: OvertimeRequest[];
   onChangeNotes: (notes: string) => void;
   onSubmitAttendance: (record: AttendanceRecord, mode: 'check_in' | 'check_out') => void;
 }
@@ -112,19 +118,16 @@ function formatFullIndonesianDateTime(date: Date): {
     'November',
     'Desember',
   ];
-  const dayName = days[date.getDay()];
-  const dayNum = String(date.getDate()).padStart(2, '0');
-  const monthName = months[date.getMonth()];
-  const year = date.getFullYear();
-
-  const hours = String(date.getHours()).padStart(2, '0');
-  const minutes = String(date.getMinutes()).padStart(2, '0');
-  const seconds = String(date.getSeconds()).padStart(2, '0');
+  const wib = getJakartaDateParts(date);
+  const dayName = days[wib.dayOfWeek] || 'Senin';
+  const dayNum = wib.dayStr;
+  const monthName = months[wib.month - 1] || 'Januari';
+  const year = wib.year;
 
   return {
     dayDateStr: `${dayName}, ${dayNum} ${monthName} ${year}`,
-    timeWithSecondsStr: `${hours}:${minutes}:${seconds} WIB`,
-    shortHourMinStr: `${hours}:${minutes}`,
+    timeWithSecondsStr: `${wib.hoursStr}:${wib.minutesStr}:${wib.secondsStr} WIB`,
+    shortHourMinStr: `${wib.hoursStr}:${wib.minutesStr}`,
   };
 }
 
@@ -418,7 +421,7 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
       setAntiFakeAudit(audit);
       setGpsStatus('locked');
       setGpsErrorMessage(null);
-      setLastGpsUpdatedTime(new Date().toLocaleTimeString('id-ID'));
+      setLastGpsUpdatedTime(`${getJakartaTimeString(new Date(), true)} WIB`);
 
       if (dist <= OFFICE_REFERENCE_COORDS.maxRadiusMeters && !audit.isFakeDetected) {
         setBlockedAttemptAlert(null);
@@ -612,7 +615,7 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
         setIsStartingCamera(false);
         setIsReconnectingCamera(false);
         setCameraFallbackReason(
-          'Akses kamera fisik belum diizinkan pada perangkat ini — menggunakan tangkapan layar biometrik karyawan dengan watermark GPS & Jam Real-Time.'
+          'WAJIB KAMERA SELFIE LANGSUNG: Akses kamera fisik belum diizinkan pada perangkat ini. Izinkan akses kamera di browser untuk melakukan Clock-In maupun Clock-Out (foto galeri/profil ditolak).'
         );
       }
     },
@@ -694,82 +697,61 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
   );
   const isShiftAttendanceCompletedToday = hasCheckedInToday && hasCheckedOutToday;
 
-  // Geofence <= 25m and Anti-Fake GPS Eligibility Evaluation
+  // Geofence <= 25m, Anti-Fake GPS, and Mandatory Live Camera Verification (Both Clock-In & Clock-Out)
   const isGpsLocked = gpsStatus === 'locked' && gpsCoords !== null && distanceFromOffice !== null;
   const isWithinMaxRadius =
     isGpsLocked &&
     distanceFromOffice !== null &&
     distanceFromOffice <= OFFICE_REFERENCE_COORDS.maxRadiusMeters;
   const isFakeGpsDetected = antiFakeAudit.isFakeDetected;
-  const canSubmitAttendance = isGpsLocked && isWithinMaxRadius && !isFakeGpsDetected;
+  const isLiveCameraReady = Boolean(isCameraActive);
+  const canSubmitAttendance =
+    isLiveCameraReady && isGpsLocked && isWithinMaxRadius && !isFakeGpsDetected;
 
-  // 5. Generate Watermarked Face Snapshot with Real-Time Date, Clock, Anti-Fake GPS & 25m Geofence Proof
+  // 5. Generate Watermarked Face Snapshot Strictly from Live Camera Video Stream (No Gallery / No Profile Avatar Fallback)
   const captureWatermarkedFacePhoto = (
     attendanceActionLabel: 'ABSEN MASUK' | 'ABSEN PULANG',
     recordedTimeStr: string,
     evalStatusText: string
   ): string => {
+    const videoEl = videoRef.current;
+    if (!isCameraActive || !videoEl || videoEl.readyState < 2 || videoEl.videoWidth <= 0) {
+      return '';
+    }
+
     const canvas = document.createElement('canvas');
     const width = 960;
     const height = 720;
     canvas.width = width;
     canvas.height = height;
     const ctx = canvas.getContext('2d');
-    if (!ctx) return currentEmployee.avatarUrl || '';
+    if (!ctx) return '';
 
     const activeLat = gpsCoords ? gpsCoords.latitude : OFFICE_REFERENCE_COORDS.latitude;
     const activeLon = gpsCoords ? gpsCoords.longitude : OFFICE_REFERENCE_COORDS.longitude;
     const activeDist = distanceFromOffice !== null ? distanceFromOffice : 0;
 
-    // A. Draw live camera frame or fallback employee portrait
-    const videoEl = videoRef.current;
-    if (isCameraActive && videoEl && videoEl.readyState >= 2 && videoEl.videoWidth > 0) {
-      ctx.save();
-      if (facingMode === 'user') {
-        ctx.translate(width, 0);
-        ctx.scale(-1, 1);
-      }
-      const videoAspect = videoEl.videoWidth / videoEl.videoHeight;
-      const canvasAspect = width / height;
-      let drawW = width;
-      let drawH = height;
-      let offsetX = 0;
-      let offsetY = 0;
-      if (videoAspect > canvasAspect) {
-        drawW = height * videoAspect;
-        offsetX = -(drawW - width) / 2;
-      } else {
-        drawH = width / videoAspect;
-        offsetY = -(drawH - height) / 2;
-      }
-      ctx.drawImage(videoEl, offsetX, offsetY, drawW, drawH);
-      ctx.restore();
-    } else {
-      const bgGrad = ctx.createLinearGradient(0, 0, width, height);
-      bgGrad.addColorStop(0, '#0f172a');
-      bgGrad.addColorStop(0.5, '#1e293b');
-      bgGrad.addColorStop(1, '#064e3b');
-      ctx.fillStyle = bgGrad;
-      ctx.fillRect(0, 0, width, height);
-
-      if (avatarImgRef.current) {
-        const img = avatarImgRef.current;
-        const imgAspect = img.width / img.height;
-        const canvasAspect = width / height;
-        let drawW = width;
-        let drawH = height;
-        let offsetX = 0;
-        let offsetY = 0;
-        if (imgAspect > canvasAspect) {
-          drawW = height * imgAspect;
-          offsetX = -(drawW - width) / 2;
-        } else {
-          drawH = width / imgAspect;
-          offsetY = -(drawH - height) / 2;
-        }
-        ctx.drawImage(img, offsetX, offsetY, drawW, drawH);
-      }
+    // A. Draw live camera frame strictly from active video stream
+    ctx.save();
+    if (facingMode === 'user') {
+      ctx.translate(width, 0);
+      ctx.scale(-1, 1);
     }
+    const videoAspect = videoEl.videoWidth / videoEl.videoHeight;
+    const canvasAspect = width / height;
+    let drawW = width;
+    let drawH = height;
+    let offsetX = 0;
+    let offsetY = 0;
+    if (videoAspect > canvasAspect) {
+      drawW = height * videoAspect;
+      offsetX = -(drawW - width) / 2;
+    } else {
+      drawH = width / videoAspect;
+      offsetY = -(drawH - height) / 2;
+    }
+    ctx.drawImage(videoEl, offsetX, offsetY, drawW, drawH);
+    ctx.restore();
 
     // B. Top HUD Watermark Bar
     const topGrad = ctx.createLinearGradient(0, 0, 0, 95);
@@ -900,18 +882,27 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
       return;
     }
 
-    // Hard Guard 1: Real GPS must be locked
-    if (!isGpsLocked || !gpsCoords || distanceFromOffice === null) {
+    // Hard Guard 1: Live Camera Selfie must be active on both Check-In and Check-Out
+    const videoEl = videoRef.current;
+    if (!isCameraActive || !videoEl || videoEl.readyState < 2 || videoEl.videoWidth <= 0) {
       setBlockedAttemptAlert(
-        'ABSEN DITOLAK: Sinyal GPS HP asli belum terkunci. Tekan tombol "Refresh GPS" dan pastikan Lokasi/GPS aktif pada HP Anda.'
+        `ABSEN ${mode === 'check_in' ? 'MASUK' : 'PULANG'} DITOLAK (KAMERA BELUM AKTIF): Wajib memindai wajah secara langsung melalui kamera aktif (bukan foto galeri/profil) baik saat Clock-In maupun saat Clock-Out.`
       );
       return;
     }
 
-    // Hard Guard 2: Anti-Fake GPS check must pass
+    // Hard Guard 2: Real GPS must be locked on both Check-In and Check-Out
+    if (!isGpsLocked || !gpsCoords || distanceFromOffice === null) {
+      setBlockedAttemptAlert(
+        `ABSEN ${mode === 'check_in' ? 'MASUK' : 'PULANG'} DITOLAK: Sinyal GPS HP asli belum terkunci. Tekan tombol "Refresh GPS" dan pastikan Lokasi/GPS aktif pada HP Anda.`
+      );
+      return;
+    }
+
+    // Hard Guard 3: Anti-Fake GPS check must pass
     if (isFakeGpsDetected) {
       setBlockedAttemptAlert(
-        `ABSEN DIBLOKIR (TERDETEKSI FAKE GPS): ${
+        `ABSEN ${mode === 'check_in' ? 'MASUK' : 'PULANG'} DIBLOKIR (TERDETEKSI FAKE GPS): ${
           antiFakeAudit.reasons[0] ||
           'Sistem mendeteksi penggunaan Mock Location / Fake GPS. Matikan aplikasi pengubah lokasi untuk absen.'
         }`
@@ -919,10 +910,10 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
       return;
     }
 
-    // Hard Guard 3: Must be strictly <= 25 meters from Office Reference Coordinates
+    // Hard Guard 4: Must be strictly <= 25 meters from Office Reference Coordinates (is_in_office_radius = true)
     if (distanceFromOffice > OFFICE_REFERENCE_COORDS.maxRadiusMeters) {
       setBlockedAttemptAlert(
-        `ABSEN DITOLAK (DI LUAR RADIUS 25 METER): Jarak Anda saat ini ${distanceFromOffice} meter dari titik koordinat kantor (${OFFICE_REFERENCE_COORDS.latitude}, ${OFFICE_REFERENCE_COORDS.longitude}). Anda hanya bisa absen dalam jangkauan maksimal 25 meter dari titik koordinat kantor.`
+        `ABSEN ${mode === 'check_in' ? 'MASUK' : 'PULANG'} DITOLAK (DI LUAR RADIUS KANTOR/GUDANG): Jarak Anda saat ini ${distanceFromOffice} meter dari titik koordinat kantor (${OFFICE_REFERENCE_COORDS.latitude}, ${OFFICE_REFERENCE_COORDS.longitude}). Clock-In maupun Clock-Out wajib berada di dalam radius maksimal ${OFFICE_REFERENCE_COORDS.maxRadiusMeters} meter (is_in_office_radius = true).`
       );
       return;
     }
@@ -933,8 +924,14 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
     const { dayDateStr, timeWithSecondsStr, shortHourMinStr } =
       formatFullIndonesianDateTime(nowDate);
     const fullTimestampLabel = `${dayDateStr} • ${timeWithSecondsStr}`;
+    const effectiveTodayDateStr = getJakartaDateString(nowDate) || todayDateStr;
 
-    const empStdHours = getEmployeeStandardDailyHours(currentEmployee);
+    const empStdHours = getEmployeeStandardDailyHours(currentEmployee, undefined, activeShift);
+    const approvedOtHours = getApprovedOvertimeHoursForEmployeeDate(
+      currentEmployee.id,
+      effectiveTodayDateStr
+    );
+
     if (mode === 'check_in') {
       const targetInTime = useCustomClockTime ? customClockInTime : shortHourMinStr;
       const targetOutTime = todayAttendance?.checkOut || '';
@@ -952,17 +949,26 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
         evalRes.status
       );
 
+      if (!watermarkedPhoto || watermarkedPhoto.length < 50) {
+        setIsCapturing(false);
+        setBlockedAttemptAlert(
+          'ABSEN MASUK DITOLAK: Gagal mengambil foto selfie wajah dari kamera langsung. Pastikan kamera aktif dan coba lagi.'
+        );
+        return;
+      }
+
       setLastCapturedPhoto(watermarkedPhoto);
       setLastCapturedType('MASUK');
 
       const newRecord: AttendanceRecord = {
         id: todayAttendance ? todayAttendance.id : `att-${Date.now()}`,
         employeeId: currentEmployee.id,
-        date: todayDateStr,
+        date: effectiveTodayDateStr,
         checkIn: targetInTime,
         checkOut: targetOutTime,
         status: evalRes.status,
         workHours: evalRes.workHours,
+        overtimeHours: 0,
         lateMinutes: evalRes.lateMinutes,
         earlyLeaveMinutes: evalRes.earlyLeaveMinutes,
         shiftId: activeShift.id,
@@ -972,7 +978,10 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
         faceScanVerified: true,
         faceConfidence: 99.4,
         facePhotoSnapshot: watermarkedPhoto,
+        photoIn: watermarkedPhoto,
         checkOutPhotoSnapshot: todayAttendance?.checkOutPhotoSnapshot,
+        photoOut: todayAttendance?.photoOut || todayAttendance?.checkOutPhotoSnapshot,
+        facePhotoOut: todayAttendance?.facePhotoOut || todayAttendance?.checkOutPhotoSnapshot,
         checkInFullTimestamp: fullTimestampLabel,
         checkOutFullTimestamp: todayAttendance?.checkOutFullTimestamp,
         locationCoords: {
@@ -983,11 +992,12 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
         locationAddress: gpsDetailedAddress,
         checkOutLocationCoords: todayAttendance?.checkOutLocationCoords,
         checkOutLocationAddress: todayAttendance?.checkOutLocationAddress,
+        checkOutDistanceMeters: todayAttendance?.checkOutDistanceMeters,
         isInOfficeRadius: true,
         distanceMeters: Math.round(distanceFromOffice),
         notes:
           clockInNotes.trim() ||
-          `Absen Wajah & GPS Valid (${distanceFromOffice}m ≤ 25m • Anti-Fake GPS Lolos) • ${activeShift.code}`,
+          `Absen Masuk Wajah & GPS Valid (${distanceFromOffice}m ≤ 25m • Target ${empStdHours} Jam/Hari) • ${activeShift.code}`,
       };
 
       onSubmitAttendance(newRecord, 'check_in');
@@ -1005,27 +1015,53 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
         empStdHours
       );
 
+      const cappedRes = calculateCappedDailyWorkHours(
+        todayAttendance.checkIn,
+        targetOutTime,
+        evalRes.workHours,
+        empStdHours,
+        approvedOtHours,
+        effectiveTodayDateStr
+      );
+
       const watermarkedPhoto = captureWatermarkedFacePhoto(
         'ABSEN PULANG',
         targetOutTime,
-        `Durasi ${evalRes.workHours} Jam`
+        `Durasi ${cappedRes.cappedWorkHours} Jam (Target Maks ${empStdHours} Jam)`
       );
+
+      if (!watermarkedPhoto || watermarkedPhoto.length < 50) {
+        setIsCapturing(false);
+        setBlockedAttemptAlert(
+          'ABSEN PULANG DITOLAK: Gagal mengambil foto selfie wajah dari kamera langsung saat Clock-Out. Pastikan kamera aktif dan coba lagi.'
+        );
+        return;
+      }
 
       setLastCapturedPhoto(watermarkedPhoto);
       setLastCapturedType('PULANG');
+
+      const existingPhotoIn =
+        todayAttendance.facePhotoSnapshot || todayAttendance.photoIn || watermarkedPhoto;
 
       const updatedRecord: AttendanceRecord = {
         ...todayAttendance,
         checkOut: targetOutTime,
         status: evalRes.status,
-        workHours: evalRes.workHours,
+        workHours: cappedRes.cappedWorkHours,
+        overtimeHours: cappedRes.overtimeHours,
         lateMinutes: evalRes.lateMinutes,
         earlyLeaveMinutes: evalRes.earlyLeaveMinutes,
         shiftId: activeShift.id,
         shiftName: activeShift.name,
         scheduledCheckIn: activeShift.checkInTime,
         scheduledCheckOut: activeShift.checkOutTime,
+        faceScanVerified: true,
+        facePhotoSnapshot: existingPhotoIn,
+        photoIn: existingPhotoIn,
         checkOutPhotoSnapshot: watermarkedPhoto,
+        photoOut: watermarkedPhoto,
+        facePhotoOut: watermarkedPhoto,
         checkOutFullTimestamp: fullTimestampLabel,
         checkOutLocationCoords: {
           latitude: gpsCoords.latitude,
@@ -1033,12 +1069,18 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
           accuracy: gpsCoords.accuracy,
         },
         checkOutLocationAddress: gpsDetailedAddress,
+        checkOutDistanceMeters: Math.round(distanceFromOffice),
         isInOfficeRadius: true,
-        distanceMeters: Math.round(distanceFromOffice),
+        distanceMeters:
+          todayAttendance.distanceMeters !== undefined
+            ? todayAttendance.distanceMeters
+            : Math.round(distanceFromOffice),
         notes:
           clockInNotes.trim() ||
           todayAttendance.notes ||
-          `Selesai Shift (${distanceFromOffice}m ≤ 25m • Anti-Fake GPS Lolos)`,
+          `Selesai Shift (${cappedRes.cappedWorkHours}/${empStdHours} Jam Normal${
+            cappedRes.overtimeHours > 0 ? ` + ${cappedRes.overtimeHours} Jam Lembur Disetujui` : ''
+          } • Clock-Out GPS ${distanceFromOffice}m ≤ 25m)`,
       };
 
       onSubmitAttendance(updatedRecord, 'check_out');
@@ -1423,10 +1465,12 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
                   {hasCheckedInToday
                     ? `Sudah Check-In Hari Ini (${todayAttendance?.checkIn} WIB — Maks 1x/Shift)`
                     : !canSubmitAttendance
-                    ? isFakeGpsDetected
+                    ? !isLiveCameraReady
+                      ? 'Absen Masuk Diblokir (Wajib Aktifkan Kamera Selfie Live)'
+                      : isFakeGpsDetected
                       ? 'Absen Masuk Diblokir (Fake GPS Terdeteksi)'
                       : distanceFromOffice !== null && distanceFromOffice > 25
-                      ? `Tidak Bisa Absen Masuk (Jarak ${distanceFromOffice}m > 25m)`
+                      ? `Tidak Bisa Absen Masuk (Di Luar Radius Kantor: ${distanceFromOffice}m > 25m)`
                       : 'Menunggu Kunci GPS HP (Wajib Radius ≤ 25m)'
                     : `Jepret Foto Wajah & Absen Masuk (${
                         useCustomClockTime ? customClockInTime : shortHourMinStr
@@ -1434,7 +1478,7 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
                 </span>
               </button>
 
-              {/* 1x Check-Out Button */}
+              {/* 1x Check-Out Button (Enforces GPS Radius & Live Selfie Capture on Clock-Out) */}
               <button
                 type="button"
                 disabled={
@@ -1446,7 +1490,7 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
                     ? 'bg-indigo-950/60 text-indigo-300 border border-indigo-500/40 cursor-not-allowed'
                     : hasCheckedInToday && canSubmitAttendance
                     ? 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-md cursor-pointer active:scale-[0.99]'
-                    : 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
+                    : 'bg-slate-800 text-slate-400 border border-rose-500/30 cursor-not-allowed'
                 }`}
               >
                 {hasCheckedOutToday ? (
@@ -1454,7 +1498,7 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
                 ) : hasCheckedInToday && canSubmitAttendance ? (
                   <LogOut className="w-4 h-4 shrink-0" />
                 ) : (
-                  <Lock className="w-4 h-4 shrink-0" />
+                  <Lock className="w-4 h-4 shrink-0 text-rose-400" />
                 )}
                 <span className="leading-snug">
                   {hasCheckedOutToday
@@ -1462,11 +1506,13 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
                     : !hasCheckedInToday
                     ? 'Wajib Check-In Terlebih Dahulu Sebelum Check-Out'
                     : !canSubmitAttendance
-                    ? isFakeGpsDetected
-                      ? 'Absen Pulang Diblokir (Fake GPS Terdeteksi)'
+                    ? !isLiveCameraReady
+                      ? 'Clock-Out Diblokir (Wajib Aktifkan Kamera Selfie Live)'
+                      : isFakeGpsDetected
+                      ? 'Clock-Out Diblokir (Fake GPS Terdeteksi)'
                       : distanceFromOffice !== null && distanceFromOffice > 25
-                      ? `Tidak Bisa Absen Pulang (Jarak ${distanceFromOffice}m > 25m)`
-                      : 'Absen Pulang Wajib di Dalam Radius ≤ 25m Kantor'
+                      ? `Tidak Bisa Clock-Out (Di Luar Radius Kantor: ${distanceFromOffice}m > 25m)`
+                      : 'Clock-Out Wajib di Dalam Radius ≤ 25m Kantor & Kamera Aktif'
                     : `Jepret Foto Wajah & Absen Pulang (${
                         useCustomClockTime ? customClockOutTime : shortHourMinStr
                       } WIB)`}
@@ -1619,12 +1665,18 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
                 </div>
               </div>
 
-              {/* Blocking Explanation Banner if Outside 25m or Fake GPS Detected or GPS Denied */}
+              {/* Blocking Explanation Banner if Outside 25m or Fake GPS Detected or Camera Inactive */}
               {!canSubmitAttendance && (
                 <div className="p-2.5 rounded-lg bg-rose-950/90 border border-rose-500/50 text-[11px] text-rose-200 flex items-start gap-2">
                   <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
                   <div className="space-y-1 min-w-0 break-words">
-                    {gpsErrorMessage ? (
+                    {!isLiveCameraReady ? (
+                      <p className="font-semibold leading-snug">
+                        <strong>KAMERA SELFIE WAJIB AKTIF (CLOCK-IN & CLOCK-OUT):</strong>{' '}
+                        {cameraFallbackReason ||
+                          'Izinkan akses kamera pada browser perangkat Anda. Sistem menolak absensi tanpa foto selfie langsung (face_scan_verified = true).'}
+                      </p>
+                    ) : gpsErrorMessage ? (
                       <p className="font-semibold leading-snug">{gpsErrorMessage}</p>
                     ) : isFakeGpsDetected ? (
                       <>
@@ -1639,16 +1691,20 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
                       </>
                     ) : distanceFromOffice !== null && distanceFromOffice > 25 ? (
                       <p className="font-semibold leading-snug">
-                        <strong>TIDAK BISA ABSEN:</strong> Jarak posisi GPS Anda saat ini{' '}
-                        <strong>{distanceFromOffice} meter</strong> dari titik koordinat kantor (
-                        {OFFICE_REFERENCE_COORDS.latitude}, {OFFICE_REFERENCE_COORDS.longitude}).
-                        Batas maksimal absen adalah <strong>25 meter</strong> dari titik koordinat
-                        kantor.
+                        <strong>
+                          TIDAK BISA {hasCheckedInToday && !hasCheckedOutToday ? 'CLOCK-OUT' : 'CLOCK-IN'} (DI LUAR RADIUS KANTOR/GUDANG):
+                        </strong>{' '}
+                        Jarak posisi GPS Anda saat ini <strong>{distanceFromOffice} meter</strong>{' '}
+                        dari titik koordinat kantor ({OFFICE_REFERENCE_COORDS.latitude},{' '}
+                        {OFFICE_REFERENCE_COORDS.longitude}). Tombol{' '}
+                        {hasCheckedInToday && !hasCheckedOutToday ? 'Clock-Out' : 'Clock-In'} dikunci
+                        karena Anda berada di luar batas radius maksimal <strong>25 meter</strong>{' '}
+                        (is_in_office_radius = false).
                       </p>
                     ) : (
                       <p className="font-semibold leading-snug">
                         Sedang membaca titik koordinat GPS HP Anda... Pastikan Anda berada
-                        maksimal 25 meter dari titik koordinat kantor.
+                        maksimal 25 meter dari titik koordinat kantor saat Clock-In maupun Clock-Out.
                       </p>
                     )}
                   </div>

@@ -36,9 +36,12 @@ import {
   DEFAULT_ATTENDANCE_PENALTY_POLICY,
   getAttendancePenaltyPolicy,
   getEmployeeShift,
+  getEmployeeStandardDailyHours,
   evaluateAttendanceAgainstShift,
   deduplicateDailyAttendances,
   calculateEmployeeAttendancePenalty,
+  getJakartaDateString,
+  getJakartaFullDateTimeLabel,
 } from '../utils/formatters';
 import { UploadAttendanceModal } from './UploadAttendanceModal';
 
@@ -119,6 +122,16 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
     initialSubTab
   );
   const [isPenaltyPanelOpen, setIsPenaltyPanelOpen] = useState(true);
+  const [wibNow, setWibNow] = useState<Date>(() => new Date());
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setWibNow(new Date());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const liveClockWib = useMemo(() => getJakartaFullDateTimeLabel(wibNow, true), [wibNow]);
 
   useEffect(() => {
     setActiveSubTab(initialSubTab);
@@ -227,7 +240,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
 
   // Form Clock In State (Manual Admin Record)
   const [formEmpId, setFormEmpId] = useState(employees[0]?.id || '');
-  const [formDate, setFormDate] = useState(new Date().toISOString().split('T')[0]);
+  const [formDate, setFormDate] = useState(() => getJakartaDateString());
   const [formAttendanceMode, setFormAttendanceMode] = useState<
     'AUTO_SHIFT' | 'Alpa' | 'Sakit' | 'Izin' | 'Cuti'
   >('AUTO_SHIFT');
@@ -250,13 +263,15 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
     const effectiveGrace = penaltyPolicy.useShiftGracePeriod
       ? selectedModalShift.gracePeriodMinutes
       : penaltyPolicy.gracePeriodMinutes;
+    const empStd = getEmployeeStandardDailyHours(selectedModalEmployee, undefined, selectedModalShift);
     return evaluateAttendanceAgainstShift(
       formCheckIn,
       formCheckOut,
       selectedModalShift,
-      effectiveGrace
+      effectiveGrace,
+      empStd
     );
-  }, [formCheckIn, formCheckOut, selectedModalShift, penaltyPolicy]);
+  }, [formCheckIn, formCheckOut, selectedModalShift, selectedModalEmployee, penaltyPolicy]);
 
   // Sync checkIn / checkOut defaults when admin changes employee in modal
   const handleSelectModalEmployee = (empId: string) => {
@@ -283,6 +298,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
     if (!emp) return;
 
     const empShift = getEmployeeShift(emp, workShifts);
+    const empStd = getEmployeeStandardDailyHours(emp, undefined, empShift);
     const effectiveGrace = penaltyPolicy.useShiftGracePeriod
       ? empShift.gracePeriodMinutes
       : penaltyPolicy.gracePeriodMinutes;
@@ -290,7 +306,8 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
       formCheckIn,
       formCheckOut,
       empShift,
-      effectiveGrace
+      effectiveGrace,
+      empStd
     );
 
     const isAbsenceStatus = formAttendanceMode !== 'AUTO_SHIFT';
@@ -578,8 +595,15 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
     const finalCheckIn = isNonPresent ? '-' : editAttCheckIn || empShift.checkInTime;
     const finalCheckOut = isNonPresent ? '-' : editAttHasCheckOut ? editAttCheckOut : '-';
 
+    const empStd = getEmployeeStandardDailyHours(emp, undefined, empShift);
     const evalRes = !isNonPresent
-      ? evaluateAttendanceAgainstShift(finalCheckIn, finalCheckOut, empShift, effectiveGrace)
+      ? evaluateAttendanceAgainstShift(
+          finalCheckIn,
+          finalCheckOut,
+          empShift,
+          effectiveGrace,
+          empStd
+        )
       : null;
 
     const isManualOverride = editAttStatusMode !== 'AUTO_SHIFT';
@@ -698,10 +722,16 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
       {/* Header */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
-            <CalendarCheck2 className="w-6 h-6 text-emerald-600" />
-            Manajemen Presensi & Jadwal Shift Kerja
-          </h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
+              <CalendarCheck2 className="w-6 h-6 text-emerald-600" />
+              Manajemen Presensi & Jadwal Shift Kerja
+            </h1>
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-[11px] font-mono font-bold">
+              <Clock className="w-3.5 h-3.5 text-emerald-600" />
+              <span>{liveClockWib.compactLabel}</span>
+            </span>
+          </div>
           <p className="text-xs text-slate-500 mt-0.5">
             Atur manual jam masuk dan pulang kerja dalam beberapa shift. Karyawan akan absen mengikuti jadwal shift yang ditetapkan.
           </p>
@@ -726,7 +756,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
               const firstEmp = employees[0];
               const shift = getEmployeeShift(firstEmp, workShifts);
               setFormEmpId(firstEmp?.id || '');
-              setFormDate(new Date().toISOString().split('T')[0]);
+              setFormDate(getJakartaDateString());
               setFormCheckIn(shift.checkInTime);
               setFormCheckOut(shift.checkOutTime);
               setIsModalOpen(true);
@@ -1852,7 +1882,10 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                     const schedIn = att.scheduledCheckIn || empShift.checkInTime;
                     const schedOut = att.scheduledCheckOut || empShift.checkOutTime;
                     const shiftLabel = att.shiftName || empShift.name;
-                    const photoSnap = att.facePhotoSnapshot || att.checkOutPhotoSnapshot;
+                    const photoInSnap = att.facePhotoSnapshot || att.photoIn;
+                    const photoOutSnap =
+                      att.checkOutPhotoSnapshot || att.facePhotoOut || att.photoOut;
+                    const photoSnap = photoInSnap || photoOutSnap;
                     const isPresentWithoutCheckout =
                       (att.status === 'Hadir Tepat Waktu' || att.status === 'Terlambat') &&
                       (!att.checkOut || att.checkOut === '-');
@@ -1899,17 +1932,44 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                               onClick={() => setPreviewPhotoRecord(att)}
                               className="flex items-center gap-2 group cursor-pointer text-left"
                             >
-                              <img
-                                src={photoSnap}
-                                alt="Foto Absen"
-                                className="w-11 h-9 rounded-lg object-cover border border-emerald-300 shadow-2xs group-hover:ring-2 group-hover:ring-emerald-500 transition-all"
-                              />
+                              <div className="flex items-center gap-1.5">
+                                {photoInSnap && (
+                                  <div className="relative">
+                                    <img
+                                      src={photoInSnap}
+                                      alt="Foto Clock-In"
+                                      className="w-11 h-9 rounded-lg object-cover border border-emerald-300 shadow-2xs group-hover:ring-2 group-hover:ring-emerald-500 transition-all"
+                                    />
+                                    <span className="absolute -bottom-1 left-0.5 px-1 py-0.2 rounded bg-emerald-600 text-white text-[8px] font-extrabold">
+                                      IN
+                                    </span>
+                                  </div>
+                                )}
+                                {photoOutSnap && (
+                                  <div className="relative">
+                                    <img
+                                      src={photoOutSnap}
+                                      alt="Foto Clock-Out"
+                                      className="w-11 h-9 rounded-lg object-cover border border-indigo-300 shadow-2xs group-hover:ring-2 group-hover:ring-indigo-500 transition-all"
+                                    />
+                                    <span className="absolute -bottom-1 left-0.5 px-1 py-0.2 rounded bg-indigo-600 text-white text-[8px] font-extrabold">
+                                      OUT
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
                               <div>
                                 <span className="text-[11px] font-bold text-emerald-700 group-hover:underline block">
-                                  Foto &amp; GPS
+                                  {photoInSnap && photoOutSnap
+                                    ? 'Foto IN & OUT'
+                                    : photoInSnap
+                                    ? 'Foto Masuk'
+                                    : 'Foto Pulang'}
                                 </span>
-                                <span className="text-[10px] text-slate-400 block">
-                                  Terverifikasi
+                                <span className="text-[10px] text-slate-500 block">
+                                  {att.isInOfficeRadius !== false
+                                    ? `Radius Valid (${att.distanceMeters || 0}m)`
+                                    : 'Di Luar Radius'}
                                 </span>
                               </div>
                             </button>
@@ -2080,28 +2140,48 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
 
                   <div className="p-5 space-y-4 max-h-[82vh] overflow-y-auto text-xs">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    {previewPhotoRecord.facePhotoSnapshot && (
+                    {(previewPhotoRecord.facePhotoSnapshot || previewPhotoRecord.photoIn) && (
                       <div className="space-y-1.5">
                         <span className="font-bold text-emerald-800 block">
-                          Foto Absen Masuk ({previewPhotoRecord.checkIn} WIB)
+                          Foto Selfie Clock-In ({previewPhotoRecord.checkIn} WIB •{' '}
+                          {previewPhotoRecord.distanceMeters ?? 0}m)
                         </span>
                         <img
-                          src={previewPhotoRecord.facePhotoSnapshot}
+                          src={previewPhotoRecord.facePhotoSnapshot || previewPhotoRecord.photoIn}
                           alt="Foto Absen Masuk"
                           className="w-full rounded-xl border border-slate-200 shadow-xs"
                         />
                       </div>
                     )}
-                    {previewPhotoRecord.checkOutPhotoSnapshot && (
+                    {(previewPhotoRecord.checkOutPhotoSnapshot ||
+                      previewPhotoRecord.facePhotoOut ||
+                      previewPhotoRecord.photoOut) ? (
                       <div className="space-y-1.5">
                         <span className="font-bold text-indigo-800 block">
-                          Foto Absen Pulang ({previewPhotoRecord.checkOut} WIB)
+                          Foto Selfie Clock-Out ({previewPhotoRecord.checkOut} WIB •{' '}
+                          {previewPhotoRecord.checkOutDistanceMeters ??
+                            previewPhotoRecord.distanceMeters ??
+                            0}
+                          m)
                         </span>
                         <img
-                          src={previewPhotoRecord.checkOutPhotoSnapshot}
+                          src={
+                            previewPhotoRecord.checkOutPhotoSnapshot ||
+                            previewPhotoRecord.facePhotoOut ||
+                            previewPhotoRecord.photoOut
+                          }
                           alt="Foto Absen Pulang"
                           className="w-full rounded-xl border border-slate-200 shadow-xs"
                         />
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center justify-center p-4 rounded-xl border border-dashed border-slate-200 bg-slate-50 text-center">
+                        <span className="font-bold text-slate-500">
+                          Belum Ada Foto Selfie Clock-Out
+                        </span>
+                        <span className="text-[11px] text-slate-400 mt-1">
+                          Foto Clock-Out akan otomatis tersimpan saat karyawan melakukan Absen Pulang di dalam radius kantor.
+                        </span>
                       </div>
                     )}
                   </div>
@@ -2113,13 +2193,36 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                         {previewPhotoRecord.checkInFullTimestamp || `${previewPhotoRecord.date} • ${previewPhotoRecord.checkIn} WIB`}
                       </span>
                     </div>
+                    <div className="flex flex-wrap justify-between gap-2">
+                      <span className="text-slate-500">Status Validasi Radius &amp; Wajah:</span>
+                      <span className="font-bold text-emerald-700">
+                        {previewPhotoRecord.isInOfficeRadius !== false
+                          ? `Dalam Radius Kantor (Masuk: ${previewPhotoRecord.distanceMeters ?? 0}m${
+                              previewPhotoRecord.checkOutDistanceMeters !== undefined
+                                ? ` • Pulang: ${previewPhotoRecord.checkOutDistanceMeters}m`
+                                : ''
+                            })`
+                          : 'Di Luar Radius Kantor'}{' '}
+                        • Face Scan Verified
+                      </span>
+                    </div>
                     {previewPhotoRecord.locationCoords && (
                       <div className="flex flex-wrap justify-between gap-2">
-                        <span className="text-slate-500">Koordinat GPS HP:</span>
+                        <span className="text-slate-500">Koordinat GPS Clock-In:</span>
                         <span className="font-mono font-bold text-emerald-700">
                           Lat {previewPhotoRecord.locationCoords.latitude.toFixed(6)}°, Long{' '}
                           {previewPhotoRecord.locationCoords.longitude.toFixed(6)}° (Akurasi ±
                           {previewPhotoRecord.locationCoords.accuracy}m)
+                        </span>
+                      </div>
+                    )}
+                    {previewPhotoRecord.checkOutLocationCoords && (
+                      <div className="flex flex-wrap justify-between gap-2">
+                        <span className="text-slate-500">Koordinat GPS Clock-Out:</span>
+                        <span className="font-mono font-bold text-indigo-700">
+                          Lat {previewPhotoRecord.checkOutLocationCoords.latitude.toFixed(6)}°, Long{' '}
+                          {previewPhotoRecord.checkOutLocationCoords.longitude.toFixed(6)}° (Akurasi ±
+                          {previewPhotoRecord.checkOutLocationCoords.accuracy}m)
                         </span>
                       </div>
                     )}
@@ -2573,6 +2676,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
       {editingAttendance && (() => {
         const editEmp = employees.find((e) => e.id === editingAttendance.employeeId);
         const editShift = getEmployeeShift(editEmp, workShifts);
+        const editStdHours = getEmployeeStandardDailyHours(editEmp, undefined, editShift);
         const effectiveGrace = penaltyPolicy.useShiftGracePeriod
           ? editShift.gracePeriodMinutes
           : penaltyPolicy.gracePeriodMinutes;
@@ -2586,7 +2690,8 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
               editAttCheckIn,
               editAttHasCheckOut ? editAttCheckOut : '-',
               editShift,
-              effectiveGrace
+              effectiveGrace,
+              editStdHours
             )
           : null;
 

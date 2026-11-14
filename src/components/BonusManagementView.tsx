@@ -20,6 +20,8 @@ import {
   formatIndoDate,
   formatYearMonthToIndo,
   isEmployeePartTime,
+  getJakartaYearMonth,
+  getJakartaIsoTimestamp,
 } from '../utils/formatters';
 import {
   sanitizeSafeText,
@@ -71,7 +73,7 @@ export const BonusManagementView: React.FC<BonusManagementViewProps> = ({
 }) => {
   const safeEmployees = useMemo(() => (Array.isArray(employees) ? employees : []), [employees]);
   const safeBonuses = useMemo(() => (Array.isArray(bonuses) ? bonuses : []), [bonuses]);
-  const currentYearMonth = useMemo(() => new Date().toISOString().slice(0, 7), []);
+  const currentYearMonth = useMemo(() => getJakartaYearMonth(), []);
 
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>('');
   const [amountInput, setAmountInput] = useState<string>('');
@@ -185,7 +187,7 @@ export const BonusManagementView: React.FC<BonusManagementViewProps> = ({
         amount: validatedAmount,
         reason_note: cleanReasonNote,
         period_month: periodMonth,
-        date_awarded: new Date().toISOString(),
+        date_awarded: getJakartaIsoTimestamp(),
         is_read: false,
         department: sanitizeSafeText(selectedEmployee.department, 100),
         role: sanitizeSafeText(selectedEmployee.role, 100),

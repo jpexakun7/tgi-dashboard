@@ -48,6 +48,8 @@ import {
   getEmployeeShift,
   evaluateAttendanceAgainstShift,
   getAttendancePenaltyPolicy,
+  getJakartaDateParts,
+  getJakartaFullDateTimeLabel,
 } from '../utils/formatters';
 import { EmployeeDemographicsCharts } from './EmployeeDemographicsCharts';
 import { PayrollTrendChart } from './PayrollTrendChart';
@@ -104,6 +106,19 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   >('AUTO_SHIFT');
   const [dashAttNotes, setDashAttNotes] = React.useState('');
   const [deletingDashAtt, setDeletingDashAtt] = React.useState<AttendanceRecord | null>(null);
+  const [dashWibNow, setDashWibNow] = React.useState<Date>(() => new Date());
+
+  React.useEffect(() => {
+    const timer = setInterval(() => {
+      setDashWibNow(new Date());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const dashLiveClock = React.useMemo(
+    () => getJakartaFullDateTimeLabel(dashWibNow, true),
+    [dashWibNow]
+  );
 
   const handleOpenDashEditAtt = (att: AttendanceRecord) => {
     const emp = employees.find((e) => e.id === att.employeeId);
@@ -196,16 +211,19 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
       'Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun',
       'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des',
     ];
-    const currentMonth = new Date().getMonth(); // 0-11
+    const currentMonth = getJakartaDateParts().month - 1; // 0-11 in WIB
 
     return activeEmployees
       .map((emp) => {
         const rawBirth = emp.birthDate || emp.joinDate;
         if (!rawBirth) return null;
-        const parsed = new Date(rawBirth);
+        const parsed = new Date(
+          /^\d{4}-\d{2}-\d{2}$/.test(rawBirth.trim()) ? `${rawBirth.trim()}T12:00:00+07:00` : rawBirth
+        );
         if (isNaN(parsed.getTime())) return null;
-        const day = parsed.getDate();
-        const monthIdx = parsed.getMonth();
+        const wibBirth = getJakartaDateParts(parsed);
+        const day = wibBirth.day;
+        const monthIdx = wibBirth.month - 1;
         const monthDiff = (monthIdx - currentMonth + 12) % 12;
         return {
           emp,
@@ -439,9 +457,15 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
       <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-emerald-950 rounded-2xl p-6 text-white shadow-xl border border-slate-700/60 relative overflow-hidden">
         <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-xs font-semibold mb-2 border border-emerald-500/30">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-              Siklus Penggajian Berjalan: {companyConfig.currentPayrollPeriod}
+            <div className="flex flex-wrap items-center gap-2 mb-2">
+              <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-xs font-semibold border border-emerald-500/30">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                Siklus Penggajian Berjalan: {companyConfig.currentPayrollPeriod}
+              </div>
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-950/60 text-emerald-200 text-xs font-mono font-bold border border-emerald-500/30">
+                <Clock className="w-3.5 h-3.5 text-emerald-400" />
+                <span>{dashLiveClock.compactLabel}</span>
+              </div>
             </div>
             <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white">
               Halo, Tim HR Tas Grosir Import 👋

@@ -411,33 +411,56 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           )}
 
-          {/* Quick Button: Supabase Cloud Status (Admin Only) */}
-          {dashboardMode === 'admin' && onOpenSupabaseModal && (
+          {/* Indikator Status Koneksi Cloud-First Supabase (Tampil di Admin & Portal Karyawan) */}
+          {onOpenSupabaseModal && (
             <button
               onClick={onOpenSupabaseModal}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-xl transition-all cursor-pointer border shadow-2xs shrink-0 whitespace-nowrap ${
-                supabaseStatus?.isTablesCreated
-                  ? 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border-emerald-300'
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] sm:text-xs font-bold rounded-xl transition-all cursor-pointer border shadow-2xs shrink-0 whitespace-nowrap ${
+                supabaseStatus?.isConnected && supabaseStatus?.isTablesCreated
+                  ? 'text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border-emerald-300'
                   : supabaseStatus?.isConnected
                   ? 'text-amber-800 bg-amber-50 hover:bg-amber-100 border-amber-300'
-                  : 'text-slate-700 bg-slate-50 hover:bg-slate-100 border-slate-200'
+                  : 'text-rose-800 bg-rose-50 hover:bg-rose-100 border-rose-300'
               }`}
-              title={supabaseStatus?.statusText || 'Status Supabase Cloud Database'}
+              title={
+                supabaseStatus?.isConnected
+                  ? 'Supabase Cloud (Sinkron Antar-Perangkat) — Klik untuk detail tabel & Skrip SQL'
+                  : 'Mode Offline / Lokal — Klik untuk cek koneksi & Skrip SQL Supabase'
+              }
             >
               <span className="relative flex h-2 w-2 shrink-0">
                 <span
                   className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
-                    supabaseStatus?.isTablesCreated ? 'bg-emerald-400' : 'bg-amber-400'
+                    supabaseStatus?.isConnected && supabaseStatus?.isTablesCreated
+                      ? 'bg-emerald-400'
+                      : supabaseStatus?.isConnected
+                      ? 'bg-amber-400'
+                      : 'bg-rose-400'
                   }`}
                 />
                 <span
                   className={`relative inline-flex rounded-full h-2 w-2 ${
-                    supabaseStatus?.isTablesCreated ? 'bg-emerald-500' : 'bg-amber-500'
+                    supabaseStatus?.isConnected && supabaseStatus?.isTablesCreated
+                      ? 'bg-emerald-500'
+                      : supabaseStatus?.isConnected
+                      ? 'bg-amber-500'
+                      : 'bg-rose-500'
                   }`}
                 />
               </span>
-              <Database className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-              <span className="hidden 2xl:inline">Supabase</span>
+              <Database
+                className={`w-3.5 h-3.5 shrink-0 ${
+                  supabaseStatus?.isConnected ? 'text-emerald-600' : 'text-rose-600'
+                }`}
+              />
+              <span className="hidden lg:inline">
+                {supabaseStatus?.isConnected
+                  ? 'Supabase Cloud (Sinkron Antar-Perangkat)'
+                  : 'Mode Offline / Lokal'}
+              </span>
+              <span className="lg:hidden">
+                {supabaseStatus?.isConnected ? 'Cloud Aktif' : 'Mode Lokal'}
+              </span>
             </button>
           )}
 

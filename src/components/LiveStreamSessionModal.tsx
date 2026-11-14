@@ -24,6 +24,9 @@ import {
   calculateEmployeeLiveSalesCommission,
   formatIndoDate,
   formatRupiah,
+  getJakartaDateString,
+  getJakartaIsoTimestamp,
+  getCurrentRealTimePayrollPeriod,
 } from '../utils/formatters';
 import {
   generateSessionUuid,
@@ -47,7 +50,7 @@ export const LiveStreamSessionModal: React.FC<LiveStreamSessionModalProps> = ({
   onClose,
   employees,
   initialEmployeeId,
-  currentPeriod = 'Maret 2026',
+  currentPeriod = getCurrentRealTimePayrollPeriod(),
   onUpdateEmployee,
   onNotify,
 }) => {
@@ -55,7 +58,7 @@ export const LiveStreamSessionModal: React.FC<LiveStreamSessionModalProps> = ({
   const [sessionRole, setSessionRole] = useState<'Host' | 'Co-Host'>('Host');
   const [platform, setPlatform] = useState<LiveStreamPlatform>('TikTok Shop Live');
   const [sessionDate, setSessionDate] = useState<string>(
-    () => new Date().toISOString().split('T')[0]
+    () => getJakartaDateString()
   );
   const [sessionTitle, setSessionTitle] = useState<string>('');
   const [durationHours, setDurationHours] = useState<number>(3);
@@ -287,7 +290,7 @@ export const LiveStreamSessionModal: React.FC<LiveStreamSessionModalProps> = ({
         : 'Host';
     setSessionRole(inferredRole);
     setPlatform(log.platform || 'TikTok Shop Live');
-    setSessionDate(log.date || log.session_date || new Date().toISOString().split('T')[0]);
+    setSessionDate(log.date || log.session_date || getJakartaDateString());
     setSessionTitle(log.sessionTitle || log.notes || '');
     setDurationHours(Number(log.durationHours) || 3);
     setOmsetAmount(Number(log.omsetAmount ?? log.omset) || 0);
@@ -317,7 +320,7 @@ export const LiveStreamSessionModal: React.FC<LiveStreamSessionModalProps> = ({
     }
 
     const sqlRoleType: 'host' | 'co_host' = sessionRole === 'Co-Host' ? 'co_host' : 'host';
-    const effectiveDate = sessionDate || new Date().toISOString().split('T')[0];
+    const effectiveDate = sessionDate || getJakartaDateString();
     const effectiveTitle =
       sessionTitle.trim() || `Sesi ${sessionRole} ${platform} (${effectiveDate})`;
 
@@ -401,8 +404,8 @@ export const LiveStreamSessionModal: React.FC<LiveStreamSessionModalProps> = ({
         calculatedCommission: totalSessionCommission,
         total_commission: totalSessionCommission,
         status: 'Terverifikasi',
-        createdAt: new Date().toISOString(),
-        created_at: new Date().toISOString(),
+        createdAt: getJakartaIsoTimestamp(),
+        created_at: getJakartaIsoTimestamp(),
       };
 
       upsertLivestreamSessionToSupabase(newRecord).catch(() => {});

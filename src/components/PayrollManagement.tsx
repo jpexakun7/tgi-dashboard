@@ -54,6 +54,8 @@ import {
   evaluateBankAccountValidity,
   formatBankTransferRemark,
   AVAILABLE_PAYROLL_PERIODS,
+  getDynamicAvailablePayrollPeriods,
+  getJakartaDateString,
   getEmployeeDailySalary,
   getEmployeeHourlyRate,
   STANDARD_WORK_HOURS_PER_DAY,
@@ -161,7 +163,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
   const [editingLiveLogId, setEditingLiveLogId] = useState<string | null>(null);
   const [liveSessionRole, setLiveSessionRole] = useState<'Host' | 'Co-Host'>('Host');
   const [liveSessionDate, setLiveSessionDate] = useState<string>(
-    () => new Date().toISOString().split('T')[0]
+    () => getJakartaDateString()
   );
   const [liveSessionPlatform, setLiveSessionPlatform] =
     useState<LiveStreamPlatform>('TikTok Shop Live');
@@ -402,7 +404,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
       paymentStatus: nextStatus,
       paymentDate:
         nextStatus === 'Lunas'
-          ? new Date().toISOString().split('T')[0]
+          ? getJakartaDateString()
           : undefined,
     });
 
@@ -416,7 +418,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
       showToast(`Periode ${companyConfig.currentPayrollPeriod} sedang terkunci!`);
       return;
     }
-    const todayStr = new Date().toISOString().split('T')[0];
+    const todayStr = getJakartaDateString();
     const updated = payrolls.map((rec) =>
       rec.period === companyConfig.currentPayrollPeriod
         ? {

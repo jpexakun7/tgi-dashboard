@@ -12,7 +12,7 @@ import {
   Info,
 } from 'lucide-react';
 import { Employee, AttendanceRecord } from '../types';
-import { formatIndoDate } from '../utils/formatters';
+import { formatIndoDate, getJakartaDateString } from '../utils/formatters';
 import {
   downloadAttendanceExcelTemplate,
   downloadAttendanceCSVTemplate,
@@ -88,7 +88,7 @@ export const UploadAttendanceModal: React.FC<UploadAttendanceModalProps> = ({
           return;
         }
 
-        const todayStr = new Date().toISOString().split('T')[0];
+        const todayStr = getJakartaDateString();
 
         const rows: ParsedAttendanceRow[] = rawJson.map((row) => {
           // Cari kolom NIK
@@ -105,7 +105,7 @@ export const UploadAttendanceModal: React.FC<UploadAttendanceModalProps> = ({
           // Normalisasi format tanggal jika Excel menyimpan sebagai nomor serial
           if (!isNaN(Number(date)) && Number(date) > 30000) {
             const excelDate = new Date(Math.round((Number(date) - 25569) * 86400 * 1000));
-            date = excelDate.toISOString().split('T')[0];
+            date = getJakartaDateString(excelDate);
           }
 
           // Cari jam masuk

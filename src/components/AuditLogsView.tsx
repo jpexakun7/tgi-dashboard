@@ -221,7 +221,7 @@ export const AuditLogsView: React.FC<AuditLogsViewProps> = ({
 
   // Filtered logs
   const filteredLogs = useMemo(() => {
-    const now = new Date('2026-10-10T23:59:59'); // 기준 waktu saat ini
+    const now = new Date(); // Waktu real-time saat ini (WIB)
 
     return logs.filter((log) => {
       // Search

@@ -5,6 +5,7 @@ import {
   normalizePeriodToYearMonth,
   formatYearMonthToIndo,
   doesEmployeeMatchAdjustment,
+  getJakartaYearMonth,
 } from '../utils/formatters';
 import {
   Award,
@@ -53,7 +54,7 @@ export const PayrollAdjustmentPanel: React.FC<PayrollAdjustmentPanelProps> = ({
   const defaultPeriodYm = useMemo(
     () =>
       normalizePeriodToYearMonth(currentPayrollPeriod) ||
-      new Date().toISOString().slice(0, 7),
+      getJakartaYearMonth(),
     [currentPayrollPeriod]
   );
 
