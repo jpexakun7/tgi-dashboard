@@ -61,6 +61,8 @@ import {
   STANDARD_WORK_HOURS_PER_DAY,
   calculateEmployeeLiveSalesCommission,
   isEmployeePartTime,
+  formatCutOffPeriodRange,
+  getMonthlyCutoffDateRange,
 } from '../utils/formatters';
 import {
   getPayslipWhatsAppUrl,
@@ -582,30 +584,44 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          {/* Pemilih Periode Bulan Payroll */}
+          {/* Pemilih Periode Bulan Payroll (Terisolasi Rentang Cut-Off Tgl 26 – Tgl 25) */}
           <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-xl px-3 py-1.5 shadow-2xs">
             <Calendar className="w-4 h-4 text-emerald-600 shrink-0" />
             <span className="text-[11px] font-semibold text-slate-500 hidden sm:inline">
-              Periode:
+              Periode Cut-Off:
             </span>
             <select
               value={companyConfig.currentPayrollPeriod}
               onChange={(e) => {
                 const nextPeriod = e.target.value;
                 onChangePayrollPeriod?.(nextPeriod);
-                showToast(`Periode Payroll dialihkan ke ${nextPeriod}`);
+                const rangeInfo = getMonthlyCutoffDateRange(
+                  nextPeriod,
+                  companyConfig.cutOffStartDay || 26,
+                  companyConfig.cutOffEndDay || 25
+                );
+                showToast(
+                  `Periode Payroll dialihkan ke ${nextPeriod} (Isolasi Absensi: ${rangeInfo.label})`
+                );
               }}
               aria-label="Pilih Periode Bulan Payroll"
               className="text-xs font-bold text-slate-900 bg-transparent focus:outline-hidden cursor-pointer pr-1"
             >
-              {availablePeriods.map((periodOption) => (
-                <option key={periodOption} value={periodOption}>
-                  {periodOption}
-                  {(companyConfig.lockedPayrollPeriods || []).includes(periodOption)
-                    ? ' 🔒'
-                    : ''}
-                </option>
-              ))}
+              {availablePeriods.map((periodOption) => {
+                const rangeStr = formatCutOffPeriodRange(
+                  periodOption,
+                  companyConfig.cutOffStartDay || 26,
+                  companyConfig.cutOffEndDay || 25
+                );
+                return (
+                  <option key={periodOption} value={periodOption}>
+                    {periodOption} ({rangeStr})
+                    {(companyConfig.lockedPayrollPeriods || []).includes(periodOption)
+                      ? ' 🔒'
+                      : ''}
+                  </option>
+                );
+              })}
             </select>
           </div>
 
@@ -1577,11 +1593,20 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                     </td>
                     <td className="py-3 px-4">
                       <span className="font-bold text-slate-900 text-sm block">
-                        {formatRupiah(record.takeHomePay)}
+                        {formatRupiah(Math.max(0, record.takeHomePay))}
                       </span>
-                      <span className="text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded font-medium">
+                      <span className="text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded font-medium block w-fit">
                         Bruto: {formatRupiah(record.totalGrossSalary)}
                       </span>
+                      {record.totalDeductions > record.totalGrossSalary && (
+                        <span
+                          className="mt-1 inline-flex items-center px-1.5 py-0.5 rounded bg-amber-100 text-amber-950 border border-amber-300 text-[9px] font-bold"
+                          title="Total potongan melebihi penghasilan bruto. Take Home Pay diproteksi minimal Rp 0."
+                        >
+                          ⚠️ THP Non-Negatif • Selisih Potongan:{' '}
+                          {formatRupiah(record.totalDeductions - record.totalGrossSalary)}
+                        </span>
+                      )}
                     </td>
                     <td className="py-3 px-4 text-center">
                       <div className="flex flex-col items-center gap-1.5">

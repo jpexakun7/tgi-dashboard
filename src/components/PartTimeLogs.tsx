@@ -24,6 +24,9 @@ import {
   getJakartaIsoTimestamp,
   addDaysToDateString,
   getDayOfWeekFromDateString,
+  getWeeklyCycleRangeForDate,
+  getSelectableWeeklyCycles,
+  getEmployeeShift,
 } from '../utils/formatters';
 import {
   generateSessionUuid,
@@ -268,6 +271,62 @@ export const PartTimeLogs: React.FC<PartTimeLogsProps> = ({
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 4000);
+  };
+
+  const selectableWeeklyCycles = useMemo(
+    () => getSelectableWeeklyCycles(filterStartDate, logs || [], null, 10, 2),
+    [filterStartDate, logs]
+  );
+
+  const handleQuickCompleteLogClockOut = async (log: PartTimeWorkLog) => {
+    const emp = safeEmployees.find((e) => e.id === log.employeeId);
+    const empShift = getEmployeeShift(emp);
+    const empStd = getEmployeeStandardDailyHours(emp, STANDARD_WORK_HOURS_PER_DAY, empShift);
+    const cIn = (log.clockIn || log.clock_in || empShift.checkInTime || '09:00').trim();
+    const [inH, inM] = cIn.split(':').map(Number);
+    let autoOut = empShift.checkOutTime || '17:30';
+    if (!isNaN(inH) && !isNaN(inM)) {
+      const totalOutMins = (inH * 60 + inM + Math.round(empStd * 60)) % (24 * 60);
+      autoOut = `${String(Math.floor(totalOutMins / 60)).padStart(2, '0')}:${String(
+        totalOutMins % 60
+      ).padStart(2, '0')}`;
+    }
+    const approvedOt = getApprovedOvertimeHoursForEmployeeDate(log.employeeId, log.date);
+    const computed = computeHoursFromClockInOut(cIn, autoOut, empStd, approvedOt, log.date);
+    const hrRate =
+      Number(log.hourlyRate ?? log.hourlyRateSnapshot ?? log.hourly_rate) ||
+      (emp ? getEmployeeHourlyRate(emp, empStd, 25) : 0);
+    const otRate =
+      Number(log.overtimeRate ?? log.overtime_rate) || Math.round(hrRate * 1.5);
+    const wage = Math.round(computed.normalHours * hrRate + computed.overtimeHours * otRate);
+
+    const updatedLog: PartTimeWorkLog = {
+      ...log,
+      id: log.id.startsWith('pt-att-') ? generateSessionUuid() : log.id,
+      clockIn: cIn,
+      clock_in: cIn,
+      clockOut: autoOut,
+      clock_out: autoOut,
+      normalHours: computed.normalHours,
+      normal_hours: computed.normalHours,
+      overtimeHours: computed.overtimeHours,
+      overtime_hours: computed.overtimeHours,
+      hoursWorked: computed.totalHours,
+      hours_worked: computed.totalHours,
+      hourlyRate: hrRate,
+      hourlyRateSnapshot: hrRate,
+      hourly_rate: hrRate,
+      overtimeRate: otRate,
+      overtime_rate: otRate,
+      dailyWage: wage,
+      daily_wage: wage,
+      notes: `${log.notes ? `${log.notes} • ` : ''}Clock-Out dilengkapi Admin (${autoOut} WIB)`,
+    };
+    onSaveLog(updatedLog);
+    await upsertPartTimeLogToSupabase(updatedLog);
+    showToast(
+      `Clock-Out ${log.employeeName} tanggal ${log.date} berhasil dilengkapi (${autoOut} WIB • ${computed.normalHours} Jam)!`
+    );
   };
 
   const handleResetForm = () => {
@@ -853,6 +912,25 @@ export const PartTimeLogs: React.FC<PartTimeLogsProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-1.5">
+            <select
+              value={getWeeklyCycleRangeForDate(filterStartDate).startDate}
+              onChange={(e) => {
+                const cyc = getWeeklyCycleRangeForDate(e.target.value);
+                setFilterAllDates(false);
+                setFilterStartDate(cyc.startDate);
+                setFilterEndDate(cyc.endDate);
+                if (onChangeDateRange) onChangeDateRange(cyc.startDate, cyc.endDate);
+              }}
+              className="px-2.5 py-1.5 rounded-xl text-[11px] font-bold bg-orange-50 text-orange-950 border border-orange-300 cursor-pointer"
+              title="Pilih periode minggu Senin–Sabtu utuh (tanpa terpotong di tgl 25/26)"
+            >
+              {selectableWeeklyCycles.map((cyc) => (
+                <option key={cyc.startDate} value={cyc.startDate}>
+                  {cyc.startDate === defaultRange.startDate ? '★ [Minggu Ini] ' : ''}
+                  {cyc.label}
+                </option>
+              ))}
+            </select>
             <button
               type="button"
               onClick={() => applyQuickWeekRange(0)}
@@ -1123,7 +1201,22 @@ export const PartTimeLogs: React.FC<PartTimeLogsProps> = ({
                       )}
                     </td>
                     <td className="py-3 px-4 text-center">
-                      <div className="flex items-center justify-center gap-1">
+                      <div className="flex items-center justify-center gap-1 flex-wrap">
+                        {Boolean(
+                          (log.clockIn || log.clock_in) &&
+                            (!log.clockOut && !log.clock_out ||
+                              (log.clockOut || log.clock_out) === '-')
+                        ) && (
+                          <button
+                            type="button"
+                            onClick={() => handleQuickCompleteLogClockOut(log)}
+                            title="Lengkapi Clock-Out otomatis sesuai jadwal shift"
+                            className="px-2 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-extrabold flex items-center gap-1 cursor-pointer"
+                          >
+                            <Clock className="w-3 h-3" />
+                            <span>⚡ Lengkapi Clock-Out</span>
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => handleEditClick(log)}

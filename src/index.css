@@ -1,5 +1,13 @@
 @import "tailwindcss";
 
+.payslip-stamp-overlay {
+  opacity: 0.92;
+  filter: contrast(1.25) saturate(1.2);
+  mix-blend-mode: multiply;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
 @media print {
   @page {
     size: A4 portrait;
@@ -12,4 +20,13 @@
     print-color-adjust: exact;
     background: #ffffff !important;
   }
+
+  .payslip-stamp-overlay {
+    opacity: 0.92 !important;
+    filter: contrast(1.25) saturate(1.2) !important;
+    mix-blend-mode: multiply !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
 }
+

@@ -43,6 +43,7 @@ import {
   calculatePayroll,
   getOvertimeMinutes,
   getContractValidityInfo,
+  isEmployeePartTime,
   getTodayDeduplicatedAttendances,
   calculateEmployeeAttendancePenalty,
   getEmployeeShift,
@@ -50,6 +51,9 @@ import {
   getAttendancePenaltyPolicy,
   getJakartaDateParts,
   getJakartaFullDateTimeLabel,
+  getJakartaDateString,
+  addDaysToDateString,
+  getEmployeeContractProbationAlert,
 } from '../utils/formatters';
 import { EmployeeDemographicsCharts } from './EmployeeDemographicsCharts';
 import { PayrollTrendChart } from './PayrollTrendChart';
@@ -71,6 +75,7 @@ interface DashboardOverviewProps {
   onRejectOvertime: (id: string) => void;
   onUpdateAttendance?: (att: AttendanceRecord) => void;
   onDeleteAttendance?: (attId: string, employeeId?: string, date?: string) => void;
+  onUpdateEmployee?: (updatedEmp: Employee) => void;
 }
 
 export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
@@ -89,6 +94,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   onRejectOvertime,
   onUpdateAttendance,
   onDeleteAttendance,
+  onUpdateEmployee,
 }) => {
   const [previewLeaveAttachment, setPreviewLeaveAttachment] = React.useState<{
     title: string;
@@ -188,6 +194,19 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     setEditingDashAtt(null);
   };
 
+  const [trackerFilter, setTrackerFilter] = React.useState<'ALL_ALERTS' | 'LE_7' | 'LE_30' | 'ALL'>('ALL_ALERTS');
+  const [extendingEmp, setExtendingEmp] = React.useState<Employee | null>(null);
+  const [extendTargetDate, setExtendTargetDate] = React.useState<string>('');
+  const [extendMonthsPreset, setExtendMonthsPreset] = React.useState<number>(6);
+  const [trackerToast, setTrackerToast] = React.useState<string | null>(null);
+
+  const showTrackerToast = (msg: string) => {
+    setTrackerToast(msg);
+    setTimeout(() => {
+      setTrackerToast((prev) => (prev === msg ? null : prev));
+    }, 4000);
+  };
+
   // Active employees list
   const activeEmployees = React.useMemo(() => {
     return employees.filter((e) => e.isActive !== false);
@@ -195,15 +214,120 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
 
   const contractEmployeesInfo = React.useMemo(() => {
     return activeEmployees
-      .map((emp) => ({ emp, info: getContractValidityInfo(emp) }))
-      .filter(({ info }) => !info.isPermanent);
+      .filter((emp) => {
+        const hasDates = Boolean(
+          (emp.contractEndDate && emp.contractEndDate.trim()) ||
+            (emp.contract_end_date && emp.contract_end_date.trim()) ||
+            (emp.probationEndDate && emp.probationEndDate.trim()) ||
+            (emp.probation_end_date && emp.probation_end_date.trim())
+        );
+        if (isEmployeePartTime(emp) && !hasDates) {
+          return false;
+        }
+        return true;
+      })
+      .map((emp) => ({
+        emp,
+        info: getContractValidityInfo(emp),
+        tracker: getEmployeeContractProbationAlert(emp),
+      }))
+      .filter(({ info, tracker }) => !info.isPermanent && !tracker.isPermanent);
   }, [activeEmployees]);
 
   const expiringContractEmployees = React.useMemo(() => {
     return contractEmployeesInfo.filter(
-      ({ info }) => info.isExpiringSoon || info.isExpired
+      ({ info, tracker }) =>
+        info.isExpiringSoon ||
+        info.isExpired ||
+        tracker.isExpired ||
+        tracker.isWithin7Days ||
+        tracker.isWithin30Days
     );
   }, [contractEmployeesInfo]);
+
+  const critical7DaysList = React.useMemo(() => {
+    return contractEmployeesInfo.filter(
+      ({ tracker }) => tracker.isWithin7Days || tracker.isExpired
+    );
+  }, [contractEmployeesInfo]);
+
+  const warning30DaysList = React.useMemo(() => {
+    return contractEmployeesInfo.filter(
+      ({ tracker }) => tracker.isWithin30Days || tracker.isExpired
+    );
+  }, [contractEmployeesInfo]);
+
+  const filteredTrackerItems = React.useMemo(() => {
+    if (trackerFilter === 'LE_7') return critical7DaysList;
+    if (trackerFilter === 'LE_30') return warning30DaysList;
+    if (trackerFilter === 'ALL') return contractEmployeesInfo;
+    return warning30DaysList.length > 0 ? warning30DaysList : contractEmployeesInfo;
+  }, [trackerFilter, critical7DaysList, warning30DaysList, contractEmployeesInfo]);
+
+  const handleOpenExtendModal = (emp: Employee) => {
+    const todayWib = getJakartaDateString();
+    const currentEnd =
+      emp.contractEndDate ||
+      emp.contract_end_date ||
+      emp.probationEndDate ||
+      emp.probation_end_date ||
+      todayWib;
+    const baseDate = currentEnd >= todayWib ? currentEnd : todayWib;
+    setExtendingEmp(emp);
+    setExtendMonthsPreset(6);
+    setExtendTargetDate(addDaysToDateString(baseDate, 180));
+  };
+
+  const handleConfirmExtendContract = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!extendingEmp || !extendTargetDate) return;
+    const todayFormatted = formatIndoDate(getJakartaDateString());
+    const updated: Employee = {
+      ...extendingEmp,
+      employmentStatus:
+        extendingEmp.employmentStatus === 'Probation'
+          ? 'PKWT (Kontrak)'
+          : extendingEmp.employmentStatus || 'PKWT (Kontrak)',
+      status:
+        extendingEmp.employmentStatus === 'Probation'
+          ? 'PKWT (Kontrak)'
+          : extendingEmp.employmentStatus || 'PKWT (Kontrak)',
+      employmentType: 'Contract',
+      employment_type: 'Contract',
+      contractEndDate: extendTargetDate,
+      contract_end_date: extendTargetDate,
+      probationEndDate: undefined,
+      probation_end_date: undefined,
+      contractUpdatedAt: todayFormatted,
+    };
+    onUpdateEmployee?.(updated);
+    showTrackerToast(
+      `Kontrak ${extendingEmp.fullName} berhasil diperpanjang hingga ${formatIndoDate(
+        extendTargetDate
+      )} (Tersinkron ke Supabase Cloud)!`
+    );
+    setExtendingEmp(null);
+  };
+
+  const handleConvertToPkwtt = (emp: Employee) => {
+    const todayFormatted = formatIndoDate(getJakartaDateString());
+    const updated: Employee = {
+      ...emp,
+      employmentStatus: 'PKWTT (Tetap)',
+      status: 'PKWTT (Tetap)',
+      employmentType: 'Full-Time',
+      employment_type: 'Full-Time',
+      contractEndDate: undefined,
+      contract_end_date: undefined,
+      probationEndDate: undefined,
+      probation_end_date: undefined,
+      contractUpdatedAt: todayFormatted,
+    };
+    onUpdateEmployee?.(updated);
+    showTrackerToast(
+      `Status ${emp.fullName} (${emp.nik}) berhasil diubah menjadi Karyawan Tetap (PKWTT) & disinkronkan ke Supabase Cloud!`
+    );
+  };
 
   // Dynamic Employee Birthdays from real active employees
   const employeeBirthdays = React.useMemo(() => {
@@ -626,6 +750,203 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             </p>
           </div>
         </div>
+      </div>
+
+      {/* Widget Alert: Contract & Probation Tracker (<= 30 Hari & <= 7 Hari) */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-4">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-100 pb-3.5">
+          <div className="flex items-start gap-3">
+            <div
+              className={`p-2.5 rounded-xl shrink-0 ${
+                critical7DaysList.length > 0
+                  ? 'bg-rose-100 text-rose-600'
+                  : warning30DaysList.length > 0
+                  ? 'bg-amber-100 text-amber-600'
+                  : 'bg-indigo-50 text-indigo-600'
+              }`}
+            >
+              <ShieldAlert className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="font-bold text-sm sm:text-base text-slate-900">
+                  Contract &amp; Probation Tracker (Pemantauan Kontrak PKWT &amp; Masa Percobaan)
+                </h3>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-200">
+                  ≤ 7 Hari: {critical7DaysList.length} Staf
+                </span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                  ≤ 30 Hari: {warning30DaysList.length} Staf
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Peringatan otomatis kontrak kerja (<code className="font-mono">contract_end_date</code>) &amp; masa percobaan (<code className="font-mono">probation_end_date</code>) sesuai zona waktu WIB (Asia/Jakarta).
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5">
+            {(
+              [
+                { id: 'ALL_ALERTS', label: `Alert ≤ 30 Hari (${warning30DaysList.length})` },
+                { id: 'LE_7', label: `Kritis ≤ 7 Hari (${critical7DaysList.length})` },
+                { id: 'ALL', label: `Semua Kontrak/Probation (${contractEmployeesInfo.length})` },
+              ] as const
+            ).map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setTrackerFilter(tab.id)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  trackerFilter === tab.id
+                    ? 'bg-indigo-600 text-white shadow-2xs'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {trackerToast && (
+          <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-semibold flex items-center justify-between gap-2">
+            <span className="flex items-center gap-2">
+              <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+              {trackerToast}
+            </span>
+            <button
+              type="button"
+              onClick={() => setTrackerToast(null)}
+              className="text-emerald-700 font-bold cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
+        {filteredTrackerItems.length === 0 ? (
+          <div className="p-4 rounded-xl bg-slate-50 border border-slate-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-2.5 text-slate-600">
+              <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>
+                Tidak ada kontrak PKWT atau masa probation yang berakhir dalam ≤ 30 hari ke depan.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => onNavigateTab('employees')}
+              className="px-3 py-1.5 rounded-xl bg-white border border-slate-300 font-bold text-slate-700 hover:bg-slate-100 cursor-pointer shrink-0"
+            >
+              Atur Tanggal Kontrak / Probation di Data Karyawan →
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {filteredTrackerItems.map(({ emp, tracker }) => {
+              const isCrit = tracker.isWithin7Days || tracker.isExpired;
+              const isWarn = tracker.isWithin30Days;
+              return (
+                <div
+                  key={emp.id}
+                  className={`p-3.5 rounded-xl border flex flex-col justify-between gap-3 ${
+                    isCrit
+                      ? 'bg-rose-50/70 border-rose-200'
+                      : isWarn
+                      ? 'bg-amber-50/70 border-amber-200'
+                      : 'bg-slate-50/80 border-slate-200'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2.5">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <img
+                        src={emp.avatarUrl}
+                        alt={emp.fullName}
+                        className="w-9 h-9 rounded-full object-cover border border-white shadow-2xs shrink-0"
+                      />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-bold text-xs text-slate-900 truncate">
+                            {emp.fullName}
+                          </span>
+                          <span className="font-mono text-[10px] text-slate-500">
+                            ({emp.nik})
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-600 truncate">
+                          {emp.role} • {emp.department} ({emp.employmentStatus})
+                        </p>
+                      </div>
+                    </div>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-bold border shrink-0 ${tracker.badgeClass}`}
+                    >
+                      {tracker.badgeText}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-[11px] bg-white/80 p-2.5 rounded-lg border border-slate-200/70">
+                    <div>
+                      <span className="text-slate-500 block text-[10px]">
+                        Akhir Kontrak (contract_end_date):
+                      </span>
+                      <span className="font-mono font-bold text-slate-800">
+                        {tracker.contractEndDate
+                          ? formatIndoDate(tracker.contractEndDate)
+                          : '-'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 block text-[10px]">
+                        Akhir Probation (probation_end_date):
+                      </span>
+                      <span className="font-mono font-bold text-slate-800">
+                        {tracker.probationEndDate
+                          ? formatIndoDate(tracker.probationEndDate)
+                          : '-'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => handleOpenExtendModal(emp)}
+                        className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[11px] inline-flex items-center gap-1 shadow-2xs transition-colors cursor-pointer"
+                      >
+                        <Calendar className="w-3 h-3" />
+                        <span>Perpanjang Kontrak</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleConvertToPkwtt(emp)}
+                        className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] inline-flex items-center gap-1 shadow-2xs transition-colors cursor-pointer"
+                      >
+                        <CheckCircle className="w-3 h-3" />
+                        <span>Ubah ke PKWTT</span>
+                      </button>
+                    </div>
+
+                    <a
+                      href={getContractReminderWhatsAppUrl(
+                        emp,
+                        tracker.daysRemaining,
+                        companyConfig.companyName
+                      )}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-2.5 py-1.5 rounded-lg bg-green-600 hover:bg-green-700 text-white font-bold text-[10px] inline-flex items-center gap-1 transition-colors"
+                    >
+                      <MessageCircle className="w-3 h-3" />
+                      <span>WA</span>
+                    </a>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Visualisasi Tren Total Biaya Gaji Bulanan (Recharts 6 Bulan Terakhir) */}
@@ -1366,6 +1687,100 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Modal Aksi Cepat: Perpanjang Kontrak Karyawan */}
+      {extendingEmp && (
+        <div className="fixed inset-0 z-50 bg-slate-900/65 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-5 shadow-2xl border border-slate-200 text-xs space-y-4">
+            <div className="flex items-start justify-between gap-2 border-b border-slate-100 pb-3">
+              <div>
+                <h4 className="text-sm font-bold text-slate-900">
+                  Perpanjang Masa Kontrak Kerja (PKWT)
+                </h4>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  {extendingEmp.fullName} ({extendingEmp.nik}) • {extendingEmp.department}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setExtendingEmp(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmExtendContract} className="space-y-3.5">
+              <div>
+                <label className="block font-bold text-slate-700 mb-1.5">
+                  Pilih Durasi Perpanjangan Cepat:
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { months: 3, days: 90, label: '+3 Bulan' },
+                    { months: 6, days: 180, label: '+6 Bulan' },
+                    { months: 12, days: 365, label: '+1 Tahun' },
+                  ].map((preset) => (
+                    <button
+                      key={preset.months}
+                      type="button"
+                      onClick={() => {
+                        const todayWib = getJakartaDateString();
+                        const currentEnd =
+                          extendingEmp.contractEndDate ||
+                          extendingEmp.contract_end_date ||
+                          extendingEmp.probationEndDate ||
+                          extendingEmp.probation_end_date ||
+                          todayWib;
+                        const baseDate = currentEnd >= todayWib ? currentEnd : todayWib;
+                        setExtendMonthsPreset(preset.months);
+                        setExtendTargetDate(addDaysToDateString(baseDate, preset.days));
+                      }}
+                      className={`py-2 px-3 rounded-xl font-bold border transition-all cursor-pointer ${
+                        extendMonthsPreset === preset.months
+                          ? 'bg-indigo-600 text-white border-indigo-600'
+                          : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-indigo-50'
+                      }`}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  Tanggal Berakhir Kontrak Baru (<code className="font-mono">contract_end_date</code>):
+                </label>
+                <input
+                  type="date"
+                  required
+                  value={extendTargetDate}
+                  onChange={(e) => setExtendTargetDate(e.target.value)}
+                  className="w-full p-2.5 rounded-xl border border-slate-300 bg-slate-50 font-mono font-bold text-slate-900"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setExtendingEmp(null)}
+                  className="px-3.5 py-2 rounded-xl border border-slate-300 font-semibold text-slate-700 cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold cursor-pointer"
+                >
+                  Simpan Perpanjangan Kontrak
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+

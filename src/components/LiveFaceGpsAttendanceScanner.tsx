@@ -238,6 +238,7 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
   customClockInTime,
   customClockOutTime,
   clockInNotes,
+  overtimeRequests,
   onChangeNotes,
   onSubmitAttendance,
 }) => {
@@ -855,7 +856,7 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
       ctx.fillText(line2, 44, boxY + 162);
     }
 
-    return canvas.toDataURL('image/jpeg', 0.9);
+    return canvas.toDataURL('image/jpeg', 0.78);
   };
 
   // 6. Trigger Photo Capture & Submit Check-In or Check-Out (Strictly Enforcing 1x Check-In & 1x Check-Out, <= 25m & Anti-Fake GPS)
@@ -929,7 +930,8 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
     const empStdHours = getEmployeeStandardDailyHours(currentEmployee, undefined, activeShift);
     const approvedOtHours = getApprovedOvertimeHoursForEmployeeDate(
       currentEmployee.id,
-      effectiveTodayDateStr
+      effectiveTodayDateStr,
+      overtimeRequests
     );
 
     if (mode === 'check_in') {

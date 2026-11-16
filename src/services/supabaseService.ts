@@ -281,6 +281,13 @@ export function saveEmployeeEmploymentMetaLocal(emp: Partial<Employee>): void {
             overtime_rate: nextOt > 0 ? nextOt : item.overtime_rate,
             standard_daily_hours: stdHours,
             standardDailyHours: stdHours,
+            ...(emp.remainingLeaveDays !== undefined && emp.remainingLeaveDays !== null
+              ? {
+                  remainingLeaveDays: Math.max(0, Math.round(Number(emp.remainingLeaveDays) || 0)),
+                  remaining_leave: Math.max(0, Math.round(Number(emp.remainingLeaveDays) || 0)),
+                  leave_quota: Math.max(0, Math.round(Number(emp.remainingLeaveDays) || 0)),
+                }
+              : {}),
           };
         });
         if (updated) {
@@ -516,16 +523,29 @@ export function employeeToDb(emp: Employee) {
         }
         return emp.accessPin === '••••';
       })(),
-      _ktpPhotoUrl: emp.ktpPhotoUrl || undefined,
+      _ktpPhotoUrl: emp.ktpPhotoUrl || null,
       _ktpNumber: emp.ktpNumber || undefined,
       _ktpUploadedAt: emp.ktpUploadedAt || undefined,
+      _npwpPhotoUrl: emp.npwpPhotoUrl || emp.npwp_photo_url || null,
+      _npwpUploadedAt: emp.npwpUploadedAt || undefined,
       _profilePhotoUpdatedAt: emp.profilePhotoUpdatedAt || undefined,
-      _contractStartDate: emp.contractStartDate || undefined,
-      _contractEndDate: emp.contractEndDate || undefined,
-      _contractDocumentNumber: emp.contractDocumentNumber || undefined,
-      _contractDocumentUrl: emp.contractDocumentUrl || undefined,
-      _contractDocumentName: emp.contractDocumentName || undefined,
+      _contractStartDate:
+        (emp.contractStartDate || emp.contract_start_date || '').trim() || null,
+      _contractEndDate:
+        resolvedEmploymentStatus === 'PKWTT (Tetap)'
+          ? null
+          : (emp.contractEndDate || emp.contract_end_date || '').trim() || null,
+      _probationEndDate:
+        resolvedEmploymentStatus === 'PKWTT (Tetap)'
+          ? null
+          : (emp.probationEndDate || emp.probation_end_date || '').trim() || null,
+      _contractDocumentNumber: emp.contractDocumentNumber || null,
+      _contractDocumentUrl: emp.contractDocumentUrl || null,
+      _contractDocumentName: emp.contractDocumentName || null,
       _contractUpdatedAt: emp.contractUpdatedAt || undefined,
+      _generatedLetters: Array.isArray(emp.generatedLetters)
+        ? emp.generatedLetters
+        : [],
       _birthDate: emp.birthDate || undefined,
       _birthPlace: emp.birthPlace || undefined,
       _shiftId: emp.shiftId || undefined,
@@ -533,6 +553,22 @@ export function employeeToDb(emp: Employee) {
       _phone: emp.phone || undefined,
       _email: emp.email || undefined,
       _emergencyContact: emp.emergencyContact || undefined,
+      _remainingLeaveDays:
+        emp.remainingLeaveDays !== undefined && emp.remainingLeaveDays !== null && !isNaN(Number(emp.remainingLeaveDays))
+          ? Math.max(0, Math.round(Number(emp.remainingLeaveDays)))
+          : emp.remaining_leave !== undefined && emp.remaining_leave !== null && !isNaN(Number(emp.remaining_leave))
+          ? Math.max(0, Math.round(Number(emp.remaining_leave)))
+          : emp.leave_quota !== undefined && emp.leave_quota !== null && !isNaN(Number(emp.leave_quota))
+          ? Math.max(0, Math.round(Number(emp.leave_quota)))
+          : 0,
+      _remainingLeave:
+        emp.remainingLeaveDays !== undefined && emp.remainingLeaveDays !== null && !isNaN(Number(emp.remainingLeaveDays))
+          ? Math.max(0, Math.round(Number(emp.remainingLeaveDays)))
+          : 0,
+      _leaveQuota:
+        emp.remainingLeaveDays !== undefined && emp.remainingLeaveDays !== null && !isNaN(Number(emp.remainingLeaveDays))
+          ? Math.max(0, Math.round(Number(emp.remainingLeaveDays)))
+          : 0,
       _workShifts: (() => {
         try {
           const rawCfg = localStorage.getItem('tgi_company_config');
@@ -555,7 +591,14 @@ export function employeeToDb(emp: Employee) {
     ptkp_status: emp.ptkpStatus || 'TK/0',
     bpjs_kesehatan_no: emp.bpjsKesehatanNo || '0001000000000',
     bpjs_ketenagakerjaan_no: emp.bpjsKetenagakerjaanNo || '00000000000',
-    remaining_leave_days: Number(emp.remainingLeaveDays) ?? 12,
+    remaining_leave_days:
+      emp.remainingLeaveDays !== undefined && emp.remainingLeaveDays !== null && !isNaN(Number(emp.remainingLeaveDays))
+        ? Math.max(0, Math.round(Number(emp.remainingLeaveDays)))
+        : emp.remaining_leave !== undefined && emp.remaining_leave !== null && !isNaN(Number(emp.remaining_leave))
+        ? Math.max(0, Math.round(Number(emp.remaining_leave)))
+        : emp.leave_quota !== undefined && emp.leave_quota !== null && !isNaN(Number(emp.leave_quota))
+        ? Math.max(0, Math.round(Number(emp.leave_quota)))
+        : 0,
     is_active: emp.isActive ?? true,
     approval_status: emp.approvalStatus || 'approved',
     updated_at: new Date().toISOString(),
@@ -677,16 +720,56 @@ export function dbToEmployee(row: any): Employee {
     ktpPhotoUrl: row.ktp_photo_url || rawAllowances._ktpPhotoUrl || undefined,
     ktpNumber: row.ktp_number || rawAllowances._ktpNumber || undefined,
     ktpUploadedAt: rawAllowances._ktpUploadedAt || undefined,
+    npwpPhotoUrl: row.npwp_photo_url || rawAllowances._npwpPhotoUrl || undefined,
+    npwp_photo_url: row.npwp_photo_url || rawAllowances._npwpPhotoUrl || undefined,
+    npwpUploadedAt: rawAllowances._npwpUploadedAt || undefined,
     profilePhotoUpdatedAt: rawAllowances._profilePhotoUpdatedAt || undefined,
-    contractStartDate: row.contract_start_date || rawAllowances._contractStartDate || undefined,
-    contractEndDate: row.contract_end_date || rawAllowances._contractEndDate || undefined,
+    contractStartDate:
+      rawAllowances._contractStartDate !== undefined
+        ? rawAllowances._contractStartDate || undefined
+        : row.contract_start_date || undefined,
+    contract_start_date:
+      rawAllowances._contractStartDate !== undefined
+        ? rawAllowances._contractStartDate || undefined
+        : row.contract_start_date || undefined,
+    contractEndDate:
+      resolvedEmploymentStatus === 'PKWTT (Tetap)'
+        ? undefined
+        : rawAllowances._contractEndDate !== undefined
+        ? rawAllowances._contractEndDate || undefined
+        : row.contract_end_date || undefined,
+    contract_end_date:
+      resolvedEmploymentStatus === 'PKWTT (Tetap)'
+        ? undefined
+        : rawAllowances._contractEndDate !== undefined
+        ? rawAllowances._contractEndDate || undefined
+        : row.contract_end_date || undefined,
+    probationEndDate:
+      resolvedEmploymentStatus === 'PKWTT (Tetap)'
+        ? undefined
+        : rawAllowances._probationEndDate !== undefined
+        ? rawAllowances._probationEndDate || undefined
+        : row.probation_end_date || undefined,
+    probation_end_date:
+      resolvedEmploymentStatus === 'PKWTT (Tetap)'
+        ? undefined
+        : rawAllowances._probationEndDate !== undefined
+        ? rawAllowances._probationEndDate || undefined
+        : row.probation_end_date || undefined,
     contractDocumentNumber:
-      row.contract_document_number || rawAllowances._contractDocumentNumber || undefined,
+      rawAllowances._contractDocumentNumber || row.contract_document_number || undefined,
     contractDocumentUrl:
-      row.contract_document_url || rawAllowances._contractDocumentUrl || undefined,
+      rawAllowances._contractDocumentUrl || row.contract_document_url || undefined,
     contractDocumentName:
-      row.contract_document_name || rawAllowances._contractDocumentName || undefined,
-    contractUpdatedAt: row.contract_updated_at || rawAllowances._contractUpdatedAt || undefined,
+      rawAllowances._contractDocumentName || row.contract_document_name || undefined,
+    contractUpdatedAt:
+      rawAllowances._contractUpdatedAt || row.contract_updated_at || undefined,
+    generatedLetters:
+      Array.isArray(rawAllowances._generatedLetters) && rawAllowances._generatedLetters.length > 0
+        ? rawAllowances._generatedLetters
+        : Array.isArray(row.hr_letters_archive)
+        ? row.hr_letters_archive
+        : [],
     birthDate: row.birth_date || rawAllowances._birthDate || undefined,
     birthPlace: row.birth_place || rawAllowances._birthPlace || undefined,
     shiftId: row.shift_id || rawAllowances._shiftId || 'SHF-01',
@@ -737,7 +820,24 @@ export function dbToEmployee(row: any): Employee {
     ptkpStatus: row.ptkp_status || 'TK/0',
     bpjsKesehatanNo: row.bpjs_kesehatan_no || '0001000000000',
     bpjsKetenagakerjaanNo: row.bpjsKetenagakerjaanNo || row.bpjs_ketenagakerjaan_no || '00000000000',
-    remainingLeaveDays: Number(row.remaining_leave_days) ?? 12,
+    remainingLeaveDays:
+      row.remaining_leave_days !== undefined && row.remaining_leave_days !== null && !isNaN(Number(row.remaining_leave_days))
+        ? Math.max(0, Math.round(Number(row.remaining_leave_days)))
+        : row.remaining_leave !== undefined && row.remaining_leave !== null && !isNaN(Number(row.remaining_leave))
+        ? Math.max(0, Math.round(Number(row.remaining_leave)))
+        : row.leave_quota !== undefined && row.leave_quota !== null && !isNaN(Number(row.leave_quota))
+        ? Math.max(0, Math.round(Number(row.leave_quota)))
+        : rawAllowances._remainingLeaveDays !== undefined && rawAllowances._remainingLeaveDays !== null && !isNaN(Number(rawAllowances._remainingLeaveDays))
+        ? Math.max(0, Math.round(Number(rawAllowances._remainingLeaveDays)))
+        : 0,
+    remaining_leave:
+      row.remaining_leave_days !== undefined && row.remaining_leave_days !== null && !isNaN(Number(row.remaining_leave_days))
+        ? Math.max(0, Math.round(Number(row.remaining_leave_days)))
+        : 0,
+    leave_quota:
+      row.remaining_leave_days !== undefined && row.remaining_leave_days !== null && !isNaN(Number(row.remaining_leave_days))
+        ? Math.max(0, Math.round(Number(row.remaining_leave_days)))
+        : 0,
     isActive: row.is_active ?? true,
     approvalStatus: row.approval_status || 'approved',
     accessPin: hasConfiguredPin ? '••••' : '',
@@ -1129,9 +1229,29 @@ export async function syncEmployeeLiveColumnsToSupabase(emp: Employee): Promise<
     hourly_rate: hourlyVal,
   };
 
+  const resolvedContractEnd =
+    empStatus === 'PKWTT (Tetap)'
+      ? null
+      : (emp.contractEndDate || emp.contract_end_date || '').trim() || null;
+  const resolvedProbationEnd =
+    empStatus === 'PKWTT (Tetap)'
+      ? null
+      : (emp.probationEndDate || emp.probation_end_date || '').trim() || null;
+  const resolvedContractStart =
+    (emp.contractStartDate || emp.contract_start_date || '').trim() || null;
+
   const extendedPayload = {
     ...partTimePayload,
     overtime_rate: overtimeVal,
+    contract_start_date: resolvedContractStart,
+    contract_end_date: resolvedContractEnd,
+    probation_end_date: resolvedProbationEnd,
+    ktp_photo_url: emp.ktpPhotoUrl || null,
+    npwp_photo_url: emp.npwpPhotoUrl || emp.npwp_photo_url || null,
+    contract_document_url: emp.contractDocumentUrl || null,
+    contract_document_number: emp.contractDocumentNumber || null,
+    contract_document_name: emp.contractDocumentName || null,
+    hr_letters_archive: Array.isArray(emp.generatedLetters) ? emp.generatedLetters : [],
   };
 
   if (typeof window !== 'undefined') {
@@ -1143,6 +1263,10 @@ export async function syncEmployeeLiveColumnsToSupabase(emp: Employee): Promise<
           status: empStatus,
           employmentType: empType,
           employment_type: empType,
+          contractEndDate: resolvedContractEnd || undefined,
+          contract_end_date: resolvedContractEnd || undefined,
+          probationEndDate: resolvedProbationEnd || undefined,
+          probation_end_date: resolvedProbationEnd || undefined,
           hourlyRate: hourlyVal,
           hourly_rate: hourlyVal,
           overtimeRate: overtimeVal,
@@ -1171,6 +1295,10 @@ export async function syncEmployeeLiveColumnsToSupabase(emp: Employee): Promise<
     status: empStatus,
     employmentType: empType,
     employment_type: empType,
+    contractEndDate: resolvedContractEnd || undefined,
+    contract_end_date: resolvedContractEnd || undefined,
+    probationEndDate: resolvedProbationEnd || undefined,
+    probation_end_date: resolvedProbationEnd || undefined,
     hourlyRate: hourlyVal,
     hourly_rate: hourlyVal,
     overtimeRate: overtimeVal,
@@ -1183,6 +1311,7 @@ export async function syncEmployeeLiveColumnsToSupabase(emp: Employee): Promise<
       .update({
         ...extendedPayload,
         employment_status: empStatus,
+        remaining_leave_days: fullDbRow.remaining_leave_days,
         allowances: fullDbRow.allowances,
       })
       .eq('id', emp.id),
@@ -1202,12 +1331,20 @@ export async function syncEmployeeLiveColumnsToSupabase(emp: Employee): Promise<
   if (empUpdateRes.status === 'fulfilled' && empUpdateRes.value.error) {
     const retryPt = await supabase
       .from('employees')
-      .update({ ...partTimePayload, allowances: fullDbRow.allowances })
+      .update({
+        ...partTimePayload,
+        remaining_leave_days: fullDbRow.remaining_leave_days,
+        allowances: fullDbRow.allowances,
+      })
       .eq('id', emp.id);
     if (retryPt.error) {
       await supabase
         .from('employees')
-        .update({ employment_status: empStatus, allowances: fullDbRow.allowances })
+        .update({
+          employment_status: empStatus,
+          remaining_leave_days: fullDbRow.remaining_leave_days,
+          allowances: fullDbRow.allowances,
+        })
         .eq('id', emp.id);
     }
   }
@@ -1312,7 +1449,15 @@ export async function fetchEmployeesFromSupabase(): Promise<Employee[] | null> {
         tgiEmpMap.get(String(row.id)) ||
         (row.nik ? tgiEmpByNik.get(String(row.nik).trim().toLowerCase()) : undefined) ||
         (row.full_name ? tgiEmpByName.get(String(row.full_name).trim().toLowerCase()) : undefined);
-      const mergedRow = tgiRow ? { ...row, ...tgiRow, id: row.id, allowances: row.allowances } : row;
+      const mergedRow = tgiRow
+        ? {
+            ...tgiRow,
+            ...row,
+            id: row.id,
+            employment_status: row.employment_status || tgiRow.employment_status || tgiRow.status,
+            allowances: row.allowances || tgiRow.allowances,
+          }
+        : row;
       const emp = dbToEmployee(mergedRow);
       const byIdSessions = sessionsByEmp.get(emp.id) || [];
       const byNikSessions = emp.nik ? sessionsByEmp.get(emp.nik) || [] : [];
@@ -1361,20 +1506,34 @@ export async function insertEmployeeToSupabase(emp: Employee): Promise<boolean> 
   try {
     removeDeletedEmployeeId(emp.id);
     markEmployeesModified();
+    saveEmployeeEmploymentMetaLocal(emp);
     const row = employeeToDb(emp);
-    const { error } = await supabase.from('employees').upsert([row], { onConflict: 'id' });
-    if (error) {
-      console.warn('Supabase insert employee error (fallback to local):', error.message);
+    const { data, error } = await supabase
+      .from('employees')
+      .upsert([row], { onConflict: 'id' })
+      .select('id, employment_status, allowances')
+      .single();
+
+    if (error || !data) {
+      console.warn('Supabase insert employee error (fallback to local):', error?.message);
       if (isSupabaseConfigured()) {
         notifySupabaseSyncStatus({
           ok: false,
           module: 'Data Karyawan',
-          message: `Gagal menyimpan karyawan ${emp.fullName} ke Supabase Cloud: ${error.message}`,
+          message: `Gagal menyimpan karyawan ${emp.fullName} ke Supabase Cloud: ${error?.message || 'Respons kosong'}`,
         });
       }
       return false;
     }
-    syncEmployeeLiveColumnsToSupabase(emp).catch(() => {});
+
+    await syncEmployeeLiveColumnsToSupabase(emp);
+    if (isSupabaseConfigured()) {
+      notifySupabaseSyncStatus({
+        ok: true,
+        module: 'Data Karyawan',
+        message: `Data karyawan ${emp.fullName} (${emp.employmentStatus || 'PKWT'}) berhasil diverifikasi & tersimpan di Supabase Cloud.`,
+      });
+    }
     return true;
   } catch (err: any) {
     console.warn('Supabase insert employee error:', err);
@@ -1392,19 +1551,33 @@ export async function insertEmployeeToSupabase(emp: Employee): Promise<boolean> 
 export async function updateEmployeeInSupabase(emp: Employee): Promise<boolean> {
   try {
     markEmployeesModified();
+    saveEmployeeEmploymentMetaLocal(emp);
     const row = employeeToDb(emp);
-    const { error } = await supabase.from('employees').upsert(row, { onConflict: 'id' });
-    syncEmployeeLiveColumnsToSupabase(emp).catch(() => {});
-    if (error) {
-      console.warn('Supabase update employee error:', error.message);
+    const { data, error } = await supabase
+      .from('employees')
+      .upsert(row, { onConflict: 'id' })
+      .select('id, employment_status, allowances')
+      .single();
+
+    if (error || !data) {
+      console.warn('Supabase update employee error:', error?.message);
       if (isSupabaseConfigured()) {
         notifySupabaseSyncStatus({
           ok: false,
           module: 'Data Karyawan',
-          message: `Gagal memperbarui data ${emp.fullName} di Supabase Cloud: ${error.message}`,
+          message: `Gagal memperbarui data ${emp.fullName} di Supabase Cloud: ${error?.message || 'Respons kosong'}`,
         });
       }
       return false;
+    }
+
+    await syncEmployeeLiveColumnsToSupabase(emp);
+    if (isSupabaseConfigured()) {
+      notifySupabaseSyncStatus({
+        ok: true,
+        module: 'Data Karyawan',
+        message: `Perubahan data & status ${emp.fullName} (${data.employment_status || emp.employmentStatus}) terverifikasi di Supabase Cloud.`,
+      });
     }
     return true;
   } catch (err: any) {
@@ -2273,7 +2446,14 @@ export async function fetchEmployeeByIdFromSupabase(employeeId: string): Promise
     }
 
     const mergedRow = empRow && tgiRow
-      ? { ...empRow, ...tgiRow, id: empRow.id, allowances: empRow.allowances }
+      ? {
+          ...tgiRow,
+          ...empRow,
+          id: empRow.id,
+          employment_status:
+            empRow.employment_status || tgiRow.employment_status || tgiRow.status,
+          allowances: empRow.allowances || tgiRow.allowances,
+        }
       : empRow || tgiRow;
     const emp = dbToEmployee(mergedRow);
 

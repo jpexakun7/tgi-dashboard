@@ -18,6 +18,7 @@ import {
   CheckCircle2,
   MessageCircle,
   ExternalLink,
+  AlertTriangle,
 } from 'lucide-react';
 import { Employee, LeaveRequest, OvertimeRequest } from '../types';
 import {
@@ -31,6 +32,10 @@ import {
   calculateMinutesBetweenTimes,
   getJakartaDateString,
   getJakartaFullDateTimeLabel,
+  calculateWorkingDaysBetweenDates,
+  getEmployeeDailySalary,
+  getEmployeeStandardDailyHours,
+  isUnpaidLeaveType,
 } from '../utils/formatters';
 import {
   getLeaveStatusWhatsAppUrl,
@@ -73,9 +78,36 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
   const [leaveEnd, setLeaveEnd] = useState(() => getJakartaDateString());
   const [leaveDays, setLeaveDays] = useState(1);
   const [leaveReason, setLeaveReason] = useState('');
+  const [leaveStatus, setLeaveStatus] = useState<'Disetujui' | 'Menunggu Persetujuan'>('Disetujui');
   const [leaveAttachmentUrl, setLeaveAttachmentUrl] = useState('');
   const [leaveAttachmentName, setLeaveAttachmentName] = useState('');
   const [isCompressingAttachment, setIsCompressingAttachment] = useState(false);
+
+  const selectedLeaveEmp =
+    employees.find((e) => e.id === leaveEmpId) || employees[0] || undefined;
+  const selectedLeaveEmpRemainingQuota = Math.max(
+    0,
+    Math.round(Number(selectedLeaveEmp?.remainingLeaveDays ?? 0))
+  );
+  const selectedLeaveEmpDailySalary = selectedLeaveEmp
+    ? getEmployeeDailySalary(
+        selectedLeaveEmp,
+        25,
+        getEmployeeStandardDailyHours(selectedLeaveEmp)
+      )
+    : 0;
+
+  const openManualLeaveModal = () => {
+    const todayStr = getJakartaDateString();
+    if (!leaveEmpId && employees[0]?.id) {
+      setLeaveEmpId(employees[0].id);
+    }
+    setLeaveStart(todayStr);
+    setLeaveEnd(todayStr);
+    setLeaveDays(1);
+    setLeaveStatus('Disetujui');
+    setIsLeaveModalOpen(true);
+  };
   const [previewEvidenceModal, setPreviewEvidenceModal] = useState<{
     title: string;
     subtitle: string;
@@ -138,16 +170,19 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
   const handleSaveLeave = (e: React.FormEvent) => {
     e.preventDefault();
     const nowTimestamp = getJakartaFullDateTimeLabel().compactLabel;
+    const resolvedEmpId = leaveEmpId || employees[0]?.id || '';
+    const resolvedDays = Math.max(1, Math.round(Number(leaveDays) || 1));
 
     const newReq: LeaveRequest = {
       id: `leave-${Date.now()}`,
-      employeeId: leaveEmpId,
+      employeeId: resolvedEmpId,
       type: leaveType,
       startDate: leaveStart,
       endDate: leaveEnd,
-      totalDays: Number(leaveDays),
-      reason: leaveReason || 'Keperluan pribadi',
-      status: 'Menunggu Persetujuan',
+      totalDays: resolvedDays,
+      reason: leaveReason.trim() || `Input manual Admin (${leaveType})`,
+      status: leaveStatus,
+      approvedBy: leaveStatus === 'Disetujui' ? 'HRD Admin (Input Manual)' : undefined,
       appliedAt: getJakartaDateString(),
       attachmentUrl: leaveAttachmentUrl || undefined,
       attachmentName: leaveAttachmentName || undefined,
@@ -201,11 +236,11 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
         <div className="flex items-center gap-2">
           {activeSubTab === 'leave' ? (
             <button
-              onClick={() => setIsLeaveModalOpen(true)}
+              onClick={openManualLeaveModal}
               className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-md shadow-emerald-600/30"
             >
               <Plus className="w-4 h-4" />
-              Ajukan Cuti Baru
+              + Input Cuti / Izin Manual
             </button>
           ) : (
             <button
@@ -349,18 +384,32 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
         <div className="space-y-6">
           {/* Kuota Cuti Karyawan Summary Cards */}
           <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
-            <h3 className="font-bold text-xs text-slate-800 mb-3 flex items-center gap-2">
-              <ShieldCheck className="w-4 h-4 text-emerald-600" />
-              Sisa Saldo Cuti Tahunan Karyawan
-            </h3>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+              <h3 className="font-bold text-xs text-slate-800 flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                Sisa Saldo Cuti Tahunan Karyawan
+              </h3>
+              <button
+                type="button"
+                onClick={openManualLeaveModal}
+                className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer shadow-2xs self-start sm:self-center"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>+ Input Cuti / Izin Manual</span>
+              </button>
+            </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2.5">
               {employees.map((emp) => (
                 <div key={emp.id} className="p-2.5 bg-slate-50 rounded-xl border border-slate-200/80 text-center">
                   <span className="font-semibold text-slate-800 text-[11px] block truncate">
                     {emp.fullName.split(' ')[0]}
                   </span>
-                  <span className="text-base font-bold text-emerald-600 block mt-0.5">
-                    {emp.remainingLeaveDays}
+                  <span
+                    className={`text-base font-bold block mt-0.5 ${
+                      (emp.remainingLeaveDays ?? 0) > 0 ? 'text-emerald-600' : 'text-amber-600'
+                    }`}
+                  >
+                    {emp.remainingLeaveDays ?? 0}
                   </span>
                   <span className="text-[10px] text-slate-400 block">hari tersisa</span>
                 </div>
@@ -696,88 +745,209 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
         </div>
       )}
 
-      {/* Modal Ajukan Cuti Baru */}
+      {/* Modal + Input Cuti / Izin Manual (Admin) */}
       {isLeaveModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200">
-            <h3 className="text-base font-bold text-slate-900">Form Pengajuan Cuti / Izin</h3>
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                  <CalendarDays className="w-5 h-5 text-emerald-600" />
+                  Input Cuti / Izin Manual (Panel Admin)
+                </h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Catat pengajuan cuti/izin karyawan secara manual dengan kalkulasi hari kerja otomatis &amp; sinkronisasi Payroll.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsLeaveModalOpen(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
             <form onSubmit={handleSaveLeave} className="mt-4 space-y-3.5 text-xs">
               <div>
-                <label className="block text-slate-600 mb-1">Pilih Karyawan</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-slate-700 font-bold">Pilih Nama Karyawan *</label>
+                  {selectedLeaveEmp && (
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                        selectedLeaveEmpRemainingQuota > 0
+                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                          : 'bg-amber-100 text-amber-800 border border-amber-200'
+                      }`}
+                    >
+                      Sisa Cuti Tahunan: {selectedLeaveEmpRemainingQuota} Hari
+                    </span>
+                  )}
+                </div>
                 <select
-                  value={leaveEmpId}
+                  value={leaveEmpId || employees[0]?.id || ''}
                   onChange={(e) => setLeaveEmpId(e.target.value)}
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800"
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-semibold"
                 >
                   {employees.map((e) => (
                     <option key={e.id} value={e.id}>
-                      {e.fullName} (Sisa Cuti: {e.remainingLeaveDays} hari)
+                      {e.fullName} ({e.nik}) — Sisa Cuti: {e.remainingLeaveDays ?? 0} hari
                     </option>
                   ))}
                 </select>
               </div>
 
               <div>
-                <label className="block text-slate-600 mb-1">Jenis Cuti</label>
+                <label className="block text-slate-700 font-bold mb-1">Jenis Cuti / Izin *</label>
                 <select
                   value={leaveType}
-                  onChange={(e) => setLeaveType(e.target.value as any)}
-                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800"
+                  onChange={(e) => setLeaveType(e.target.value as LeaveRequest['type'])}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 font-semibold"
                 >
-                  <option value="Cuti Tahunan">Cuti Tahunan</option>
-                  <option value="Cuti Sakit">Cuti Sakit</option>
-                  <option value="Cuti Khusus (Menikah/Duka)">Cuti Khusus (Menikah/Duka)</option>
+                  <option value="Cuti Tahunan">Cuti Tahunan (Potong Kuota Cuti Tahunan)</option>
+                  <option value="Izin Sakit">Izin Sakit (Sakit / Surat Dokter)</option>
+                  <option value="Izin Keperluan Pribadi">Izin Keperluan Pribadi</option>
                   <option value="Cuti Melahirkan">Cuti Melahirkan</option>
-                  <option value="Izin Pribadi">Izin Pribadi</option>
+                  <option value="Cuti Tanpa Gaji (Unpaid Leave)">
+                    Cuti Tanpa Gaji (Unpaid Leave — Potong Absensi Payroll)
+                  </option>
+                  <option value="Cuti Khusus (Menikah/Duka)">Cuti Khusus (Menikah/Duka)</option>
                 </select>
               </div>
 
+              {/* Warning Banner jika Cuti Tahunan dipilih dan Sisa Cuti 0 atau Tidak Mencukupi */}
+              {leaveType === 'Cuti Tahunan' &&
+                (selectedLeaveEmpRemainingQuota === 0 ||
+                  selectedLeaveEmpRemainingQuota < Number(leaveDays)) && (
+                  <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 flex items-start gap-2.5">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    <div className="space-y-0.5 text-[11px]">
+                      <span className="font-extrabold block text-amber-950">
+                        {selectedLeaveEmpRemainingQuota === 0
+                          ? `Peringatan: Sisa Cuti Tahunan ${selectedLeaveEmp?.fullName || 'Karyawan'} saat ini adalah 0 Hari!`
+                          : `Peringatan: Sisa Cuti Tahunan (${selectedLeaveEmpRemainingQuota} hari) tidak mencukupi untuk pengajuan ${leaveDays} hari kerja!`}
+                      </span>
+                      <p className="text-amber-800 leading-relaxed">
+                        Jika tetap disimpan dengan status <strong>Disetujui</strong>, sisa kuota cuti tahunan akan menjadi{' '}
+                        <strong>
+                          {Math.max(0, selectedLeaveEmpRemainingQuota - (Number(leaveDays) || 0))} hari
+                        </strong>
+                        . Anda juga dapat mengubah jenis izin ke{' '}
+                        <strong>Cuti Tanpa Gaji (Unpaid Leave)</strong> bila memotong gaji harian.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+              {/* Info Banner jika Cuti Tanpa Gaji (Unpaid Leave) / Izin Keperluan Pribadi dipilih */}
+              {isUnpaidLeaveType(leaveType, leaveReason) && (
+                <div className="p-3 rounded-xl bg-rose-50/90 border border-rose-200 text-rose-900 flex items-start gap-2.5">
+                  <Calculator className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                  <div className="space-y-0.5 text-[11px]">
+                    <span className="font-extrabold block text-rose-950">
+                      Terhubung Otomatis ke Potongan Ketidakhadiran / Absensi Payroll
+                    </span>
+                    <p className="text-rose-800 leading-relaxed">
+                      Saat berstatus <strong>Disetujui</strong>, sistem otomatis menghitung potongan izin/unpaid leave sebesar{' '}
+                      <strong>
+                        {leaveDays} hari × {formatRupiah(selectedLeaveEmpDailySalary)} = -
+                        {formatRupiah(Math.round((Number(leaveDays) || 0) * selectedLeaveEmpDailySalary))}
+                      </strong>{' '}
+                      pada Tabel Payroll &amp; Slip Gaji periode berjalan.
+                    </p>
+                  </div>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-slate-600 mb-1">Mulai Tanggal</label>
+                  <label className="block text-slate-700 font-semibold mb-1">Tanggal Mulai *</label>
                   <input
                     type="date"
                     value={leaveStart}
-                    onChange={(e) => setLeaveStart(e.target.value)}
-                    className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800"
+                    onChange={(e) => {
+                      const nextStart = e.target.value;
+                      const nextEnd = nextStart > leaveEnd ? nextStart : leaveEnd;
+                      setLeaveStart(nextStart);
+                      setLeaveEnd(nextEnd);
+                      setLeaveDays(calculateWorkingDaysBetweenDates(nextStart, nextEnd));
+                    }}
+                    className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium"
                   />
                 </div>
                 <div>
-                  <label className="block text-slate-600 mb-1">Sampai Tanggal</label>
+                  <label className="block text-slate-700 font-semibold mb-1">Tanggal Selesai *</label>
                   <input
                     type="date"
+                    min={leaveStart}
                     value={leaveEnd}
-                    onChange={(e) => setLeaveEnd(e.target.value)}
-                    className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800"
+                    onChange={(e) => {
+                      const nextEnd = e.target.value < leaveStart ? leaveStart : e.target.value;
+                      setLeaveEnd(nextEnd);
+                      setLeaveDays(calculateWorkingDaysBetweenDates(leaveStart, nextEnd));
+                    }}
+                    className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium"
                   />
                 </div>
               </div>
 
-              <div>
-                <label className="block text-slate-600 mb-1">Jumlah Hari Kerja</label>
-                <input
-                  type="number"
-                  min={1}
-                  value={leaveDays}
-                  onChange={(e) => setLeaveDays(Number(e.target.value))}
-                  className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800"
-                />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-slate-700 font-semibold">
+                      Jumlah Hari Kerja *
+                    </label>
+                    <span className="text-[10px] text-emerald-700 font-semibold">
+                      Otomatis Dihitung
+                    </span>
+                  </div>
+                  <input
+                    type="number"
+                    min={1}
+                    max={365}
+                    value={leaveDays}
+                    onChange={(e) => setLeaveDays(Math.max(1, Number(e.target.value) || 1))}
+                    className="w-full p-2 bg-emerald-50/40 border border-emerald-300 rounded-xl text-emerald-950 font-extrabold"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-700 font-semibold mb-1">
+                    Status Pengajuan *
+                  </label>
+                  <select
+                    value={leaveStatus}
+                    onChange={(e) =>
+                      setLeaveStatus(e.target.value as 'Disetujui' | 'Menunggu Persetujuan')
+                    }
+                    className={`w-full p-2 border rounded-xl font-bold ${
+                      leaveStatus === 'Disetujui'
+                        ? 'bg-emerald-50 border-emerald-400 text-emerald-900'
+                        : 'bg-amber-50 border-amber-300 text-amber-900'
+                    }`}
+                  >
+                    <option value="Disetujui">✓ Langsung Disetujui (Approved)</option>
+                    <option value="Menunggu Persetujuan">⏳ Menunggu Persetujuan</option>
+                  </select>
+                </div>
               </div>
 
               <div>
-                <label className="block text-slate-600 mb-1">Alasan Cuti</label>
+                <label className="block text-slate-700 font-semibold mb-1">
+                  Alasan / Catatan Cuti atau Izin
+                </label>
                 <textarea
                   rows={2}
                   value={leaveReason}
                   onChange={(e) => setLeaveReason(e.target.value)}
-                  placeholder="e.g. Acara keluarga / pemeriksaan kesehatan"
+                  placeholder="Contoh: Acara keluarga / Pemeriksaan kesehatan / Izin keperluan mendadak..."
                   className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800"
                 />
               </div>
 
               <div className="space-y-1.5">
                 <label className="block text-slate-600">
-                  Upload Gambar Bukti Pendukung (Surat Dokter / Bukti Izin)
+                  Upload Gambar Bukti Pendukung (Surat Dokter / Bukti Izin — Opsional)
                 </label>
                 {leaveAttachmentUrl ? (
                   <div className="p-2.5 rounded-xl bg-indigo-50/70 border border-indigo-200 flex items-center justify-between gap-2">
@@ -834,7 +1004,9 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
                   disabled={isCompressingAttachment}
                   className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl cursor-pointer disabled:opacity-50"
                 >
-                  Kirim Pengajuan
+                  {leaveStatus === 'Disetujui'
+                    ? 'Simpan & Langsung Setujui'
+                    : 'Simpan Pengajuan'}
                 </button>
               </div>
             </form>

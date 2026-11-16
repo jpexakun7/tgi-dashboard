@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Employee, EmployeeAdjustment } from '../types';
+import { Employee, EmployeeAdjustment, CompanyConfig, HrLetterType } from '../types';
 import {
   formatRupiah,
   normalizePeriodToYearMonth,
@@ -7,6 +7,8 @@ import {
   doesEmployeeMatchAdjustment,
   getJakartaYearMonth,
 } from '../utils/formatters';
+import { DigitalLetterGeneratorModal } from './DigitalLetterGeneratorModal';
+import { initialCompanyConfig } from '../mockData';
 import {
   Award,
   ShieldAlert,
@@ -23,6 +25,8 @@ import {
   FileText,
   Calculator,
   RotateCcw,
+  Printer,
+  Upload,
 } from 'lucide-react';
 
 interface PayrollAdjustmentPanelProps {
@@ -38,6 +42,8 @@ interface PayrollAdjustmentPanelProps {
   onDeleteAdjustment: (adjustmentId: string) => Promise<void>;
   onOpenPayslipByEmployeeId?: (employeeId: string) => void;
   onRefreshAdjustments?: () => Promise<void>;
+  onUpdateEmployee?: (updatedEmp: Employee) => void;
+  companyConfig?: CompanyConfig;
 }
 
 const DEFAULT_KESALAHAN_RATE = 10000;
@@ -50,6 +56,8 @@ export const PayrollAdjustmentPanel: React.FC<PayrollAdjustmentPanelProps> = ({
   onDeleteAdjustment,
   onOpenPayslipByEmployeeId,
   onRefreshAdjustments,
+  onUpdateEmployee,
+  companyConfig = initialCompanyConfig,
 }) => {
   const defaultPeriodYm = useMemo(
     () =>
@@ -75,6 +83,12 @@ export const PayrollAdjustmentPanel: React.FC<PayrollAdjustmentPanelProps> = ({
   const [toastMessage, setToastMessage] = useState<{
     type: 'success' | 'error';
     text: string;
+  } | null>(null);
+  const [letterModalState, setLetterModalState] = useState<{
+    employee: Employee;
+    tab: 'documents' | 'generator';
+    letterType: HrLetterType;
+    adjustment?: EmployeeAdjustment | null;
   } | null>(null);
 
   useEffect(() => {
@@ -902,6 +916,71 @@ export const PayrollAdjustmentPanel: React.FC<PayrollAdjustmentPanelProps> = ({
                 <span>Lihat Slip Gaji {selectedEmployee?.fullName}</span>
               </button>
             )}
+
+            {/* Digital Document Archive & Generator Surat Peringatan (SP1, SP2, SP3) */}
+            <div className="p-3.5 rounded-xl bg-rose-50/80 border border-rose-200 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-extrabold uppercase tracking-wider text-rose-900 flex items-center gap-1.5">
+                  <ShieldAlert className="w-3.5 h-3.5 text-rose-600" />
+                  <span>Generator Surat Peringatan &amp; Dokumen</span>
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-600 leading-relaxed">
+                Cetak otomatis Surat Peringatan (SP-1, SP-2, SP-3) atau Kontrak Kerja dengan nomor surat otomatis dari data kesalahan karyawan.
+              </p>
+              <div className="grid grid-cols-3 gap-1.5">
+                {(['SP1', 'SP2', 'SP3'] as const).map((spCode) => (
+                  <button
+                    key={spCode}
+                    type="button"
+                    disabled={!selectedEmployee && activeEmployees.length === 0}
+                    onClick={() => {
+                      const targetEmp = selectedEmployee || activeEmployees[0];
+                      if (!targetEmp) return;
+                      setLetterModalState({
+                        employee: targetEmp,
+                        tab: 'generator',
+                        letterType: spCode,
+                        adjustment: {
+                          id: editingAdjustmentId || 'temp',
+                          employee_id: targetEmp.id,
+                          employee_nik: targetEmp.nik,
+                          employee_name: targetEmp.fullName,
+                          period_month: selectedPeriodMonth,
+                          tunjangan_kerajinan: tunjanganKerajinan,
+                          tunjangan_kedisiplinan: tunjanganKedisiplinan,
+                          kesalahan_count: kesalahanCount,
+                          kesalahan_rate: kesalahanRate,
+                          catatan_kesalahan: catatanKesalahan,
+                          updated_at: new Date().toISOString(),
+                        },
+                      });
+                    }}
+                    className="py-2 px-2 rounded-lg bg-rose-600 hover:bg-rose-700 disabled:bg-slate-300 text-white font-bold text-[11px] flex items-center justify-center gap-1 cursor-pointer shadow-2xs"
+                  >
+                    <Printer className="w-3 h-3" />
+                    <span>Buat {spCode}</span>
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                disabled={!selectedEmployee && activeEmployees.length === 0}
+                onClick={() => {
+                  const targetEmp = selectedEmployee || activeEmployees[0];
+                  if (!targetEmp) return;
+                  setLetterModalState({
+                    employee: targetEmp,
+                    tab: 'documents',
+                    letterType: 'PKWT',
+                  });
+                }}
+                className="w-full py-2 px-3 rounded-lg bg-white hover:bg-slate-100 text-slate-800 border border-slate-300 font-bold text-[11px] flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <Upload className="w-3.5 h-3.5 text-indigo-600" />
+                <span>Upload Arsip Dokumen (KTP, NPWP, Kontrak)</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -1045,6 +1124,24 @@ export const PayrollAdjustmentPanel: React.FC<PayrollAdjustmentPanelProps> = ({
                           )}
                           <button
                             type="button"
+                            onClick={() => {
+                              const targetEmp = empObj || activeEmployees[0];
+                              if (!targetEmp) return;
+                              setLetterModalState({
+                                employee: targetEmp,
+                                tab: 'generator',
+                                letterType: count >= 3 ? 'SP3' : count === 2 ? 'SP2' : 'SP1',
+                                adjustment: adj,
+                              });
+                            }}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-200 font-semibold transition-colors cursor-pointer"
+                            title="Cetak Surat Peringatan (SP1/SP2/SP3) atau Arsip Dokumen"
+                          >
+                            <Printer className="w-3.5 h-3.5" />
+                            <span>Cetak SP / Surat</span>
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => handleEditRow(adj)}
                             className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 font-semibold transition-colors cursor-pointer"
                           >
@@ -1069,6 +1166,23 @@ export const PayrollAdjustmentPanel: React.FC<PayrollAdjustmentPanelProps> = ({
           </table>
         </div>
       </div>
+
+      {/* Modal Generator Surat Otomatis (SP1/SP2/SP3 & PKWT/PKWTT) + Arsip Dokumen */}
+      <DigitalLetterGeneratorModal
+        isOpen={Boolean(letterModalState)}
+        onClose={() => setLetterModalState(null)}
+        employee={letterModalState?.employee || null}
+        employees={activeEmployees}
+        companyConfig={companyConfig}
+        initialTab={letterModalState?.tab || 'generator'}
+        initialLetterType={letterModalState?.letterType || 'SP1'}
+        employeeAdjustment={letterModalState?.adjustment}
+        onUpdateEmployee={(updated) => {
+          onUpdateEmployee?.(updated);
+          setLetterModalState((prev) => (prev ? { ...prev, employee: updated } : null));
+        }}
+      />
     </div>
   );
 };
+

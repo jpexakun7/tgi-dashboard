@@ -698,29 +698,29 @@ export const PayrollReportModal: React.FC<PayrollReportModalProps> = ({
                       </p>
                     </div>
 
-                    {/* Area Tanda Tangan & Stempel di Atas Garis */}
-                    <div className="relative h-24 flex items-end justify-center my-1">
-                      {item.showStamp && stampImg && (
-                        <img
-                          src={stampImg}
-                          alt="Stempel Resmi"
-                          className="absolute left-1/2 -translate-x-14 bottom-0 w-20 h-20 object-contain opacity-80 pointer-events-none select-none z-10"
-                        />
-                      )}
+                    {/* Area Tanda Tangan & Stempel Menumpuk di Atas Garis */}
+                    <div className="relative h-24 print:h-24 w-48 max-w-full mx-auto flex items-end justify-center my-1 select-none">
                       {item.signatureDataUrl ? (
                         <img
                           src={item.signatureDataUrl}
                           alt={`Tanda Tangan ${item.name}`}
-                          className="max-h-20 max-w-[180px] object-contain relative z-20 mb-0.5"
+                          className="max-h-[72px] max-w-[165px] print:max-h-[72px] print:max-w-[165px] object-contain relative z-10 mb-1 pointer-events-none select-none"
                         />
                       ) : (
-                        <span className="text-[10px] text-slate-300 group-hover:text-indigo-500 transition-colors mb-3 print:hidden">
+                        <span className="text-[10px] text-slate-300 group-hover:text-indigo-500 transition-colors mb-3 print:hidden relative z-10">
                           + Klik untuk tambah TTD / Stempel
                         </span>
                       )}
+                      {item.showStamp && stampImg && (
+                        <img
+                          src={stampImg}
+                          alt="Stempel Resmi"
+                          className="payslip-stamp-overlay absolute left-1/2 -translate-x-[68%] -bottom-1.5 w-[104px] h-[104px] print:w-[104px] print:h-[104px] object-contain opacity-[0.92] contrast-125 saturate-[1.2] mix-blend-multiply -rotate-[8deg] pointer-events-none select-none z-20 print:opacity-[0.92] print:contrast-125 print:saturate-[1.2] print:mix-blend-multiply print:-rotate-[8deg]"
+                        />
+                      )}
                     </div>
 
-                    <div className="pt-2 border-t border-slate-400 w-48 mx-auto relative z-20">
+                    <div className="pt-2 border-t border-slate-400 w-48 mx-auto relative z-30">
                       <p className="font-bold text-slate-900">
                         {item.name || '( .................................... )'}
                       </p>

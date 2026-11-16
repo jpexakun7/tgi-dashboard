@@ -34,6 +34,11 @@ import {
   addDaysToDateString,
   getJakartaDateString,
   getJakartaIsoTimestamp,
+  getWeeklyCycleRangeForDate,
+  getSelectableWeeklyCycles,
+  getEmployeeShift,
+  calculateEmployeeAttendancePenalty,
+  getEmployeePayrollDeductionForPeriod,
 } from '../utils/formatters';
 import {
   PartTimeLogs,
@@ -50,6 +55,7 @@ import {
   saveEmployeeEmploymentMetaLocal,
   getSavedEmployeeBonuses,
   getSavedThrPayouts,
+  getSavedPayrollDeductions,
 } from '../services/supabaseService';
 
 interface PartTimePayrollSummaryProps {
@@ -93,6 +99,15 @@ interface EmployeeWeeklySummaryRow {
   thrNotes: string;
   thrShowInPayslip: boolean;
   grossPay: number;
+  lateMinutesTotal: number;
+  latePenaltyDeduction: number;
+  kasbonDeduction: number;
+  otherDeduction: number;
+  totalDeductions: number;
+  coveredDeductionAmount: number;
+  uncoveredDeductionDeficit: number;
+  netTakeHomePay: number;
+  missingClockOutLogs: PartTimeWorkLog[];
   unpaidGrossPay: number;
   paidGrossPay: number;
   isFullyPaid: boolean;
@@ -125,15 +140,21 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
   const [thrPayouts, setThrPayouts] = useState<ThrPayoutRecord[]>(() =>
     getSavedThrPayouts()
   );
+  const [payrollDeductions, setPayrollDeductions] = useState(() =>
+    getSavedPayrollDeductions()
+  );
 
   useEffect(() => {
     const syncBonuses = () => setEmployeeBonuses(getSavedEmployeeBonuses());
     const syncThr = () => setThrPayouts(getSavedThrPayouts());
+    const syncDeductions = () => setPayrollDeductions(getSavedPayrollDeductions());
     window.addEventListener('tgi_employee_bonuses_updated', syncBonuses);
     window.addEventListener('tgi_thr_payouts_updated', syncThr);
+    window.addEventListener('tgi_payroll_deductions_updated', syncDeductions);
     return () => {
       window.removeEventListener('tgi_employee_bonuses_updated', syncBonuses);
       window.removeEventListener('tgi_thr_payouts_updated', syncThr);
+      window.removeEventListener('tgi_payroll_deductions_updated', syncDeductions);
     };
   }, []);
 
@@ -460,21 +481,35 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
       const paidHours = Math.round((paidNormalHours + paidOvertimeHours) * 100) / 100;
 
       // Rumus Gaji Kotor = (Jam Normal × hourly_rate) + (Jam Lembur × overtime_rate) + Bonus Tambahan + THR (jika dicentang Admin)
+      // Pastikan siklus mingguan (Senin-Sabtu) saat transisi cut-off tgl 25/26 tetap utuh tanpa terpotong paksa
       const normalPay = Math.round(normalHoursWorked * hourlyRate);
       const overtimePay = Math.round(overtimeHoursWorked * overtimeRate);
-      const periodMonthYm = (weekEnd || weekStart || '').slice(0, 7);
-      const bonusSummary = getEmployeeBonusesForPeriod(
+      const payoutYm = (sundayPayoutDate || weekEnd || weekStart || '').slice(0, 7);
+      const startYm = (weekStart || '').slice(0, 7);
+      const primaryBonusSummary = getEmployeeBonusesForPeriod(
         employeeBonuses,
         emp,
-        periodMonthYm
+        payoutYm,
+        false
       );
-      const bonusPay = Math.max(0, Math.round(Number(bonusSummary.totalAmount) || 0));
-      const bonusNotes = bonusSummary.combinedNotes || '';
+      const fallbackBonusSummary =
+        primaryBonusSummary.totalAmount === 0 && startYm && startYm !== payoutYm
+          ? getEmployeeBonusesForPeriod(employeeBonuses, emp, startYm, false)
+          : primaryBonusSummary;
+      const bonusPay = Math.max(0, Math.round(Number(fallbackBonusSummary.totalAmount) || 0));
+      const bonusNotes = fallbackBonusSummary.combinedNotes || '';
 
       // THR hanya muncul dan dihitung jika Admin mencentang show_in_payslip = true
-      const activeThr = getActiveEmployeeThrForPayslip(thrPayouts, emp, periodMonthYm);
-      const thrShowInPayslip = Boolean(activeThr && activeThr.show_in_payslip === true && activeThr.total_thr_amount > 0);
-      const thrPay = thrShowInPayslip && activeThr ? Math.max(0, Math.round(Number(activeThr.total_thr_amount) || 0)) : 0;
+      const activeThr =
+        getActiveEmployeeThrForPayslip(thrPayouts, emp, payoutYm) ||
+        (startYm !== payoutYm ? getActiveEmployeeThrForPayslip(thrPayouts, emp, startYm) : null);
+      const thrShowInPayslip = Boolean(
+        activeThr && activeThr.show_in_payslip === true && activeThr.total_thr_amount > 0
+      );
+      const thrPay =
+        thrShowInPayslip && activeThr
+          ? Math.max(0, Math.round(Number(activeThr.total_thr_amount) || 0))
+          : 0;
       const thrNotes =
         thrShowInPayslip && activeThr
           ? `${activeThr.holiday_name} (${activeThr.tenure_label} • ${activeThr.proportion_formula})`
@@ -482,11 +517,61 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
 
       const grossPay = normalPay + overtimePay + bonusPay + thrPay;
 
+      // Evaluasi denda keterlambatan (dengan batas wajar shift) & potongan kasbon/absensi pada minggu ini
+      const weekRangePeriod = `${weekStart}__${weekEnd}`;
+      const attPenalty = calculateEmployeeAttendancePenalty(
+        emp,
+        safeAttendances,
+        undefined,
+        undefined,
+        weekRangePeriod
+      );
+      const lateMinutesTotal = Math.max(0, Math.round(attPenalty.totalLateMinutes || 0));
+      const latePenaltyDeduction = Math.max(0, Math.round(attPenalty.latePenaltyAmount || 0));
+
+      const dedRecord = getEmployeePayrollDeductionForPeriod(
+        payrollDeductions,
+        emp,
+        payoutYm,
+        false
+      );
+      const kasbonDeduction = dedRecord
+        ? Math.max(0, Math.round(Number(dedRecord.cicilan_kasbon_bulan_ini) || 0))
+        : 0;
+      const otherDeduction = dedRecord
+        ? Math.max(
+            0,
+            Math.round(
+              (Number(dedRecord.tanpa_keterangan_hari) || 0) *
+                (Number(dedRecord.tanpa_keterangan_rate) || 0) +
+                (Number(dedRecord.izin_jam_menit) || 0) * (Number(dedRecord.izin_jam_rate) || 0) +
+                (Number(dedRecord.izin_hari_jumlah) || 0) * (Number(dedRecord.izin_hari_rate) || 0)
+            )
+          )
+        : 0;
+
+      const totalDeductions = latePenaltyDeduction + kasbonDeduction + otherDeduction;
+      // Proteksi Take Home Pay Non-Negatif: minimal Rp 0 (tidak pernah minus)
+      const netTakeHomePay = Math.max(0, grossPay - totalDeductions);
+      const coveredDeductionAmount = Math.min(grossPay, totalDeductions);
+      const uncoveredDeductionDeficit = Math.max(0, totalDeductions - grossPay);
+
+      // Deteksi log kerja Part-Time yang memiliki Clock-In namun belum memiliki Clock-Out
+      const missingClockOutLogs = empWeekLogs.filter((l) => {
+        const cIn = (l.clockIn || l.clock_in || '').trim();
+        const cOut = (l.clockOut || l.clock_out || '').trim();
+        return Boolean(cIn && cIn !== '-') && (!cOut || cOut === '-' || cOut === cIn);
+      });
+
       const baseUnpaidWage =
         Math.round(unpaidNormalHours * hourlyRate) +
         Math.round(unpaidOvertimeHours * overtimeRate);
-      const unpaidGrossPay =
-        unpaidLogs.length > 0 ? baseUnpaidWage + bonusPay + thrPay : baseUnpaidWage + (thrShowInPayslip && activeThr?.payment_status !== 'Sudah Dibayar' ? thrPay : 0);
+      const rawUnpaidGrossPay =
+        unpaidLogs.length > 0
+          ? baseUnpaidWage + bonusPay + thrPay
+          : baseUnpaidWage +
+            (thrShowInPayslip && activeThr?.payment_status !== 'Sudah Dibayar' ? thrPay : 0);
+      const unpaidGrossPay = Math.max(0, rawUnpaidGrossPay - (unpaidLogs.length > 0 ? totalDeductions : 0));
       const paidGrossPay =
         Math.round(paidNormalHours * hourlyRate) +
         Math.round(paidOvertimeHours * overtimeRate) +
@@ -522,12 +607,31 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
         thrNotes,
         thrShowInPayslip,
         grossPay,
+        lateMinutesTotal,
+        latePenaltyDeduction,
+        kasbonDeduction,
+        otherDeduction,
+        totalDeductions,
+        coveredDeductionAmount,
+        uncoveredDeductionDeficit,
+        netTakeHomePay,
+        missingClockOutLogs,
         unpaidGrossPay,
         paidGrossPay,
         isFullyPaid,
       };
     });
-  }, [relevantPartTimeEmployees, safeLogs, weekStart, weekEnd, employeeBonuses, thrPayouts]);
+  }, [
+    relevantPartTimeEmployees,
+    safeLogs,
+    safeAttendances,
+    weekStart,
+    weekEnd,
+    sundayPayoutDate,
+    employeeBonuses,
+    thrPayouts,
+    payrollDeductions,
+  ]);
 
   // KPI Aggregate Totals for the Weekly Cycle
   const aggregateTotals = useMemo(() => {
@@ -562,6 +666,85 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
       unpaidEmployeeCount,
     };
   }, [weeklySummaryRows]);
+
+  // Daftar siklus mingguan (Senin-Sabtu) yang tersedia di dropdown tanpa terpotong di tgl 25/26
+  const selectableWeeklyCycles = useMemo(
+    () => getSelectableWeeklyCycles(weekStart, safeLogs, safePayouts, 10, 2),
+    [weekStart, safeLogs, safePayouts]
+  );
+
+  const activeWeeklyCycleInfo = useMemo(
+    () => getWeeklyCycleRangeForDate(weekStart),
+    [weekStart]
+  );
+
+  const handleSelectWeekCycle = (mondayStartStr: string) => {
+    const cycle = getWeeklyCycleRangeForDate(mondayStartStr);
+    setWeekStart(cycle.startDate);
+    setWeekEnd(cycle.endDate);
+  };
+
+  // Aksi Cepat Admin: Lengkapi Clock-Out otomatis sesuai jadwal shift / target jam kerja karyawan Part-Time
+  const handleQuickCompletePartTimeClockOut = async (
+    emp: Employee,
+    logsToFix: PartTimeWorkLog[]
+  ) => {
+    if (!logsToFix || logsToFix.length === 0) return;
+    setProcessingEmpId(emp.id);
+    try {
+      const empShift = getEmployeeShift(emp);
+      const empStd = getEmployeeStandardDailyHours(emp, STANDARD_WORK_HOURS_PER_DAY, empShift);
+      const hrRate =
+        Number(emp.hourlyRate ?? emp.hourly_rate) || getEmployeeHourlyRate(emp, empStd, 25);
+      const otRate =
+        Number(emp.overtimeRate ?? emp.overtime_rate) || Math.round(hrRate * 1.5);
+
+      for (const l of logsToFix) {
+        const cIn = (l.clockIn || l.clock_in || empShift.checkInTime || '09:00').trim();
+        const [inH, inM] = cIn.split(':').map(Number);
+        let autoOut = empShift.checkOutTime || '17:30';
+        if (!isNaN(inH) && !isNaN(inM)) {
+          const totalOutMins = (inH * 60 + inM + Math.round(empStd * 60)) % (24 * 60);
+          autoOut = `${String(Math.floor(totalOutMins / 60)).padStart(2, '0')}:${String(
+            totalOutMins % 60
+          ).padStart(2, '0')}`;
+        }
+        const approvedOt = getApprovedOvertimeHoursForEmployeeDate(emp.id, l.date);
+        const computed = computeHoursFromClockInOut(cIn, autoOut, empStd, approvedOt, l.date);
+        const wage = Math.round(computed.normalHours * hrRate + computed.overtimeHours * otRate);
+
+        const updatedLog: PartTimeWorkLog = {
+          ...l,
+          id: l.id.startsWith('pt-att-') ? generateSessionUuid() : l.id,
+          clockIn: cIn,
+          clock_in: cIn,
+          clockOut: autoOut,
+          clock_out: autoOut,
+          normalHours: computed.normalHours,
+          normal_hours: computed.normalHours,
+          overtimeHours: computed.overtimeHours,
+          overtime_hours: computed.overtimeHours,
+          hoursWorked: computed.totalHours,
+          hours_worked: computed.totalHours,
+          hourlyRate: hrRate,
+          hourlyRateSnapshot: hrRate,
+          hourly_rate: hrRate,
+          overtimeRate: otRate,
+          overtime_rate: otRate,
+          dailyWage: wage,
+          daily_wage: wage,
+          notes: `${l.notes ? `${l.notes} • ` : ''}Clock-Out dilengkapi Admin (${autoOut} WIB)`,
+        };
+        onSaveLog(updatedLog);
+        await upsertPartTimeLogToSupabase(updatedLog);
+      }
+      showToast(
+        `Clock-Out ${logsToFix.length} hari kerja untuk ${emp.fullName} berhasil dilengkapi sesuai target jam kerja (${empStd} jam/hari)!`
+      );
+    } finally {
+      setProcessingEmpId(null);
+    }
+  };
 
   const handleShiftWeek = (offsetWeeks: number) => {
     const baseDateStr =
@@ -960,55 +1143,88 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
           </div>
         </div>
 
-        {/* Pemilih Siklus Mingguan (6 Hari Operasional + Hari Minggu Payout) */}
-        <div className="mt-5 pt-4 border-t border-white/10 flex flex-col md:flex-row md:items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-bold text-orange-200 flex items-center gap-1.5">
-              <Calendar className="w-4 h-4 text-orange-400" />
-              Siklus Kerja 6 Hari (Senin–Sabtu):
-            </span>
+        {/* Pemilih Siklus Mingguan (6 Hari Operasional + Hari Minggu Payout) Tanpa Terpotong Tgl 25/26 */}
+        <div className="mt-5 pt-4 border-t border-white/10 space-y-3">
+          <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-bold text-orange-200 flex items-center gap-1.5">
+                <Calendar className="w-4 h-4 text-orange-400" />
+                Pilih Periode Minggu (Senin–Sabtu):
+              </span>
+              <select
+                value={activeWeeklyCycleInfo.startDate}
+                onChange={(e) => handleSelectWeekCycle(e.target.value)}
+                className="px-3 py-1.5 rounded-xl bg-slate-900/90 border border-orange-400/50 text-white text-xs font-bold focus:outline-none focus:ring-2 focus:ring-orange-400 cursor-pointer"
+              >
+                {selectableWeeklyCycles.map((cyc) => (
+                  <option key={cyc.startDate} value={cyc.startDate} className="bg-slate-900 text-white">
+                    {cyc.startDate === defaultWeek.startDate ? '★ [Minggu Berjalan] ' : ''}
+                    {cyc.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => handleShiftWeek(-1)}
+                className="px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-[11px] font-semibold text-slate-200 cursor-pointer"
+              >
+                ← Minggu Lalu
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setWeekStart(defaultWeek.startDate);
+                  setWeekEnd(defaultWeek.endDate);
+                }}
+                className="px-2.5 py-1.5 rounded-lg bg-orange-500/30 hover:bg-orange-500/40 border border-orange-400/40 text-[11px] font-bold text-orange-200 cursor-pointer"
+              >
+                Minggu Ini
+              </button>
+              <button
+                type="button"
+                onClick={() => handleShiftWeek(1)}
+                className="px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-[11px] font-semibold text-slate-200 cursor-pointer"
+              >
+                Minggu Depan →
+              </button>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {activeWeeklyCycleInfo.isCrossCutoff2526 && (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/20 border border-amber-400/40 text-amber-200 text-[11px] font-bold">
+                  ✓ Siklus Mingguan Utuh Lintas Cut-Off Tgl 25/26 (Senin–Sabtu Menyatu)
+                </span>
+              )}
+              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-emerald-500/20 border border-emerald-400/40 text-emerald-200 text-xs font-bold">
+                <Wallet className="w-4 h-4 text-emerald-400" />
+                <span>Jadwal Pencairan Minggu (Sunday Payout): {formatIndoDate(sundayPayoutDate)}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-300">
+            <span>Rentang Tanggal Kustom:</span>
             <input
               type="date"
               value={weekStart}
-              onChange={(e) => setWeekStart(e.target.value)}
-              className="px-3 py-1.5 rounded-xl bg-white/10 border border-white/20 text-white text-xs font-semibold"
+              onChange={(e) => {
+                const cycle = getWeeklyCycleRangeForDate(e.target.value);
+                setWeekStart(cycle.startDate);
+                setWeekEnd(cycle.endDate);
+              }}
+              className="px-2.5 py-1 rounded-lg bg-white/10 border border-white/20 text-white text-[11px] font-semibold"
+              title="Memilih tanggal mana pun akan otomatis mengunci siklus Senin s/d Sabtu pada minggu tersebut"
             />
-            <span className="text-xs text-slate-400">s/d</span>
+            <span className="text-slate-400">s/d</span>
             <input
               type="date"
               value={weekEnd}
               onChange={(e) => setWeekEnd(e.target.value)}
-              className="px-3 py-1.5 rounded-xl bg-white/10 border border-white/20 text-white text-xs font-semibold"
+              className="px-2.5 py-1 rounded-lg bg-white/10 border border-white/20 text-white text-[11px] font-semibold"
             />
-            <button
-              type="button"
-              onClick={() => handleShiftWeek(-1)}
-              className="px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-[11px] font-semibold text-slate-200 cursor-pointer"
-            >
-              ← Minggu Lalu
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setWeekStart(defaultWeek.startDate);
-                setWeekEnd(defaultWeek.endDate);
-              }}
-              className="px-2.5 py-1.5 rounded-lg bg-orange-500/30 hover:bg-orange-500/40 border border-orange-400/40 text-[11px] font-bold text-orange-200 cursor-pointer"
-            >
-              Minggu Ini
-            </button>
-            <button
-              type="button"
-              onClick={() => handleShiftWeek(1)}
-              className="px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-[11px] font-semibold text-slate-200 cursor-pointer"
-            >
-              Minggu Depan →
-            </button>
-          </div>
-
-          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-emerald-500/20 border border-emerald-400/40 text-emerald-200 text-xs font-bold">
-            <Wallet className="w-4 h-4 text-emerald-400" />
-            <span>Jadwal Pencairan Minggu (Sunday Payout): {formatIndoDate(sundayPayoutDate)}</span>
+            <span className="text-orange-200/90 italic">
+              *Perhitungan Part-Time Mingguan selalu mengikuti siklus kalender Senin s/d Sabtu utuh tanpa terpotong di tanggal 25/26.
+            </span>
           </div>
         </div>
       </div>
@@ -1238,11 +1454,19 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
 
                       <td className="py-3.5 px-4 text-right">
                         <span className="font-mono font-extrabold text-sm text-slate-900 block">
-                          {formatRupiah(row.grossPay)}
+                          {formatRupiah(row.netTakeHomePay)}
                         </span>
                         <span className="text-[10px] text-slate-500 block">
-                          Normal {formatRupiah(row.normalPay)} + Lembur {formatRupiah(row.overtimePay)}
+                          Bruto {formatRupiah(row.grossPay)}
+                          {row.totalDeductions > 0
+                            ? ` • Potongan -${formatRupiah(row.totalDeductions)}`
+                            : ` (Normal ${formatRupiah(row.normalPay)} + Lembur ${formatRupiah(row.overtimePay)})`}
                         </span>
+                        {row.uncoveredDeductionDeficit > 0 && (
+                          <span className="mt-1 inline-flex items-center px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300 text-[9px] font-bold">
+                            Proteksi THP Rp 0 • Selisih Potongan: {formatRupiah(row.uncoveredDeductionDeficit)}
+                          </span>
+                        )}
                       </td>
 
                       <td className="py-3.5 px-4">
@@ -1333,6 +1557,26 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
                               <Check className="w-3.5 h-3.5" />
                               <span>
                                 {isProcessing ? 'Memproses...' : 'Tandai Sudah Dibayar'}
+                              </span>
+                            </button>
+                          )}
+
+                          {row.missingClockOutLogs.length > 0 && (
+                            <button
+                              type="button"
+                              disabled={isProcessing}
+                              onClick={() =>
+                                handleQuickCompletePartTimeClockOut(
+                                  row.employee,
+                                  row.missingClockOutLogs
+                                )
+                              }
+                              className="px-2.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-extrabold shadow-xs flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                              title={`Terdapat ${row.missingClockOutLogs.length} log belum Clock-Out. Klik untuk melengkapi otomatis sesuai jadwal shift.`}
+                            >
+                              <Clock className="w-3 h-3" />
+                              <span>
+                                ⚡ Lengkapi Clock-Out ({row.missingClockOutLogs.length})
                               </span>
                             </button>
                           )}
@@ -1717,19 +1961,77 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
                     </span>
                   </div>
                 )}
+                {viewingSlipRow.totalDeductions > 0 && (
+                  <div className="pt-2 border-t border-orange-200/80 space-y-1 text-xs">
+                    <div className="flex items-center justify-between text-slate-700 font-semibold">
+                      <span>Subtotal Penghasilan Bruto Mingguan</span>
+                      <span className="font-mono font-bold">{formatRupiah(viewingSlipRow.grossPay)}</span>
+                    </div>
+                    {viewingSlipRow.latePenaltyDeduction > 0 && (
+                      <div className="flex items-center justify-between text-rose-700">
+                        <span>
+                          Potongan Keterlambatan ({viewingSlipRow.lateMinutesTotal} menit — batas wajar shift)
+                        </span>
+                        <span className="font-mono font-bold">
+                          -{formatRupiah(viewingSlipRow.latePenaltyDeduction)}
+                        </span>
+                      </div>
+                    )}
+                    {viewingSlipRow.kasbonDeduction > 0 && (
+                      <div className="flex items-center justify-between text-rose-700">
+                        <span>Potongan Cicilan Kasbon</span>
+                        <span className="font-mono font-bold">
+                          -{formatRupiah(viewingSlipRow.kasbonDeduction)}
+                        </span>
+                      </div>
+                    )}
+                    {viewingSlipRow.otherDeduction > 0 && (
+                      <div className="flex items-center justify-between text-rose-700">
+                        <span>Potongan Absensi / Izin Lainnya</span>
+                        <span className="font-mono font-bold">
+                          -{formatRupiah(viewingSlipRow.otherDeduction)}
+                        </span>
+                      </div>
+                    )}
+                    <div className="flex items-center justify-between text-rose-800 font-bold pt-1 border-t border-orange-200/50">
+                      <span>Total Potongan Periode Ini</span>
+                      <span className="font-mono">-{formatRupiah(viewingSlipRow.totalDeductions)}</span>
+                    </div>
+                  </div>
+                )}
+
+                {viewingSlipRow.uncoveredDeductionDeficit > 0 && (
+                  <div className="p-3 rounded-xl bg-amber-100/90 border-2 border-amber-400 text-amber-950 space-y-1.5">
+                    <p className="text-[11px] font-black uppercase tracking-wide text-amber-900">
+                      ⚠️ Catatan Rincian Potongan &amp; Proteksi Take Home Pay Non-Negatif
+                    </p>
+                    <p className="text-[11px] text-amber-800 leading-relaxed">
+                      Total potongan (<strong>{formatRupiah(viewingSlipRow.totalDeductions)}</strong>) melebihi
+                      Penghasilan Bruto Mingguan (<strong>{formatRupiah(viewingSlipRow.grossPay)}</strong>).
+                      Take Home Pay ditetapkan minimal <strong>Rp 0 (tidak minus)</strong>. Selisih potongan
+                      yang belum tertutup sebesar{' '}
+                      <strong className="text-rose-700 underline">
+                        {formatRupiah(viewingSlipRow.uncoveredDeductionDeficit)}
+                      </strong>{' '}
+                      dicatat sebagai sisa kewajiban periode berikutnya.
+                    </p>
+                  </div>
+                )}
+
                 <div className="pt-2 border-t border-orange-200 flex items-center justify-between">
                   <div>
                     <span className="text-xs font-extrabold text-orange-950 block">
-                      TOTAL GAJI KOTOR MINGGUAN (TAKE HOME PAY)
+                      TOTAL TAKE HOME PAY BERSIH MINGGUAN (NON-NEGATIF)
                     </span>
                     <span className="text-[11px] text-orange-800">
                       (Jam Normal × hourly_rate) + (Jam Lembur × overtime_rate)
                       {viewingSlipRow.bonusPay > 0 ? ' + Bonus Apresiasi' : ''}
                       {viewingSlipRow.thrShowInPayslip && viewingSlipRow.thrPay > 0 ? ' + THR' : ''}
+                      {viewingSlipRow.totalDeductions > 0 ? ' − Potongan' : ''}
                     </span>
                   </div>
                   <span className="text-lg font-extrabold text-orange-900 font-mono">
-                    {formatRupiah(viewingSlipRow.grossPay)}
+                    {formatRupiah(viewingSlipRow.netTakeHomePay)}
                   </span>
                 </div>
               </div>

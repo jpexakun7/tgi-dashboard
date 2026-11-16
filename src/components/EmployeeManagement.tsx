@@ -77,6 +77,9 @@ import {
 import { validateImageFile, compressImage, compressVideoFrame } from '../utils/imageUtils';
 import { EmployeeDemographicsCharts } from './EmployeeDemographicsCharts';
 import { LiveStreamSessionModal } from './LiveStreamSessionModal';
+import { DigitalLetterGeneratorModal } from './DigitalLetterGeneratorModal';
+import { initialCompanyConfig } from '../mockData';
+import { CompanyConfig, HrLetterType } from '../types';
 import {
   syncEmployeeLiveColumnsToSupabase,
   saveEmployeeEmploymentMetaLocal,
@@ -162,13 +165,22 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
   const [detailLivePcs, setDetailLivePcs] = useState<number>(0);
   const [isLiveSessionModalOpen, setIsLiveSessionModalOpen] = useState<boolean>(false);
   const [liveSessionModalEmpId, setLiveSessionModalEmpId] = useState<string | null>(null);
+  const [letterModalEmployee, setLetterModalEmployee] = useState<Employee | null>(null);
+  const [letterModalInitialTab, setLetterModalInitialTab] = useState<'documents' | 'generator'>('generator');
+  const [letterModalInitialType, setLetterModalInitialType] = useState<HrLetterType>('PKWT');
 
-  // Sync viewingEmployee automatically when employees list updates from Portal Karyawan
+  // Sync viewingEmployee & letterModalEmployee automatically when employees list updates
   useEffect(() => {
     if (viewingEmployee) {
       const updated = employees.find((e) => e.id === viewingEmployee.id);
       if (updated) {
         setViewingEmployee(updated);
+      }
+    }
+    if (letterModalEmployee) {
+      const updatedLetterEmp = employees.find((e) => e.id === letterModalEmployee.id);
+      if (updatedLetterEmp) {
+        setLetterModalEmployee(updatedLetterEmp);
       }
     }
   }, [employees]);
@@ -513,7 +525,10 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         ptkpStatus: 'TK/0',
         bpjsKesehatanNo: '0001000000000',
         bpjsKetenagakerjaanNo: `${String(currentYear).slice(-2)}000000000`,
-        remainingLeaveDays: 12,
+        remainingLeaveDays: 0,
+        remaining_leave: 0,
+        leave_quota: 0,
+        leaveQuota: 0,
         isActive: true,
       });
     }
@@ -574,7 +589,10 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
       ptkpStatus: 'TK/0',
       bpjsKesehatanNo: '0001000000000',
       bpjsKetenagakerjaanNo: `${String(currentYear).slice(-2)}000000000`,
-      remainingLeaveDays: 12,
+      remainingLeaveDays: 0,
+      remaining_leave: 0,
+      leave_quota: 0,
+      leaveQuota: 0,
       isActive: true,
     });
     setIsAddModalOpen(true);
@@ -614,8 +632,21 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
     const resolvedOvertimeRate =
       Number(emp.overtimeRate ?? emp.overtime_rate) || Math.round(resolvedHourly * 1.5);
 
+    const resolvedRemainingLeave =
+      emp.remainingLeaveDays !== undefined && emp.remainingLeaveDays !== null && !isNaN(Number(emp.remainingLeaveDays))
+        ? Math.max(0, Math.round(Number(emp.remainingLeaveDays)))
+        : emp.remaining_leave !== undefined && emp.remaining_leave !== null && !isNaN(Number(emp.remaining_leave))
+        ? Math.max(0, Math.round(Number(emp.remaining_leave)))
+        : emp.leave_quota !== undefined && emp.leave_quota !== null && !isNaN(Number(emp.leave_quota))
+        ? Math.max(0, Math.round(Number(emp.leave_quota)))
+        : 0;
+
     setFormData({
       ...emp,
+      remainingLeaveDays: resolvedRemainingLeave,
+      remaining_leave: resolvedRemainingLeave,
+      leave_quota: resolvedRemainingLeave,
+      leaveQuota: resolvedRemainingLeave,
       employmentStatus: resolvedEmploymentStatus,
       status: resolvedEmploymentStatus,
       employmentType: resolvedEmploymentType,
@@ -732,6 +763,13 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
       ? 'Part-Time'
       : ((formData.employmentStatus as EmploymentStatus) || 'PKWT (Kontrak)');
 
+    const resolvedRemainingLeave =
+      formData.remainingLeaveDays !== undefined &&
+      formData.remainingLeaveDays !== null &&
+      !isNaN(Number(formData.remainingLeaveDays))
+        ? Math.max(0, Math.round(Number(formData.remainingLeaveDays)))
+        : 0;
+
     if (editingEmployee) {
       const updated: Employee = {
         ...editingEmployee,
@@ -744,13 +782,30 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         status: resolvedEmploymentStatus,
         employmentType: resolvedEmploymentType,
         employment_type: resolvedEmploymentType,
+        remainingLeaveDays: resolvedRemainingLeave,
+        remaining_leave: resolvedRemainingLeave,
+        leave_quota: resolvedRemainingLeave,
+        leaveQuota: resolvedRemainingLeave,
         ktpNumber: formData.ktpNumber?.replace(/\D/g, '').slice(0, 16) || editingEmployee.ktpNumber,
         npwp: formData.npwp?.trim() || editingEmployee.npwp,
         contractStartDate: formData.contractStartDate || formData.joinDate || editingEmployee.contractStartDate,
+        contract_start_date: formData.contractStartDate || formData.joinDate || editingEmployee.contractStartDate,
         contractEndDate:
           resolvedEmploymentStatus === 'PKWTT (Tetap)'
             ? undefined
-            : formData.contractEndDate || editingEmployee.contractEndDate,
+            : formData.contractEndDate || formData.contract_end_date || editingEmployee.contractEndDate,
+        contract_end_date:
+          resolvedEmploymentStatus === 'PKWTT (Tetap)'
+            ? undefined
+            : formData.contractEndDate || formData.contract_end_date || editingEmployee.contractEndDate,
+        probationEndDate:
+          resolvedEmploymentStatus === 'PKWTT (Tetap)'
+            ? undefined
+            : formData.probationEndDate || formData.probation_end_date || editingEmployee.probationEndDate,
+        probation_end_date:
+          resolvedEmploymentStatus === 'PKWTT (Tetap)'
+            ? undefined
+            : formData.probationEndDate || formData.probation_end_date || editingEmployee.probationEndDate,
         contractDocumentNumber: formData.contractDocumentNumber?.trim() || editingEmployee.contractDocumentNumber,
         contractDocumentUrl: formData.contractDocumentUrl || editingEmployee.contractDocumentUrl,
         contractDocumentName: formData.contractDocumentName || editingEmployee.contractDocumentName,
@@ -791,7 +846,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
       saveEmployeeEmploymentMetaLocal(updated);
       onUpdateEmployee(updated);
       syncEmployeeLiveColumnsToSupabase(updated).catch(() => {});
-      showToast(`Data karyawan ${updated.fullName} (${resolvedEmploymentType} • Std: ${resolvedStdHours} Jam/Hari • Tarif Per Jam: ${formatRupiah(resolvedHourlyRate)}/jam${resolvedIsHost ? ` • Host Live: ${resolvedCommPct}%` : ''}${resolvedIsCoHost ? ` • Co-Host Live: ${resolvedCoHostCommPct}%` : ''}) berhasil diperbarui!`);
+      showToast(`Data karyawan ${updated.fullName} (Sisa Cuti: ${resolvedRemainingLeave} Hari • ${resolvedEmploymentType} • Std: ${resolvedStdHours} Jam/Hari • Tarif Per Jam: ${formatRupiah(resolvedHourlyRate)}/jam) berhasil diperbarui!`);
     } else {
       const joinDt = formData.joinDate || getJakartaDateString();
       const newEmp: Employee = {
@@ -814,8 +869,15 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         employment_type: resolvedEmploymentType,
         joinDate: joinDt,
         contractStartDate: formData.contractStartDate || joinDt,
+        contract_start_date: formData.contractStartDate || joinDt,
         contractEndDate:
           formData.employmentStatus === 'PKWTT (Tetap)' ? undefined : formData.contractEndDate,
+        contract_end_date:
+          formData.employmentStatus === 'PKWTT (Tetap)' ? undefined : formData.contractEndDate,
+        probationEndDate:
+          formData.employmentStatus === 'PKWTT (Tetap)' ? undefined : formData.probationEndDate,
+        probation_end_date:
+          formData.employmentStatus === 'PKWTT (Tetap)' ? undefined : formData.probationEndDate,
         contractDocumentNumber: formData.contractDocumentNumber?.trim() || undefined,
         contractDocumentUrl: formData.contractDocumentUrl || undefined,
         contractDocumentName: formData.contractDocumentName || undefined,
@@ -856,14 +918,17 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         ptkpStatus: formData.ptkpStatus || 'TK/0',
         bpjsKesehatanNo: formData.bpjsKesehatanNo?.trim() || '0001000000000',
         bpjsKetenagakerjaanNo: formData.bpjsKetenagakerjaanNo?.trim() || `${String(currentYear).slice(-2)}000000000`,
-        remainingLeaveDays: Number(formData.remainingLeaveDays) ?? 12,
+        remainingLeaveDays: resolvedRemainingLeave,
+        remaining_leave: resolvedRemainingLeave,
+        leave_quota: resolvedRemainingLeave,
+        leaveQuota: resolvedRemainingLeave,
         isActive: true,
         approvalStatus: 'approved',
       };
       saveEmployeeEmploymentMetaLocal(newEmp);
       onAddEmployee(newEmp);
       syncEmployeeLiveColumnsToSupabase(newEmp).catch(() => {});
-      showToast(`Karyawan baru "${newEmp.fullName}" (${resolvedEmploymentType} • Tarif Per Jam: ${formatRupiah(resolvedHourlyRate)}/jam) berhasil ditambahkan ke database!`);
+      showToast(`Karyawan baru "${newEmp.fullName}" (Kuota Cuti: ${resolvedRemainingLeave} Hari • ${resolvedEmploymentType} • Tarif Per Jam: ${formatRupiah(resolvedHourlyRate)}/jam) berhasil ditambahkan ke database!`);
     }
 
     setEditingEmployee(null);
@@ -1856,11 +1921,37 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                             </a>
                           </>
                         )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setLetterModalEmployee(viewingEmployee);
+                          setLetterModalInitialTab('documents');
+                          setLetterModalInitialType('PKWT');
+                        }}
+                        className="px-3 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] inline-flex items-center gap-1 shadow-2xs cursor-pointer"
+                      >
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>Arsip Dokumen (KTP, NPWP, Kontrak)</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setLetterModalEmployee(viewingEmployee);
+                          setLetterModalInitialTab('generator');
+                          setLetterModalInitialType(
+                            viewingEmployee.employmentStatus === 'PKWTT (Tetap)' ? 'PKWTT' : 'PKWT'
+                          );
+                        }}
+                        className="px-3 py-1 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[11px] inline-flex items-center gap-1 shadow-2xs cursor-pointer"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>Generator Surat (PKWT/PKWTT &amp; SP)</span>
+                      </button>
                     </div>
                   </div>
 
-                  {/* Quick Edit Masa Aktif Kontrak */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-white p-3 rounded-xl border border-slate-200">
+                  {/* Quick Edit Masa Aktif Kontrak & Probation */}
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 bg-white p-3 rounded-xl border border-slate-200">
                     <div>
                       <label className="block text-[11px] font-semibold text-slate-600 mb-1">
                         Tanggal Mulai Kontrak
@@ -1872,7 +1963,8 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                           const updated: Employee = {
                             ...viewingEmployee,
                             contractStartDate: e.target.value,
-                            contractUpdatedAt: new Date().toLocaleDateString('id-ID'),
+                            contract_start_date: e.target.value,
+                            contractUpdatedAt: formatIndoDate(getJakartaDateString()),
                           };
                           onUpdateEmployee(updated);
                           setViewingEmployee(updated);
@@ -1883,7 +1975,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                     </div>
                     <div>
                       <label className="block text-[11px] font-semibold text-slate-600 mb-1">
-                        Tanggal Berakhir Kontrak
+                        Akhir Kontrak (<code className="font-mono">contract_end_date</code>)
                       </label>
                       <input
                         type="date"
@@ -1891,17 +1983,46 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                         value={
                           viewingEmployee.employmentStatus === 'PKWTT (Tetap)'
                             ? ''
-                            : viewingEmployee.contractEndDate || ''
+                            : viewingEmployee.contractEndDate || viewingEmployee.contract_end_date || ''
                         }
                         onChange={(e) => {
+                          const val = e.target.value || undefined;
                           const updated: Employee = {
                             ...viewingEmployee,
-                            contractEndDate: e.target.value || undefined,
-                            contractUpdatedAt: new Date().toLocaleDateString('id-ID'),
+                            contractEndDate: val,
+                            contract_end_date: val,
+                            contractUpdatedAt: formatIndoDate(getJakartaDateString()),
                           };
                           onUpdateEmployee(updated);
                           setViewingEmployee(updated);
                           showToast('Tanggal berakhir kontrak berhasil diperbarui!');
+                        }}
+                        className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 disabled:opacity-50"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                        Akhir Probation (<code className="font-mono">probation_end_date</code>)
+                      </label>
+                      <input
+                        type="date"
+                        disabled={viewingEmployee.employmentStatus === 'PKWTT (Tetap)'}
+                        value={
+                          viewingEmployee.employmentStatus === 'PKWTT (Tetap)'
+                            ? ''
+                            : viewingEmployee.probationEndDate || viewingEmployee.probation_end_date || ''
+                        }
+                        onChange={(e) => {
+                          const val = e.target.value || undefined;
+                          const updated: Employee = {
+                            ...viewingEmployee,
+                            probationEndDate: val,
+                            probation_end_date: val,
+                            contractUpdatedAt: formatIndoDate(getJakartaDateString()),
+                          };
+                          onUpdateEmployee(updated);
+                          setViewingEmployee(updated);
+                          showToast('Tanggal berakhir probation berhasil diperbarui!');
                         }}
                         className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold text-slate-800 disabled:opacity-50"
                       />
@@ -1921,7 +2042,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                           onUpdateEmployee(updated);
                           setViewingEmployee(updated);
                         }}
-                        placeholder="PKWT/TKB/2026/001"
+                        placeholder="001/HRD-TGI/PKWT/XI/2026"
                         className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono text-slate-800"
                       />
                     </div>
@@ -3614,15 +3735,63 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                     />
                   </div>
                   <div>
-                    <label className="block text-slate-600 mb-1">Sisa Hari Cuti</label>
-                    <input
-                      type="number"
-                      value={formData.remainingLeaveDays}
-                      onChange={(e) =>
-                        setFormData({ ...formData, remainingLeaveDays: Number(e.target.value) })
-                      }
-                      className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-800"
-                    />
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-slate-800 font-bold">
+                        Kuota / Sisa Cuti Tahunan (Hari)
+                      </label>
+                      <span className="text-[10px] font-mono text-emerald-700 font-semibold">
+                        remaining_leave
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="number"
+                        min={0}
+                        max={365}
+                        step={1}
+                        value={formData.remainingLeaveDays ?? 0}
+                        onChange={(e) => {
+                          const val = Math.max(0, Math.round(Number(e.target.value) || 0));
+                          setFormData({
+                            ...formData,
+                            remainingLeaveDays: val,
+                            remaining_leave: val,
+                            leave_quota: val,
+                            leaveQuota: val,
+                          });
+                        }}
+                        placeholder="Default: 0 hari"
+                        className="w-full p-2 bg-emerald-50/50 border border-emerald-300 rounded-lg font-extrabold text-emerald-950 focus:outline-hidden focus:ring-2 focus:ring-emerald-500/30"
+                      />
+                      <div className="flex items-center gap-1 shrink-0">
+                        {[0, 6, 12].map((q) => (
+                          <button
+                            key={q}
+                            type="button"
+                            onClick={() =>
+                              setFormData({
+                                ...formData,
+                                remainingLeaveDays: q,
+                                remaining_leave: q,
+                                leave_quota: q,
+                                leaveQuota: q,
+                              })
+                            }
+                            className={`px-2 py-1.5 rounded-lg text-[10px] font-bold border cursor-pointer transition-colors ${
+                              (formData.remainingLeaveDays ?? 0) === q
+                                ? 'bg-emerald-600 text-white border-emerald-600'
+                                : 'bg-white text-slate-600 border-slate-200 hover:bg-emerald-50'
+                            }`}
+                            title={`Set Kuota Cuti ${q} Hari`}
+                          >
+                            {q}Hr
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <span className="block text-[10px] text-slate-500 mt-1">
+                      Default 0 hari untuk karyawan baru atau isi sesuai kebijakan perusahaan (otomatis sinkron ke Portal &amp; Supabase).
+                    </span>
                   </div>
                 </div>
 
@@ -3638,22 +3807,25 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                     <div>
                       <label className="block text-slate-600 mb-1">Tanggal Mulai Kontrak</label>
                       <input
                         type="date"
                         value={formData.contractStartDate || formData.joinDate || ''}
                         onChange={(e) =>
-                          setFormData({ ...formData, contractStartDate: e.target.value })
+                          setFormData({
+                            ...formData,
+                            contractStartDate: e.target.value,
+                            contract_start_date: e.target.value,
+                          })
                         }
                         className="w-full p-2 bg-white border border-slate-200 rounded-lg text-slate-800"
                       />
                     </div>
                     <div>
                       <label className="block text-slate-600 mb-1">
-                        Tanggal Berakhir Kontrak{' '}
-                        {formData.employmentStatus === 'PKWTT (Tetap)' && '(Tetap)'}
+                        Akhir Kontrak (<code className="font-mono">contract_end_date</code>)
                       </label>
                       <input
                         type="date"
@@ -3661,10 +3833,36 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                         value={
                           formData.employmentStatus === 'PKWTT (Tetap)'
                             ? ''
-                            : formData.contractEndDate || ''
+                            : formData.contractEndDate || formData.contract_end_date || ''
                         }
                         onChange={(e) =>
-                          setFormData({ ...formData, contractEndDate: e.target.value })
+                          setFormData({
+                            ...formData,
+                            contractEndDate: e.target.value,
+                            contract_end_date: e.target.value,
+                          })
+                        }
+                        className="w-full p-2 bg-white border border-slate-200 rounded-lg text-slate-800 disabled:opacity-50"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-slate-600 mb-1">
+                        Akhir Probation (<code className="font-mono">probation_end_date</code>)
+                      </label>
+                      <input
+                        type="date"
+                        disabled={formData.employmentStatus === 'PKWTT (Tetap)'}
+                        value={
+                          formData.employmentStatus === 'PKWTT (Tetap)'
+                            ? ''
+                            : formData.probationEndDate || formData.probation_end_date || ''
+                        }
+                        onChange={(e) =>
+                          setFormData({
+                            ...formData,
+                            probationEndDate: e.target.value,
+                            probation_end_date: e.target.value,
+                          })
                         }
                         className="w-full p-2 bg-white border border-slate-200 rounded-lg text-slate-800 disabled:opacity-50"
                       />
@@ -3677,7 +3875,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                         onChange={(e) =>
                           setFormData({ ...formData, contractDocumentNumber: e.target.value })
                         }
-                        placeholder="PKWT/TKB/2026/001"
+                        placeholder="001/HRD-TGI/PKWT/XI/2026"
                         className="w-full p-2 bg-white border border-slate-200 rounded-lg font-mono text-slate-800"
                       />
                     </div>
@@ -4805,6 +5003,25 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         }}
         onNotify={(msg) => showToast(msg)}
       />
+
+      {/* Modal Digital Document Archive & Automated HR Letter Generator */}
+      <DigitalLetterGeneratorModal
+        isOpen={Boolean(letterModalEmployee)}
+        onClose={() => setLetterModalEmployee(null)}
+        employee={letterModalEmployee}
+        employees={employees}
+        companyConfig={initialCompanyConfig}
+        initialTab={letterModalInitialTab}
+        initialLetterType={letterModalInitialType}
+        onUpdateEmployee={(updated) => {
+          onUpdateEmployee(updated);
+          if (viewingEmployee && viewingEmployee.id === updated.id) {
+            setViewingEmployee(updated);
+          }
+          setLetterModalEmployee(updated);
+        }}
+      />
     </div>
   );
 };
+

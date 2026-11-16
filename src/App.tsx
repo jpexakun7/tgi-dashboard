@@ -68,6 +68,7 @@ import {
   getEmployeeAdjustmentForPeriod,
   getEmployeePayrollDeductionForPeriod,
   getActiveEmployeeThrForPayslip,
+  getEmployeeBonusesForPeriod,
   getCurrentRealTimePayrollPeriod,
   formatEndOfPeriodPrintDate,
   getJakartaDateString,
@@ -110,6 +111,7 @@ import {
   fetchEmployeeByIdFromSupabase,
   insertEmployeeToSupabase,
   updateEmployeeInSupabase,
+  syncEmployeeLiveColumnsToSupabase,
   deleteEmployeeFromSupabase,
   fetchAssetsFromSupabase,
   insertAssetToSupabase,
@@ -188,6 +190,78 @@ import {
 } from './services/authSecurityService';
 import { supabase } from './lib/supabase';
 
+function sanitizeAttendancesForStorage(records: AttendanceRecord[]): AttendanceRecord[] {
+  if (!Array.isArray(records)) return [];
+  return records.slice(0, 250).map((att) => {
+    const cleanInPhoto =
+      att.facePhotoSnapshot && att.facePhotoSnapshot.length > 1024
+        ? undefined
+        : att.facePhotoSnapshot;
+    const cleanOutPhoto =
+      att.checkOutPhotoSnapshot && att.checkOutPhotoSnapshot.length > 1024
+        ? undefined
+        : att.checkOutPhotoSnapshot;
+    if (cleanInPhoto === att.facePhotoSnapshot && cleanOutPhoto === att.checkOutPhotoSnapshot) {
+      return att;
+    }
+    const copy: AttendanceRecord = { ...att };
+    if (!cleanInPhoto) delete copy.facePhotoSnapshot;
+    if (!cleanOutPhoto) delete copy.checkOutPhotoSnapshot;
+    return copy;
+  });
+}
+
+function safeSetLocalStorage(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    try {
+      // Free up heavy cache keys if browser localStorage quota is full
+      const rawAtts = localStorage.getItem('tgi_attendances_data');
+      if (rawAtts && rawAtts.length > 100_000) {
+        try {
+          const parsedAtts = JSON.parse(rawAtts);
+          if (Array.isArray(parsedAtts)) {
+            localStorage.setItem(
+              'tgi_attendances_data',
+              JSON.stringify(sanitizeAttendancesForStorage(parsedAtts).slice(0, 100))
+            );
+          } else {
+            localStorage.removeItem('tgi_attendances_data');
+          }
+        } catch {
+          localStorage.removeItem('tgi_attendances_data');
+        }
+      }
+      localStorage.removeItem('tgi_leave_attachments_map');
+      localStorage.setItem(key, value);
+    } catch {
+      // Silently ignore if browser storage remains restricted
+    }
+  }
+}
+
+try {
+  const existingRawAtts = localStorage.getItem('tgi_attendances_data');
+  if (existingRawAtts && existingRawAtts.length > 250_000) {
+    const parsed = JSON.parse(existingRawAtts);
+    if (Array.isArray(parsed)) {
+      localStorage.setItem(
+        'tgi_attendances_data',
+        JSON.stringify(sanitizeAttendancesForStorage(parsed))
+      );
+    } else {
+      localStorage.removeItem('tgi_attendances_data');
+    }
+  }
+} catch {
+  try {
+    localStorage.removeItem('tgi_attendances_data');
+  } catch {
+    // ignore
+  }
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('overview');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -246,11 +320,7 @@ export default function App() {
     markAdminSessionVerified(user.email);
     setIsAdminUnlocked(true);
     setAdminUser(user);
-    try {
-      localStorage.setItem('tgi_admin_google_user', JSON.stringify(user));
-    } catch (e) {
-      console.error('Storage error', e);
-    }
+    safeSetLocalStorage('tgi_admin_google_user', JSON.stringify(user));
   };
 
   const handleLogout = () => {
@@ -342,11 +412,7 @@ export default function App() {
   });
 
   useEffect(() => {
-    try {
-      localStorage.setItem('tgi_system_audit_logs', JSON.stringify(systemAuditLogs));
-    } catch (e) {
-      console.error('Failed to save audit logs', e);
-    }
+    safeSetLocalStorage('tgi_system_audit_logs', JSON.stringify(systemAuditLogs.slice(0, 200)));
   }, [systemAuditLogs]);
 
   // Centralized System Audit Logger Helper
@@ -410,11 +476,7 @@ export default function App() {
   });
 
   useEffect(() => {
-    try {
-      localStorage.setItem('tgi_notifications', JSON.stringify(notifications));
-    } catch (e) {
-      console.error('Failed to save notifications', e);
-    }
+    safeSetLocalStorage('tgi_notifications', JSON.stringify(notifications.slice(0, 150)));
   }, [notifications]);
 
   // Employee Portal Tab override controller from notifications
@@ -804,11 +866,7 @@ export default function App() {
   });
 
   useEffect(() => {
-    try {
-      localStorage.setItem('tgi_company_config', JSON.stringify(companyConfig));
-    } catch (e) {
-      console.error('Failed to save company config', e);
-    }
+    safeSetLocalStorage('tgi_company_config', JSON.stringify(companyConfig));
   }, [companyConfig]);
 
   // Helper Cloud-First: Utamakan nilai dari Supabase Cloud (incomingList) agar pembaruan dari perangkat lain langsung menimpa cache lokal
@@ -848,6 +906,25 @@ export default function App() {
         Number(savedMeta?.overtimeRate) ||
         Number(prevEmp?.overtimeRate ?? prevEmp?.overtime_rate) ||
         Math.round(resolvedHourly * 1.5);
+      const isPkwttResolved = resolvedStatus === 'PKWTT (Tetap)';
+      const resolvedContractEnd = isPkwttResolved
+        ? undefined
+        : emp.contractEndDate ||
+          emp.contract_end_date ||
+          prevEmp?.contractEndDate ||
+          prevEmp?.contract_end_date;
+      const resolvedProbationEnd = isPkwttResolved
+        ? undefined
+        : emp.probationEndDate ||
+          emp.probation_end_date ||
+          prevEmp?.probationEndDate ||
+          prevEmp?.probation_end_date;
+      const resolvedLetters =
+        Array.isArray(emp.generatedLetters) && emp.generatedLetters.length > 0
+          ? emp.generatedLetters
+          : Array.isArray(prevEmp?.generatedLetters)
+          ? prevEmp!.generatedLetters
+          : [];
       const mergedEmp: Employee = {
         ...emp,
         employmentStatus: resolvedStatus as any,
@@ -860,18 +937,23 @@ export default function App() {
         hourly_rate: resolvedHourly > 0 ? resolvedHourly : emp.hourly_rate,
         overtimeRate: resolvedOvertime > 0 ? resolvedOvertime : emp.overtimeRate,
         overtime_rate: resolvedOvertime > 0 ? resolvedOvertime : emp.overtime_rate,
+        contractEndDate: resolvedContractEnd,
+        contract_end_date: resolvedContractEnd,
+        probationEndDate: resolvedProbationEnd,
+        probation_end_date: resolvedProbationEnd,
+        contractUpdatedAt: emp.contractUpdatedAt || prevEmp?.contractUpdatedAt,
+        contractDocumentUrl: emp.contractDocumentUrl || prevEmp?.contractDocumentUrl,
+        contractDocumentName: emp.contractDocumentName || prevEmp?.contractDocumentName,
+        contractDocumentNumber: emp.contractDocumentNumber || prevEmp?.contractDocumentNumber,
+        generatedLetters: resolvedLetters,
       };
       saveEmployeeEmploymentMetaLocal(mergedEmp);
       return mergedEmp;
     });
-    try {
-      localStorage.setItem(
-        'tgi_employees_data',
-        JSON.stringify(sanitizeEmployeesListForStorage(baseMerged))
-      );
-    } catch {
-      // ignore storage errors
-    }
+    safeSetLocalStorage(
+      'tgi_employees_data',
+      JSON.stringify(sanitizeEmployeesListForStorage(baseMerged))
+    );
     return baseMerged;
   };
 
@@ -1476,11 +1558,7 @@ export default function App() {
   });
 
   useEffect(() => {
-    try {
-      localStorage.setItem('tgi_leave_requests_data', JSON.stringify(leaveRequests));
-    } catch (e) {
-      console.error('Failed to save leave requests to localStorage', e);
-    }
+    safeSetLocalStorage('tgi_leave_requests_data', JSON.stringify(leaveRequests));
   }, [leaveRequests]);
 
   const [overtimeRequests, setOvertimeRequests] = useState<OvertimeRequest[]>(() => {
@@ -1502,11 +1580,7 @@ export default function App() {
   });
 
   useEffect(() => {
-    try {
-      localStorage.setItem('tgi_overtime_requests_data', JSON.stringify(overtimeRequests));
-    } catch (e) {
-      console.error('Failed to save overtime requests to localStorage', e);
-    }
+    safeSetLocalStorage('tgi_overtime_requests_data', JSON.stringify(overtimeRequests));
   }, [overtimeRequests]);
 
   const [reimbursements, setReimbursements] = useState<ReimbursementClaim[]>(() => {
@@ -1528,11 +1602,7 @@ export default function App() {
   });
 
   useEffect(() => {
-    try {
-      localStorage.setItem('tgi_reimbursements_data', JSON.stringify(reimbursements));
-    } catch (e) {
-      console.error('Failed to save reimbursements to localStorage', e);
-    }
+    safeSetLocalStorage('tgi_reimbursements_data', JSON.stringify(reimbursements));
   }, [reimbursements]);
 
   // Assets & Inventory State
@@ -1552,11 +1622,7 @@ export default function App() {
   });
 
   useEffect(() => {
-    try {
-      localStorage.setItem('tgi_company_assets', JSON.stringify(assets));
-    } catch (e) {
-      console.error('Failed to save assets', e);
-    }
+    safeSetLocalStorage('tgi_company_assets', JSON.stringify(assets));
   }, [assets]);
 
   const [assetLogs, setAssetLogs] = useState<AssetHistoryLog[]>(() => {
@@ -1575,11 +1641,7 @@ export default function App() {
   });
 
   useEffect(() => {
-    try {
-      localStorage.setItem('tgi_asset_history_logs', JSON.stringify(assetLogs));
-    } catch (e) {
-      console.error('Failed to save asset history logs', e);
-    }
+    safeSetLocalStorage('tgi_asset_history_logs', JSON.stringify(assetLogs));
   }, [assetLogs]);
 
   // Performance Reviews State
@@ -1599,11 +1661,7 @@ export default function App() {
   });
 
   useEffect(() => {
-    try {
-      localStorage.setItem('tgi_performance_reviews', JSON.stringify(reviews));
-    } catch (e) {
-      console.error('Failed to save performance reviews', e);
-    }
+    safeSetLocalStorage('tgi_performance_reviews', JSON.stringify(reviews));
   }, [reviews]);
 
   // Cash Advances (Kasbon & Cicilan Potongan Gaji) State
@@ -1623,11 +1681,7 @@ export default function App() {
   });
 
   useEffect(() => {
-    try {
-      localStorage.setItem('tgi_cash_advances_data', JSON.stringify(cashAdvances));
-    } catch (e) {
-      console.error('Failed to save cash advances', e);
-    }
+    safeSetLocalStorage('tgi_cash_advances_data', JSON.stringify(cashAdvances));
   }, [cashAdvances]);
 
   // Listen to storage events across browser tabs so Portal Karyawan and Panel Admin HR sync immediately
@@ -1731,14 +1785,10 @@ export default function App() {
   }, [dashboardMode, isAdminUnlocked]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(
-        'tgi_dashboard_mode',
-        isAdminUnlocked && isAdminSessionVerified() ? dashboardMode : 'employee'
-      );
-    } catch (e) {
-      console.error('Failed to save dashboard mode', e);
-    }
+    safeSetLocalStorage(
+      'tgi_dashboard_mode',
+      isAdminUnlocked && isAdminSessionVerified() ? dashboardMode : 'employee'
+    );
   }, [dashboardMode, isAdminUnlocked]);
 
   const handleUnlockWeb = (options: {
@@ -1939,7 +1989,10 @@ export default function App() {
         emp,
         attendances,
         companyConfig.workShifts,
-        companyConfig.attendancePenaltyPolicy
+        companyConfig.attendancePenaltyPolicy,
+        currentPeriod,
+        companyConfig.cutOffStartDay || 26,
+        companyConfig.cutOffEndDay || 25
       );
 
       const isLateFeeWaived = Boolean(
@@ -1964,11 +2017,21 @@ export default function App() {
         currentPeriod
       );
 
+      const periodBonusTotal = getEmployeeBonusesForPeriod(
+        employeeBonuses,
+        emp,
+        currentPeriod
+      ).totalAmount;
+      const kpiBaseBonus =
+        existing?.kpiBonus !== undefined
+          ? Math.max(0, Math.round(Number(existing.kpiBonus) || 0))
+          : Math.max(0, Math.round((Number(existing?.bonus) || 0) - periodBonusTotal));
+
       const computed = calculatePayroll(
         emp,
         currentPeriod,
         effectiveOtMinutes,
-        existing?.bonus || 0,
+        kpiBaseBonus,
         penaltySummary.totalLateMinutes,
         existing?.cashAdvanceDeduction || 0,
         existing?.cashAdvanceNotes,
@@ -1994,6 +2057,9 @@ export default function App() {
           payrollDeduction: empDeduction,
           thrPayout: empThr,
           leaveRequests,
+          employeeBonuses,
+          cashAdvances,
+          overtimeMultiplier: companyConfig.defaultOvertimeMultiplier || 1.5,
         }
       );
 
@@ -2015,14 +2081,19 @@ export default function App() {
     overtimeRequests,
     attendances,
     leaveRequests,
+    employeeBonuses,
     employeeAdjustments,
     payrollDeductions,
     thrPayouts,
+    cashAdvances,
     companyConfig.currentPayrollPeriod,
     companyConfig.lockedPayrollPeriods,
     companyConfig.waivedLateEmployeeIds,
     companyConfig.workShifts,
     companyConfig.attendancePenaltyPolicy,
+    companyConfig.defaultOvertimeMultiplier,
+    companyConfig.cutOffStartDay,
+    companyConfig.cutOffEndDay,
   ]);
 
   // -------------------------------------------------------------
@@ -2141,7 +2212,10 @@ export default function App() {
               emp,
               authoritativeAttendances,
               companyConfig.workShifts,
-              companyConfig.attendancePenaltyPolicy
+              companyConfig.attendancePenaltyPolicy,
+              companyConfig.currentPayrollPeriod,
+              companyConfig.cutOffStartDay || 26,
+              companyConfig.cutOffEndDay || 25
             );
             const generated = calculatePayroll(
               emp,
@@ -2747,14 +2821,10 @@ export default function App() {
     saveEmployeeEmploymentMetaLocal(newEmp);
     setEmployees((prev) => {
       const next = [newEmp, ...prev.filter((e) => e.id !== newEmp.id)];
-      try {
-        localStorage.setItem(
-          'tgi_employees_data',
-          JSON.stringify(sanitizeEmployeesListForStorage(next))
-        );
-      } catch (err) {
-        console.error('Storage error', err);
-      }
+      safeSetLocalStorage(
+        'tgi_employees_data',
+        JSON.stringify(sanitizeEmployeesListForStorage(next))
+      );
       return next;
     });
 
@@ -2767,7 +2837,10 @@ export default function App() {
         newEmp,
         attendances,
         companyConfig.workShifts,
-        companyConfig.attendancePenaltyPolicy
+        companyConfig.attendancePenaltyPolicy,
+        companyConfig.currentPayrollPeriod,
+        companyConfig.cutOffStartDay || 26,
+        companyConfig.cutOffEndDay || 25
       );
       const newPayroll = calculatePayroll(
         newEmp,
@@ -2815,14 +2888,10 @@ export default function App() {
     const oldEmp = employees.find((e) => e.id === updatedEmp.id);
     setEmployees((prev) => {
       const next = prev.map((e) => (e.id === updatedEmp.id ? updatedEmp : e));
-      try {
-        localStorage.setItem(
-          'tgi_employees_data',
-          JSON.stringify(sanitizeEmployeesListForStorage(next))
-        );
-      } catch (err) {
-        console.error('Failed to persist updated employees to localStorage', err);
-      }
+      safeSetLocalStorage(
+        'tgi_employees_data',
+        JSON.stringify(sanitizeEmployeesListForStorage(next))
+      );
       return next;
     });
 
@@ -2838,7 +2907,10 @@ export default function App() {
         updatedEmp,
         attendances,
         companyConfig.workShifts,
-        companyConfig.attendancePenaltyPolicy
+        companyConfig.attendancePenaltyPolicy,
+        companyConfig.currentPayrollPeriod,
+        companyConfig.cutOffStartDay || 26,
+        companyConfig.cutOffEndDay || 25
       );
     setPayrolls((prev) =>
       prev.map((p) => {
@@ -2847,11 +2919,35 @@ export default function App() {
             p.overtimeMinutes !== undefined
               ? p.overtimeMinutes
               : Math.round(p.overtimePay / Math.max(100, getOvertimeRatePerMinute(updatedEmp, 1.5)));
+          const periodBonusTotal = getEmployeeBonusesForPeriod(
+            employeeBonuses,
+            updatedEmp,
+            companyConfig.currentPayrollPeriod
+          ).totalAmount;
+          const kpiBaseBonus =
+            p.kpiBonus !== undefined
+              ? Math.max(0, Math.round(Number(p.kpiBonus) || 0))
+              : Math.max(0, Math.round((Number(p.bonus) || 0) - periodBonusTotal));
+          const empAdj = getEmployeeAdjustmentForPeriod(
+            employeeAdjustments,
+            updatedEmp,
+            companyConfig.currentPayrollPeriod
+          );
+          const empDed = getEmployeePayrollDeductionForPeriod(
+            payrollDeductions,
+            updatedEmp,
+            companyConfig.currentPayrollPeriod
+          );
+          const empThr = getActiveEmployeeThrForPayslip(
+            thrPayouts,
+            updatedEmp,
+            companyConfig.currentPayrollPeriod
+          );
           const recalculated = calculatePayroll(
             updatedEmp,
             companyConfig.currentPayrollPeriod,
             otMins,
-            p.bonus,
+            kpiBaseBonus,
             penaltySummary.totalLateMinutes,
             p.cashAdvanceDeduction,
             p.cashAdvanceNotes,
@@ -2870,6 +2966,13 @@ export default function App() {
               isLateFeeWaived: p.isLateFeeWaived,
               waiverReason: p.waiverReason,
               penaltyPolicy: companyConfig.attendancePenaltyPolicy,
+              employeeAdjustment: empAdj,
+              payrollDeduction: empDed,
+              thrPayout: empThr,
+              leaveRequests,
+              employeeBonuses,
+              cashAdvances,
+              overtimeMultiplier: companyConfig.defaultOvertimeMultiplier || 1.5,
             }
           );
           upsertPayrollToSupabase(recalculated);
@@ -2950,34 +3053,25 @@ export default function App() {
     // 3. Remove from employees state & localStorage immediately
     setEmployees((prev) => {
       const remaining = prev.filter((e) => e.id !== id);
-      try {
-        localStorage.setItem(
-          'tgi_employees_data',
-          JSON.stringify(sanitizeEmployeesListForStorage(remaining))
-        );
-      } catch (err) {
-        console.error('Storage error', err);
-      }
+      safeSetLocalStorage(
+        'tgi_employees_data',
+        JSON.stringify(sanitizeEmployeesListForStorage(remaining))
+      );
       return remaining;
     });
 
     // 4. Clean up all related records in state & localStorage so Dashboard, Payroll, Presensi, and Portal Karyawan stay 100% consistent
     setPayrolls((prev) => {
       const next = prev.filter((p) => p.employeeId !== id);
-      try {
-        localStorage.setItem('tgi_payrolls_data', JSON.stringify(next));
-      } catch {
-        // ignore
-      }
+      safeSetLocalStorage('tgi_payrolls_data', JSON.stringify(next));
       return next;
     });
     setAttendances((prev) => {
       const next = prev.filter((a) => a.employeeId !== id);
-      try {
-        localStorage.setItem('tgi_attendances_data', JSON.stringify(next));
-      } catch {
-        // ignore
-      }
+      safeSetLocalStorage(
+        'tgi_attendances_data',
+        JSON.stringify(sanitizeAttendancesForStorage(next))
+      );
       return next;
     });
     setLeaveRequests((prev) => {
@@ -3101,12 +3195,24 @@ export default function App() {
         emp,
         attendances,
         companyConfig.workShifts,
-        companyConfig.attendancePenaltyPolicy
+        companyConfig.attendancePenaltyPolicy,
+        currentPeriod,
+        companyConfig.cutOffStartDay || 26,
+        companyConfig.cutOffEndDay || 25
       );
 
       // Find existing bonus & cash advance deduction if any
       const existingRecord = payrolls.find((p) => p.employeeId === emp.id);
-      const bonus = existingRecord ? existingRecord.bonus : 0;
+      const periodBonusTotal = getEmployeeBonusesForPeriod(
+        employeeBonuses,
+        emp,
+        currentPeriod
+      ).totalAmount;
+      const kpiBaseBonus = existingRecord
+        ? existingRecord.kpiBonus !== undefined
+          ? Math.max(0, Math.round(Number(existingRecord.kpiBonus) || 0))
+          : Math.max(0, Math.round((Number(existingRecord.bonus) || 0) - periodBonusTotal))
+        : 0;
       const caDeduct = existingRecord ? existingRecord.cashAdvanceDeduction : 0;
       const caNotes = existingRecord ? existingRecord.cashAdvanceNotes : undefined;
       const isLateFeeWaived = Boolean(
@@ -3135,7 +3241,7 @@ export default function App() {
         emp,
         currentPeriod,
         totalOtMinutes,
-        bonus,
+        kpiBaseBonus,
         penaltySummary.totalLateMinutes,
         caDeduct,
         caNotes,
@@ -3159,6 +3265,9 @@ export default function App() {
           payrollDeduction: empDeduction,
           thrPayout: empThr,
           leaveRequests,
+          employeeBonuses,
+          cashAdvances,
+          overtimeMultiplier: companyConfig.defaultOvertimeMultiplier || 1.5,
         }
       );
 
@@ -3311,14 +3420,30 @@ export default function App() {
         emp,
         attendances,
         companyConfig.workShifts,
-        companyConfig.attendancePenaltyPolicy
+        companyConfig.attendancePenaltyPolicy,
+        currentPeriod,
+        companyConfig.cutOffStartDay || 26,
+        companyConfig.cutOffEndDay || 25
       );
       const effectiveOtMins = existingRec?.overtimeMinutes || 0;
+      const periodBonusTotal = getEmployeeBonusesForPeriod(
+        employeeBonuses,
+        emp,
+        currentPeriod
+      ).totalAmount;
+      const kpiBaseBonus = existingRec
+        ? existingRec.kpiBonus !== undefined
+          ? Math.max(0, Math.round(Number(existingRec.kpiBonus) || 0))
+          : Math.max(0, Math.round((Number(existingRec.bonus) || 0) - periodBonusTotal))
+        : 0;
+      const empAdj = getEmployeeAdjustmentForPeriod(employeeAdjustments, emp, currentPeriod);
+      const empDed = getEmployeePayrollDeductionForPeriod(payrollDeductions, emp, currentPeriod);
+      const empThr = getActiveEmployeeThrForPayslip(thrPayouts, emp, currentPeriod);
       const updatedRecord = calculatePayroll(
         emp,
         currentPeriod,
         effectiveOtMins,
-        existingRec?.bonus || 0,
+        kpiBaseBonus,
         penaltySummary.totalLateMinutes,
         existingRec?.cashAdvanceDeduction || 0,
         existingRec?.cashAdvanceNotes,
@@ -3338,6 +3463,13 @@ export default function App() {
           originalLateDeduction: penaltySummary.totalDeductionAmount,
           waiverReason: reason || 'Dispensasi Tugas Luar / Kebijakan HR',
           penaltyPolicy: companyConfig.attendancePenaltyPolicy,
+          employeeAdjustment: empAdj,
+          payrollDeduction: empDed,
+          thrPayout: empThr,
+          leaveRequests,
+          employeeBonuses,
+          cashAdvances,
+          overtimeMultiplier: companyConfig.defaultOvertimeMultiplier || 1.5,
         }
       );
 
@@ -3671,11 +3803,10 @@ export default function App() {
         next.unshift(normalizedAtt);
       }
 
-      try {
-        localStorage.setItem('tgi_attendances_data', JSON.stringify(next));
-      } catch (err) {
-        console.error('Failed to save updated attendances', err);
-      }
+      safeSetLocalStorage(
+        'tgi_attendances_data',
+        JSON.stringify(sanitizeAttendancesForStorage(next))
+      );
       return next;
     });
 
@@ -3714,11 +3845,10 @@ export default function App() {
 
     setAttendances((prev) => {
       const next = prev.filter((a) => !idsToDelete.has(a.id));
-      try {
-        localStorage.setItem('tgi_attendances_data', JSON.stringify(next));
-      } catch (err) {
-        console.error('Failed to save attendances after deletion', err);
-      }
+      safeSetLocalStorage(
+        'tgi_attendances_data',
+        JSON.stringify(sanitizeAttendancesForStorage(next))
+      );
       return next;
     });
 
@@ -3754,11 +3884,7 @@ export default function App() {
         ...prev,
         workShifts: validShifts,
       };
-      try {
-        localStorage.setItem('tgi_company_config', JSON.stringify(updatedConfig));
-      } catch (err) {
-        console.error('Failed to persist company config', err);
-      }
+      safeSetLocalStorage('tgi_company_config', JSON.stringify(updatedConfig));
       void upsertCompanyConfigToSupabase(updatedConfig);
       return updatedConfig;
     });
@@ -3874,14 +4000,29 @@ export default function App() {
     setLeaveRequests((prev) =>
       prev.map((l) => {
         if (l.id === id) {
-          // Decrement employee remaining leave if annual leave
+          // Decrement employee remaining leave if annual leave and sync to Supabase
           if (l.type === 'Cuti Tahunan') {
             setEmployees((emps) =>
-              emps.map((e) =>
-                e.id === l.employeeId
-                  ? { ...e, remainingLeaveDays: Math.max(0, e.remainingLeaveDays - l.totalDays) }
-                  : e
-              )
+              emps.map((e) => {
+                if (e.id === l.employeeId) {
+                  const nextLeaveDays = Math.max(
+                    0,
+                    (Number(e.remainingLeaveDays) || 0) - (Number(l.totalDays) || 0)
+                  );
+                  const updatedEmp: Employee = {
+                    ...e,
+                    remainingLeaveDays: nextLeaveDays,
+                    remaining_leave: nextLeaveDays,
+                    leave_quota: nextLeaveDays,
+                    leaveQuota: nextLeaveDays,
+                  };
+                  saveEmployeeEmploymentMetaLocal(updatedEmp);
+                  void updateEmployeeInSupabase(updatedEmp);
+                  void syncEmployeeLiveColumnsToSupabase(updatedEmp);
+                  return updatedEmp;
+                }
+                return e;
+              })
             );
           }
           const updated: LeaveRequest = {
@@ -3947,14 +4088,41 @@ export default function App() {
     setLeaveRequests((prev) => [req, ...prev]);
     upsertLeaveRequestToSupabase(req);
     const emp = employees.find((e) => e.id === req.employeeId);
+
+    // Jika input cuti manual oleh Admin langsung berstatus Disetujui & berjenis Cuti Tahunan, kurangi sisa cuti & sinkronkan ke Supabase
+    if (req.status === 'Disetujui' && req.type === 'Cuti Tahunan') {
+      setEmployees((emps) =>
+        emps.map((e) => {
+          if (e.id === req.employeeId) {
+            const nextLeaveDays = Math.max(
+              0,
+              (Number(e.remainingLeaveDays) || 0) - (Number(req.totalDays) || 0)
+            );
+            const updatedEmp: Employee = {
+              ...e,
+              remainingLeaveDays: nextLeaveDays,
+              remaining_leave: nextLeaveDays,
+              leave_quota: nextLeaveDays,
+              leaveQuota: nextLeaveDays,
+            };
+            saveEmployeeEmploymentMetaLocal(updatedEmp);
+            void updateEmployeeInSupabase(updatedEmp);
+            void syncEmployeeLiveColumnsToSupabase(updatedEmp);
+            return updatedEmp;
+          }
+          return e;
+        })
+      );
+    }
+
     logActivity(
       'LEAVE_STATUS_UPDATE',
       'Persetujuan & Klaim',
-      `Pengajuan mandiri ${req.type} (${req.totalDays} hari) oleh ${emp?.fullName || req.employeeId}.`,
+      `${req.status === 'Disetujui' ? 'Input manual & persetujuan langsung' : 'Pengajuan'} ${req.type} (${req.totalDays} hari) untuk ${emp?.fullName || req.employeeId}.`,
       {
         targetId: req.id,
         targetName: emp?.fullName || req.employeeId,
-        newValue: `Periode: ${req.startDate} s/d ${req.endDate}, Status: Menunggu Persetujuan`,
+        newValue: `Periode: ${req.startDate} s/d ${req.endDate}, Status: ${req.status}`,
         severity: 'info',
         notes: req.reason,
       }
@@ -5287,6 +5455,7 @@ export default function App() {
                 onRejectOvertime={handleRejectOvertime}
                 onUpdateAttendance={handleUpdateAttendance}
                 onDeleteAttendance={handleDeleteAttendance}
+                onUpdateEmployee={handleUpdateEmployee}
               />
             )}
 
@@ -5350,6 +5519,8 @@ export default function App() {
                 currentPayrollPeriod={companyConfig.currentPayrollPeriod}
                 onSaveAdjustment={handleSaveEmployeeAdjustment}
                 onDeleteAdjustment={handleDeleteEmployeeAdjustment}
+                onUpdateEmployee={handleUpdateEmployee}
+                companyConfig={companyConfig}
                 onOpenPayslipByEmployeeId={(empId) => {
                   const payRec = syncedPayrolls.find((p) => p.employeeId === empId);
                   if (payRec) {
@@ -5553,6 +5724,9 @@ export default function App() {
                 payrolls={syncedPayrolls}
                 companyConfig={companyConfig}
                 thrPayouts={thrPayouts}
+                partTimePayouts={partTimePayouts}
+                partTimeLogs={partTimeLogs}
+                onChangePayrollPeriod={handleChangePayrollPeriod}
               />
             )}
 

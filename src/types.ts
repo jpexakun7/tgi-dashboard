@@ -18,13 +18,21 @@ export interface Employee {
   ktpPhotoUrl?: string; // Foto / Scan KTP Karyawan dari Portal Karyawan / Admin
   ktpNumber?: string; // Nomor NIK KTP (16 Digit)
   ktpUploadedAt?: string; // Timestamp unggah KTP terakhir
+  npwpPhotoUrl?: string; // Foto / Scan Kartu NPWP Karyawan
+  npwp_photo_url?: string; // Alias kolom Supabase npwp_photo_url
+  npwpUploadedAt?: string; // Timestamp unggah NPWP terakhir
   profilePhotoUpdatedAt?: string; // Timestamp update Foto Profil terakhir
   contractStartDate?: string; // Tanggal Mulai Kontrak Kerja (PKWT / PKWTT)
+  contract_start_date?: string; // Alias kolom Supabase contract_start_date
   contractEndDate?: string; // Tanggal Berakhir Kontrak Kerja (PKWT / Probation)
+  contract_end_date?: string; // Alias kolom Supabase contract_end_date
+  probationEndDate?: string; // Tanggal Berakhir Masa Percobaan (Probation)
+  probation_end_date?: string; // Alias kolom Supabase probation_end_date
   contractDocumentNumber?: string; // Nomor Dokumen Surat Perjanjian Kerja
   contractDocumentUrl?: string; // File / Foto Dokumen Kontrak Kerja (Base64 JPEG / PDF Data URL)
   contractDocumentName?: string; // Nama File Dokumen Kontrak Kerja
   contractUpdatedAt?: string; // Waktu terakhir dokumen/masa kontrak diperbarui
+  generatedLetters?: GeneratedHrLetterRecord[]; // Riwayat surat HR (PKWT, PKWTT, SP1, SP2, SP3) yang diterbitkan
   role: string;
   department: Department;
   employmentStatus: EmploymentStatus;
@@ -55,6 +63,9 @@ export interface Employee {
   bpjsKesehatanNo: string;
   bpjsKetenagakerjaanNo: string;
   remainingLeaveDays: number; // Sisa cuti
+  remaining_leave?: number;
+  leave_quota?: number;
+  leaveQuota?: number;
   isActive: boolean;
   approvalStatus: 'approved' | 'pending' | 'rejected'; // Status ACC Admin
   approvalNotes?: string;
@@ -191,6 +202,7 @@ export interface PayrollRecord {
   overtimeFirstHourPay?: number; // Nominal upah lembur jam pertama (1.5x)
   overtimeSubsequentPay?: number; // Nominal upah lembur jam ke-2 dst (2.0x)
   bonus: number;
+  kpiBonus?: number; // Nominal bonus KPI / manual dasar sebelum digabung dengan daftar BonusManagementView
   salesCommission?: number; // Insentif / Komisi Penjualan Host & Co-Host Live Streaming (otomatis dari omset/% atau pcs)
   totalLiveSalesOmset?: number; // Total akumulasi omset penjualan live streaming bulan ini
   totalLiveSalesPcs?: number; // Total akumulasi pcs terjual bulan ini
@@ -353,7 +365,16 @@ export interface GoogleAdminUser {
 export interface LeaveRequest {
   id: string;
   employeeId: string;
-  type: 'Cuti Tahunan' | 'Cuti Melahirkan' | 'Cuti Sakit' | 'Cuti Khusus (Menikah/Duka)' | 'Izin Pribadi';
+  type:
+    | 'Cuti Tahunan'
+    | 'Cuti Melahirkan'
+    | 'Cuti Sakit'
+    | 'Izin Sakit'
+    | 'Cuti Khusus (Menikah/Duka)'
+    | 'Izin Pribadi'
+    | 'Izin Keperluan Pribadi'
+    | 'Cuti Tanpa Gaji (Unpaid Leave)'
+    | 'Cuti Tanpa Gaji';
   startDate: string;
   endDate: string;
   totalDays: number;
@@ -1064,4 +1085,37 @@ export interface ThrPayoutRecord {
   updated_at: string;
 }
 
+export type HrLetterType = 'PKWT' | 'PKWTT' | 'SP1' | 'SP2' | 'SP3';
 
+export interface GeneratedHrLetterRecord {
+  id: string;
+  letter_number: string; // e.g. 001/HRD-TGI/PKWT/XI/2026 atau 001/HRD-TGI/SP1/XI/2026
+  letter_type: HrLetterType;
+  employee_id: string;
+  employee_nik: string;
+  employee_name: string;
+  department: string;
+  role: string;
+  issued_date: string; // YYYY-MM-DD (WIB)
+  effective_start_date?: string;
+  effective_end_date?: string;
+  violation_summary?: string;
+  consequence_notes?: string;
+  created_by: string;
+  created_at: string;
+}
+
+export interface DivisionAccountingJournalRow {
+  department: string;
+  employeeCount: number;
+  debitBaseSalary: number;
+  debitAllowances: number;
+  debitOvertime: number;
+  debitBonusAndCommission: number;
+  debitThr: number;
+  totalDebit: number;
+  creditCashAdvanceDeduction: number;
+  creditOtherDeductions: number;
+  creditNetPayPayable: number;
+  totalCredit: number;
+}

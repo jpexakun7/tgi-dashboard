@@ -114,6 +114,9 @@ import {
   getJakartaYearMonth,
   getJakartaTimeString,
   getJakartaFullDateTimeLabel,
+  calculatePayroll,
+  getEmployeeAdjustmentForPeriod,
+  getActiveEmployeeThrForPayslip,
 } from '../utils/formatters';
 import { OfficialPayslipDocument, computeOfficialPayslipData } from './PayslipModal';
 import { formatWhatsAppPhone } from '../utils/notificationHelper';
@@ -292,7 +295,16 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     setSyncedEmployeeAdjustments(getSavedEmployeeAdjustments());
     setSyncedPayrollDeductions(getSavedPayrollDeductions());
     setSyncedThrPayouts(getSavedThrPayouts());
-  }, [currentEmployee.id]);
+  }, [
+    currentEmployee.id,
+    currentEmployee.employmentStatus,
+    currentEmployee.status,
+    currentEmployee.contractEndDate,
+    currentEmployee.contract_end_date,
+    currentEmployee.probationEndDate,
+    currentEmployee.probation_end_date,
+    currentEmployee.baseSalary,
+  ]);
 
   React.useEffect(() => {
     if (!currentEmployee?.id) return;
@@ -695,9 +707,20 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
         effectivePortalEmployee,
         myAttendances,
         companyConfig.workShifts,
-        penaltyPolicy
+        penaltyPolicy,
+        companyConfig.currentPayrollPeriod,
+        companyConfig.cutOffStartDay || 26,
+        companyConfig.cutOffEndDay || 25
       ),
-    [effectivePortalEmployee, myAttendances, companyConfig.workShifts, penaltyPolicy]
+    [
+      effectivePortalEmployee,
+      myAttendances,
+      companyConfig.workShifts,
+      penaltyPolicy,
+      companyConfig.currentPayrollPeriod,
+      companyConfig.cutOffStartDay,
+      companyConfig.cutOffEndDay,
+    ]
   );
 
   // Real-time ticking clock in Asia/Jakarta (WIB)
@@ -1231,11 +1254,21 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
   }, [currentEmployee]);
 
   const [leaveError, setLeaveError] = useState<string | null>(null);
+  const [overtimeError, setOvertimeError] = useState<string | null>(null);
+  const [reimbursementError, setReimbursementError] = useState<string | null>(null);
 
   // Leave Submit Handler (Supports Evidence Photo Attachment)
   const handleSubmitLeave = (e: React.FormEvent) => {
     e.preventDefault();
     setLeaveError(null);
+    if (!leaveForm.startDate || !leaveForm.endDate) {
+      setLeaveError('Mohon pilih tanggal mulai dan tanggal selesai cuti/izin.');
+      return;
+    }
+    if (leaveForm.endDate < leaveForm.startDate) {
+      setLeaveError('Tanggal selesai cuti/izin tidak boleh lebih awal dari tanggal mulai.');
+      return;
+    }
     if (!leaveForm.reason.trim()) {
       setLeaveError('Mohon isi alasan atau keperluan cuti.');
       return;
@@ -1282,9 +1315,22 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
   // Overtime Submit Handler (Hitungan Per Menit)
   const handleSubmitOvertime = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!overtimeForm.taskDescription.trim()) return;
+    setOvertimeError(null);
+    const rawMins = Math.round(Number(overtimeForm.minutes) || 0);
+    if (!overtimeForm.date) {
+      setOvertimeError('Mohon pilih tanggal lembur.');
+      return;
+    }
+    if (rawMins <= 0 || rawMins > 720) {
+      setOvertimeError('Durasi lembur wajib antara 1 hingga 720 menit.');
+      return;
+    }
+    if (!overtimeForm.taskDescription.trim()) {
+      setOvertimeError('Mohon isi uraian tugas operasional yang dikerjakan saat lembur.');
+      return;
+    }
 
-    const validMinutes = Math.max(1, Math.round(Number(overtimeForm.minutes) || 0));
+    const validMinutes = Math.max(1, rawMins);
 
     const newReq: OvertimeRequest = {
       id: `ot-${Date.now().toString().slice(-6)}`,
@@ -1302,6 +1348,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
 
     onApplyOvertime(newReq);
     setIsOvertimeModalOpen(false);
+    setOvertimeError(null);
     setOvertimeForm({
       date: getJakartaDateString(),
       minutes: 90,
@@ -1314,7 +1361,16 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
   // Reimbursement Submit Handler
   const handleSubmitReimbursement = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!reimbursementForm.description.trim() || reimbursementForm.amount <= 0) return;
+    setReimbursementError(null);
+    const cleanAmount = Math.round(Number(reimbursementForm.amount) || 0);
+    if (cleanAmount <= 0) {
+      setReimbursementError('Nominal klaim reimbursement harus lebih dari Rp 0.');
+      return;
+    }
+    if (!reimbursementForm.description.trim()) {
+      setReimbursementError('Mohon isi keterangan pengeluaran reimbursement.');
+      return;
+    }
 
     const randomNum = Math.floor(100 + Math.random() * 900);
     const todayWib = getJakartaDateString();
@@ -1326,7 +1382,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       employeeId: currentEmployee.id,
       date: todayWib,
       category: reimbursementForm.category,
-      amount: Number(reimbursementForm.amount),
+      amount: cleanAmount,
       description: reimbursementForm.description.trim(),
       receiptNumber: `RCP-${Date.now().toString().slice(-6)}`,
       receiptFileName: reimbursementForm.receiptFileName || 'Struk_Nota_Pengeluaran.jpg',
@@ -1341,6 +1397,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
 
     onApplyReimbursement(newClaim);
     setIsReimbursementModalOpen(false);
+    setReimbursementError(null);
     setReimbursementForm({
       category: 'Transport & Bensin',
       amount: 150000,
@@ -1756,101 +1813,127 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     ? Math.max(0, Math.round(Number(myPeriodDeduction.pph21_manual) || 0))
     : Math.max(0, Math.round(Number(currentPay?.pph21_manual) || 0));
 
-  const fallbackPayRecord: PayrollRecord = useMemo(
-    () => ({
-      id: currentPay?.id || `pay-portal-${effectivePortalEmployee.id}`,
-      employeeId: effectivePortalEmployee.id,
-      period: currentPay?.period || companyConfig.currentPayrollPeriod,
-      createdAt: currentPay?.createdAt || getJakartaDateString(),
-      baseSalary: baseSal,
-      dailySalary: myDailySalary,
-      hourlyRate: myHourlyRate,
-      standardWorkHoursPerDay: myStandardDailyHours,
-      totalActualWorkHours: myTotalActualWorkHours,
-      presentDaysCount: myPresentDaysCount,
-      standardWorkingDays: currentPay?.standardWorkingDays || 25,
-      dailyWorkBreakdown: myDailyWorkBreakdown,
-      allowancePosition: posAllow,
-      allowanceTransport: transAllow,
-      allowanceMeal: mealAllow,
-      allowanceCommunication: commAllow,
-      overtimeMinutes,
-      overtimeRatePerMinute: myOvertimeRatePerMinute,
-      overtimePay,
-      salesCommission: salesCommissionPay,
-      salesCommissionNotes: currentPay?.salesCommissionNotes || myLiveSalesSummary.notes,
-      bonus: bonusPay,
-      totalGrossSalary:
-        (Number(baseSal) || 0) +
-        (Number(totalAllow) || 0) +
-        overtimePay +
-        bonusPay +
-        salesCommissionPay +
-        additionalBonusPay,
-      bpjsKesehatanEmployer: 0,
-      bpjsKesehatanEmployee: manualBpjsKesehatan,
-      bpjsJhtEmployer: 0,
-      bpjsJhtEmployee: manualBpjsTk,
-      bpjsJpEmployer: 0,
-      bpjsJpEmployee: 0,
-      bpjsJkkEmployer: 0,
-      bpjsJkmEmployer: 0,
-      pph21TER: manualPph21,
-      bpjs_tk_manual: manualBpjsTk,
-      bpjs_kesehatan_manual: manualBpjsKesehatan,
-      pph21_manual: manualPph21,
-      lateDeduction: currentPay?.lateDeduction ?? myPenaltySummary.totalDeductionAmount,
-      lateFrequency: currentPay?.lateFrequency ?? myPenaltySummary.lateFrequency,
-      totalLateMinutes: currentPay?.totalLateMinutes ?? myPenaltySummary.totalLateMinutes,
-      alphaDaysCount: currentPay?.alphaDaysCount ?? myPenaltySummary.alphaDaysCount,
-      alphaPenaltyAmount: currentPay?.alphaPenaltyAmount ?? myPenaltySummary.alphaPenaltyAmount,
-      attendanceDeductionNotes:
-        currentPay?.attendanceDeductionNotes || myPenaltySummary.deductionNotes,
-      cashAdvanceDeduction: currentPay?.cashAdvanceDeduction || 0,
-      cashAdvanceNotes: currentPay?.cashAdvanceNotes,
-      otherDeductions: currentPay?.otherDeductions || 0,
-      totalDeductions: currentPay?.totalDeductions || 0,
-      takeHomePay: currentPay?.takeHomePay || 0,
-      paymentStatus: currentPay?.paymentStatus || 'Draft',
-      paymentDate: currentPay?.paymentDate,
-      referenceNumber:
-        currentPay?.referenceNumber || `TGI/PAY/${effectivePortalEmployee.nik || 'EMP'}`,
-    }),
-    [
-      currentPay,
-      effectivePortalEmployee.id,
-      effectivePortalEmployee.nik,
-      companyConfig.currentPayrollPeriod,
-      baseSal,
-      myDailySalary,
-      myHourlyRate,
-      myStandardDailyHours,
-      myTotalActualWorkHours,
-      myPresentDaysCount,
-      myDailyWorkBreakdown,
-      posAllow,
-      transAllow,
-      mealAllow,
-      commAllow,
-      totalAllow,
-      overtimeMinutes,
-      myOvertimeRatePerMinute,
-      overtimePay,
-      salesCommissionPay,
-      myLiveSalesSummary.notes,
-      bonusPay,
-      additionalBonusPay,
-      myPenaltySummary,
-      manualBpjsTk,
-      manualBpjsKesehatan,
-      manualPph21,
-    ]
+  const targetPortalPeriod = currentPay?.period || companyConfig.currentPayrollPeriod;
+
+  const myPeriodAdjustment = useMemo(
+    () =>
+      getEmployeeAdjustmentForPeriod(
+        allCombinedAdjustments,
+        effectivePortalEmployee,
+        targetPortalPeriod
+      ),
+    [allCombinedAdjustments, effectivePortalEmployee, targetPortalPeriod]
   );
 
-  const portalSignatories = useMemo(
-    () => getPayrollSignatoriesConfig(companyConfig),
-    [companyConfig]
+  const myActiveThrRecord = useMemo(
+    () =>
+      getActiveEmployeeThrForPayslip(
+        allCombinedThrPayouts,
+        effectivePortalEmployee,
+        targetPortalPeriod
+      ),
+    [allCombinedThrPayouts, effectivePortalEmployee, targetPortalPeriod]
   );
+
+  const fallbackPayRecord: PayrollRecord = useMemo(() => {
+    const kpiBaseBonus =
+      currentPay?.kpiBonus !== undefined
+        ? Math.max(0, Math.round(Number(currentPay.kpiBonus) || 0))
+        : Math.max(
+            0,
+            Math.round((Number(currentPay?.bonus) || 0) - (Number(myPeriodBonusSummary.totalAmount) || 0))
+          );
+
+    const calculated = calculatePayroll(
+      effectivePortalEmployee,
+      targetPortalPeriod,
+      overtimeMinutes,
+      kpiBaseBonus,
+      myPenaltySummary.totalLateMinutes,
+      currentPay?.cashAdvanceDeduction || 0,
+      currentPay?.cashAdvanceNotes,
+      {
+        hourlyRate: myHourlyRate,
+        totalActualWorkHours: myTotalActualWorkHours,
+        standardWorkHoursPerDay: myStandardDailyHours,
+        dailyWorkBreakdown: myDailyWorkBreakdown,
+        presentDaysCount: myPresentDaysCount,
+        dailySalary: myDailySalary,
+        lateFrequency: myPenaltySummary.lateFrequency,
+        totalLateMinutes: myPenaltySummary.totalLateMinutes,
+        latePenaltyAmount: myPenaltySummary.latePenaltyAmount,
+        alphaDaysCount: myPenaltySummary.alphaDaysCount,
+        alphaPenaltyAmount: myPenaltySummary.alphaPenaltyAmount,
+        attendanceDeductionNotes:
+          currentPay?.attendanceDeductionNotes || myPenaltySummary.deductionNotes,
+        customLateDeduction: myPenaltySummary.totalDeductionAmount,
+        isLateFeeWaived: currentPay?.isLateFeeWaived,
+        originalLateDeduction:
+          currentPay?.originalLateDeduction ?? myPenaltySummary.totalDeductionAmount,
+        waiverReason: currentPay?.waiverReason,
+        isLocked: currentPay?.isLocked,
+        lockedAt: currentPay?.lockedAt,
+        penaltyPolicy,
+        employeeAdjustment: myPeriodAdjustment,
+        payrollDeduction: myPeriodDeduction,
+        thrPayout: myActiveThrRecord,
+        leaveRequests: myLeaveRequests,
+        employeeBonuses: allCombinedBonuses,
+        cashAdvances: myCashAdvances,
+        overtimeMultiplier: companyConfig.defaultOvertimeMultiplier || 1.5,
+      }
+    );
+
+    return {
+      ...calculated,
+      id: currentPay?.id || calculated.id,
+      createdAt: currentPay?.createdAt || calculated.createdAt,
+      paymentStatus: currentPay?.paymentStatus || calculated.paymentStatus,
+      paymentDate: currentPay?.paymentDate || calculated.paymentDate,
+      referenceNumber: currentPay?.referenceNumber || calculated.referenceNumber,
+    };
+  }, [
+    currentPay,
+    effectivePortalEmployee,
+    targetPortalPeriod,
+    overtimeMinutes,
+    myPeriodBonusSummary.totalAmount,
+    myPenaltySummary,
+    myHourlyRate,
+    myTotalActualWorkHours,
+    myStandardDailyHours,
+    myDailyWorkBreakdown,
+    myPresentDaysCount,
+    myDailySalary,
+    penaltyPolicy,
+    myPeriodAdjustment,
+    myPeriodDeduction,
+    myActiveThrRecord,
+    myLeaveRequests,
+    allCombinedBonuses,
+    myCashAdvances,
+    companyConfig.defaultOvertimeMultiplier,
+  ]);
+
+  const [portalSignatories, setPortalSignatories] = useState(() =>
+    getPayrollSignatoriesConfig(companyConfig)
+  );
+
+  React.useEffect(() => {
+    setPortalSignatories(getPayrollSignatoriesConfig(companyConfig));
+  }, [companyConfig]);
+
+  React.useEffect(() => {
+    const handleSyncSignatories = () => {
+      setPortalSignatories(getPayrollSignatoriesConfig(companyConfig));
+    };
+    window.addEventListener('tgi_signatories_updated', handleSyncSignatories);
+    window.addEventListener('storage', handleSyncSignatories);
+    return () => {
+      window.removeEventListener('tgi_signatories_updated', handleSyncSignatories);
+      window.removeEventListener('storage', handleSyncSignatories);
+    };
+  }, [companyConfig]);
 
   const officialPayslipData = useMemo(
     () =>
@@ -2930,7 +3013,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
             </div>
 
             {/* Embed Official Slip Gaji Template */}
-            <div className="overflow-x-auto border border-slate-300 rounded-xl p-3 sm:p-6 bg-white">
+            <div className="overflow-x-auto print:overflow-visible border border-slate-300 print:border-none rounded-xl print:rounded-none p-3 sm:p-6 print:p-0 bg-white">
               <OfficialPayslipDocument
                 data={officialPayslipData}
                 companyConfig={companyConfig}
@@ -6486,6 +6569,12 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
             </div>
 
             <form onSubmit={handleSubmitOvertime} className="space-y-3.5 text-xs">
+              {overtimeError && (
+                <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{overtimeError}</span>
+                </div>
+              )}
               <div className="grid grid-cols-3 gap-2.5">
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">Tanggal Lembur *</label>
@@ -6627,6 +6716,12 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
             </div>
 
             <form onSubmit={handleSubmitReimbursement} className="space-y-3.5 text-xs">
+              {reimbursementError && (
+                <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{reimbursementError}</span>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-semibold text-slate-700 mb-1">Kategori Biaya *</label>

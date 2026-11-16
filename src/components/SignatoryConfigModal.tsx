@@ -602,31 +602,33 @@ export const SignatoryConfigModal: React.FC<SignatoryConfigModalProps> = ({
                       </span>
                     </div>
 
-                    {/* Kotak Pratinjau Garis Tanda Tangan */}
-                    <div className="relative h-28 bg-white rounded-xl border border-dashed border-slate-300 flex flex-col items-center justify-end p-2 overflow-hidden">
-                      {/* Gambar Stempel (Jika Diaktifkan) */}
-                      {item.showStamp && effectiveStamp && (
-                        <img
-                          src={effectiveStamp}
-                          alt="Stempel"
-                          className="absolute left-1/2 -translate-x-12 bottom-5 w-20 h-20 object-contain opacity-80 pointer-events-none select-none z-10"
-                        />
-                      )}
+                    {/* Kotak Pratinjau Garis Tanda Tangan (Stempel Menumpuk di Atas Tanda Tangan) */}
+                    <div className="relative h-32 bg-white rounded-xl border border-dashed border-slate-300 flex flex-col items-center justify-end p-2 overflow-hidden">
+                      <div className="relative h-24 w-48 max-w-full mx-auto flex items-end justify-center select-none">
+                        {/* Gambar Tanda Tangan (Layer Bawah z-10) */}
+                        {item.signatureDataUrl ? (
+                          <img
+                            src={item.signatureDataUrl}
+                            alt={`TTD ${item.name}`}
+                            className="max-h-[68px] max-w-[165px] object-contain mb-1 relative z-10 pointer-events-none select-none"
+                          />
+                        ) : (
+                          <span className="text-[10px] text-slate-400 italic mb-5 relative z-10">
+                            Otomatis / Belum ada gambar TTD khusus
+                          </span>
+                        )}
 
-                      {/* Gambar Tanda Tangan */}
-                      {item.signatureDataUrl ? (
-                        <img
-                          src={item.signatureDataUrl}
-                          alt={`TTD ${item.name}`}
-                          className="max-h-16 max-w-[180px] object-contain mb-1 relative z-20"
-                        />
-                      ) : (
-                        <span className="text-[10px] text-slate-400 italic mb-5">
-                          Belum ada gambar tanda tangan (kosong/manual)
-                        </span>
-                      )}
+                        {/* Gambar Stempel Menumpuk di Atas Kiri-Tengah Tanda Tangan (Layer Atas z-20) */}
+                        {item.showStamp && effectiveStamp && (
+                          <img
+                            src={effectiveStamp}
+                            alt="Stempel"
+                            className="payslip-stamp-overlay absolute left-1/2 -translate-x-[68%] -bottom-1 w-[98px] h-[98px] object-contain opacity-[0.92] contrast-125 saturate-[1.2] mix-blend-multiply -rotate-[8deg] pointer-events-none select-none z-20"
+                          />
+                        )}
+                      </div>
 
-                      <div className="w-40 border-t border-slate-400 pt-1 text-center relative z-20">
+                      <div className="w-44 border-t border-slate-400 pt-1 text-center relative z-30">
                         <p className="font-bold text-slate-900 text-[11px] leading-tight truncate">
                           {item.name || '( Belum Diisi )'}
                         </p>

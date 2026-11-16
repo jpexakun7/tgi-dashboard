@@ -36,7 +36,10 @@ import {
   getEmployeeAdjustmentForPeriod,
   getEmployeePayrollDeductionForPeriod,
   getApprovedSickLeaveSummaryForPeriod,
+  getApprovedUnpaidLeaveSummaryForPeriod,
   getActiveEmployeeThrForPayslip,
+  generateOfficialCompanyStampDataUrl,
+  generateStylizedSignatureDataUrl,
 } from '../utils/formatters';
 import { getPayslipWhatsAppUrl, getPayslipEmailUrl } from '../utils/notificationHelper';
 import {
@@ -142,7 +145,11 @@ export interface OfficialPayslipComputedData {
   bpjsKesEmployeeTotal: number;
   pph21Total: number;
   subtotalPengurangan: number;
-  // 4. Jumlah Bersih
+  // 4. Jumlah Bersih & Proteksi Take Home Pay Non-Negatif
+  totalGrossIncome: number;
+  coveredDeductionAmount: number;
+  uncoveredDeductionDeficit: number;
+  hasUncoveredDeductionDeficit: boolean;
   jumlahBersih: number;
   terbilangText: string;
 }
@@ -397,24 +404,23 @@ export function computeOfficialPayslipData(params: {
     (sum, o) => sum + getOvertimeMinutes(o),
     0
   );
-  const approvedOtPayFromRequests = approvedOtList.reduce(
-    (sum, o) =>
-      sum +
-      (Math.max(0, Math.round(Number(o.calculatedPay) || 0)) ||
-        calculateOvertimePayByMinutes(employee, getOvertimeMinutes(o), 1.5)),
-    0
-  );
+  const otMultiplier = Number(companyConfig.defaultOvertimeMultiplier) || 1.5;
 
   const hasOvertimeRequestContext = overtimeRequests !== undefined || empOtList.length > 0;
-  const overtimeMinutes = hasOvertimeRequestContext
-    ? approvedOtMinutesFromRequests
-    : Math.max(0, Math.round(Number(payroll.overtimeMinutes) || 0));
-  const lemburJamTotal = hasOvertimeRequestContext
-    ? approvedOtPayFromRequests
-    : Math.max(0, Math.round(Number(payroll.overtimePay) || 0));
+  const overtimeMinutes =
+    Math.max(0, Math.round(Number(payroll.overtimeMinutes) || 0)) > 0
+      ? Math.max(0, Math.round(Number(payroll.overtimeMinutes) || 0))
+      : hasOvertimeRequestContext
+      ? approvedOtMinutesFromRequests
+      : 0;
+  const lemburJamTotal =
+    Math.max(0, Math.round(Number(payroll.overtimePay) || 0)) > 0 &&
+    overtimeMinutes === Math.max(0, Math.round(Number(payroll.overtimeMinutes) || 0))
+      ? Math.max(0, Math.round(Number(payroll.overtimePay) || 0))
+      : calculateOvertimePayByMinutes(employee, overtimeMinutes, otMultiplier);
 
   const baseOtRatePerMin =
-    Number(payroll.overtimeRatePerMinute) || getOvertimeRatePerMinute(employee, 1.5);
+    Number(payroll.overtimeRatePerMinute) || getOvertimeRatePerMinute(employee, otMultiplier);
   const overtimeHourlyRate =
     overtimeMinutes > 0 && lemburJamTotal > 0
       ? Math.round(lemburJamTotal / (overtimeMinutes / 60))
@@ -430,7 +436,7 @@ export function computeOfficialPayslipData(params: {
   const overtimeDaysQty = 0;
   const lemburHariTotal = 0;
 
-  // Tambahan Lainnya (Manajemen Bonus + Bonus KPI jika ada)
+  // Tambahan Lainnya (Manajemen Bonus + Bonus KPI jika ada, tanpa penghitungan ganda)
   const bonusSummary = getEmployeeBonusesForPeriod(employeeBonuses, employee, periodStr);
   const bonusItems: Array<{
     id: string;
@@ -446,11 +452,15 @@ export function computeOfficialPayslipData(params: {
       reason_note: (b.reason_note || 'Bonus & Apresiasi Kinerja').trim(),
     }));
 
-  const payrollBonusVal = Math.max(0, Math.round(Number(payroll.bonus) || 0));
-  if (payrollBonusVal > 0) {
+  const bonusFromListTotal = bonusItems.reduce((sum, item) => sum + item.amount, 0);
+  const kpiBonusVal =
+    payroll.kpiBonus !== undefined
+      ? Math.max(0, Math.round(Number(payroll.kpiBonus) || 0))
+      : Math.max(0, Math.round((Number(payroll.bonus) || 0) - bonusFromListTotal));
+  if (kpiBonusVal > 0) {
     bonusItems.unshift({
       id: `kpi-bonus-${payroll.id}`,
-      amount: payrollBonusVal,
+      amount: kpiBonusVal,
       qty: 1,
       reason_note: 'Bonus Insentif Kinerja / KPI',
     });
@@ -553,8 +563,6 @@ export function computeOfficialPayslipData(params: {
       : dailySalaryRate;
   const alphaDeductionTotal = periodDeduction
     ? Math.round(alphaDays * alphaRate)
-    : payroll.tanpaKeteranganHari !== undefined
-    ? Math.round(alphaDays * alphaRate)
     : payroll.isLateFeeWaived
     ? 0
     : rawAlphaPenaltyFromPayroll > 0
@@ -578,19 +586,23 @@ export function computeOfficialPayslipData(params: {
       : defaultPerMinuteRate;
   const izinJamDeduction = Math.round(izinJamMinutes * izinJamRate);
 
-  // 3.3 Izin (Hari) & 3.4 Sakit (Otomatis dari Panel Cuti & Izin berstatus Disetujui)
+  // 3.3 Izin / Cuti Tanpa Gaji (Hari) & 3.4 Sakit (Otomatis dari Panel Cuti & Izin berstatus Disetujui)
   const empLeaves = leaveRequests
     ? leaveRequests.filter((l) => l.employeeId === employee.id && l.status === 'Disetujui')
     : getLocalLeavesForEmployee(employee.id);
-  const approvedIzinPribadiDays = empLeaves
-    .filter((l) => l.type === 'Izin Pribadi')
-    .reduce((sum, l) => sum + Math.max(0, Number(l.totalDays) || 0), 0);
+  const unpaidSummary = getApprovedUnpaidLeaveSummaryForPeriod(
+    empLeaves,
+    employee,
+    periodStr,
+    dailySalaryRate
+  );
 
-  const izinHariDays = periodDeduction
+  const manualIzinHari = periodDeduction
     ? Math.max(0, Number(periodDeduction.izin_hari_jumlah) || 0)
     : payroll.izinHariJumlah !== undefined
     ? Math.max(0, Number(payroll.izinHariJumlah) || 0)
-    : approvedIzinPribadiDays;
+    : 0;
+  const izinHariDays = Math.max(manualIzinHari, unpaidSummary.unpaidDays);
   const izinHariRate =
     periodDeduction && periodDeduction.izin_hari_rate > 0
       ? Math.max(0, Math.round(Number(periodDeduction.izin_hari_rate) || 0))
@@ -598,9 +610,7 @@ export function computeOfficialPayslipData(params: {
       ? Math.max(0, Math.round(Number(payroll.izinHariRate) || 0))
       : dailySalaryRate;
   const izinHariDeduction =
-    periodDeduction || payroll.izinHariJumlah !== undefined
-      ? Math.round(izinHariDays * izinHariRate)
-      : 0;
+    izinHariDays > 0 ? Math.round(izinHariDays * izinHariRate) : 0;
 
   const sickSummary = getApprovedSickLeaveSummaryForPeriod(
     empLeaves,
@@ -612,15 +622,14 @@ export function computeOfficialPayslipData(params: {
   const sakitRate = sickSummary.sickRatePerDay > 0 ? sickSummary.sickRatePerDay : dailySalaryRate;
   const sakitDeduction = sickSummary.sickDeductionTotal;
 
-  // 3.5 Keterlambatan (Sinkron dari log absensi)
+  // 3.5 Keterlambatan (Sinkron 100% dari calculatePayroll)
   const totalLateMinutes = Math.max(0, Math.round(Number(payroll.totalLateMinutes) || 0));
-  const rawTotalLateAndAlpha = payroll.isLateFeeWaived
+  const lateDeductionTotal = payroll.isLateFeeWaived
     ? 0
-    : Math.max(0, Math.round(Number(payroll.lateDeduction) || 0));
-  const lateDeductionTotal = Math.max(
-    0,
-    rawTotalLateAndAlpha - (periodDeduction ? 0 : rawAlphaPenaltyFromPayroll)
-  );
+    : Math.max(
+        0,
+        Math.round(Number(payroll.latePenaltyAmount ?? payroll.lateDeduction) || 0)
+      );
   const lateRatePerMinute =
     totalLateMinutes > 0 && lateDeductionTotal > 0
       ? Math.round(lateDeductionTotal / totalLateMinutes)
@@ -728,11 +737,12 @@ export function computeOfficialPayslipData(params: {
     bpjsKesEmployeeTotal +
     pph21Total;
 
-  // 4. JUMLAH BERSIH
-  const jumlahBersih = Math.max(
-    0,
-    subtotalGajiTetap + subtotalGajiTidakTetap - subtotalPengurangan
-  );
+  // 4. JUMLAH BERSIH & PROTEKSI TAKE HOME PAY NON-NEGATIF (Minimal Rp 0)
+  const totalGrossIncome = Math.max(0, subtotalGajiTetap + subtotalGajiTidakTetap);
+  const coveredDeductionAmount = Math.min(totalGrossIncome, Math.max(0, subtotalPengurangan));
+  const uncoveredDeductionDeficit = Math.max(0, subtotalPengurangan - totalGrossIncome);
+  const hasUncoveredDeductionDeficit = uncoveredDeductionDeficit > 0;
+  const jumlahBersih = Math.max(0, totalGrossIncome - subtotalPengurangan);
   const terbilangText = terbilangRupiah(jumlahBersih);
 
   return {
@@ -804,6 +814,10 @@ export function computeOfficialPayslipData(params: {
     bpjsKesEmployeeTotal,
     pph21Total,
     subtotalPengurangan,
+    totalGrossIncome,
+    coveredDeductionAmount,
+    uncoveredDeductionDeficit,
+    hasUncoveredDeductionDeficit,
     jumlahBersih,
     terbilangText,
   };
@@ -827,8 +841,25 @@ export const OfficialPayslipDocument: React.FC<OfficialPayslipDocumentProps> = (
     signatories.preparedBy?.name && signatories.preparedBy.name.trim()
       ? signatories.preparedBy.name.trim()
       : 'Siti Rahma Ramadany, S.KM';
-  const preparedStamp =
-    signatories.preparedBy?.stampDataUrl || signatories.companyStampDataUrl || '';
+  const preparedStamp = useMemo(
+    () =>
+      signatories.preparedBy?.stampDataUrl ||
+      signatories.companyStampDataUrl ||
+      generateOfficialCompanyStampDataUrl(
+        companyConfig.companyName || 'PT LUPYTA MAJU PERKASA'
+      ),
+    [
+      signatories.preparedBy?.stampDataUrl,
+      signatories.companyStampDataUrl,
+      companyConfig.companyName,
+    ]
+  );
+  const preparedSignature = useMemo(
+    () =>
+      signatories.preparedBy?.signatureDataUrl ||
+      generateStylizedSignatureDataUrl(accountingSignatoryName, '#0f172a'),
+    [signatories.preparedBy?.signatureDataUrl, accountingSignatoryName]
+  );
   const hourlyRateRef = getEmployeeHourlyRate(
     effectiveEmployee,
     STANDARD_WORK_HOURS_PER_DAY,
@@ -1353,12 +1384,68 @@ export const OfficialPayslipDocument: React.FC<OfficialPayslipDocumentProps> = (
         </table>
       </div>
 
+      {/* CATATAN KHUSUS PROTEKSI TAKE HOME PAY NON-NEGATIF (JIKA TOTAL POTONGAN > TOTAL PENGHASILAN BRUTO) */}
+      {data.hasUncoveredDeductionDeficit && (
+        <div className="mt-3 p-3.5 bg-amber-50 border-2 border-amber-400 rounded-lg text-xs text-amber-950 break-inside-avoid print:bg-white print:border-slate-700">
+          <div className="flex items-start justify-between gap-2 pb-2 border-b border-amber-200">
+            <div>
+              <p className="font-black uppercase tracking-wider text-amber-900 flex items-center gap-1.5">
+                ⚠️ Catatan Rincian Potongan &amp; Proteksi Take Home Pay Non-Negatif
+              </p>
+              <p className="text-[11px] text-amber-800 mt-0.5 leading-relaxed">
+                Total beban potongan pada periode ini melebihi Total Penghasilan Bruto. Sesuai kebijakan proteksi gaji,{' '}
+                <strong className="font-bold">Take Home Pay (Jumlah Bersih) ditetapkan minimal Rp 0 (tidak minus)</strong>.
+                Selisih potongan yang belum tertutup dicatat secara transparan sebagai sisa kewajiban / evaluasi HR &amp; Finance:
+              </p>
+            </div>
+            <span className="shrink-0 px-2 py-0.5 rounded bg-amber-200/80 text-amber-950 font-black text-[10px] uppercase">
+              Proteksi THP Minimal Rp 0
+            </span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2.5 text-[11px]">
+            <div className="p-2 rounded bg-white/90 border border-amber-200">
+              <p className="text-[10px] font-bold text-slate-500 uppercase">Total Penghasilan Bruto</p>
+              <p className="font-mono font-bold text-slate-900 mt-0.5">
+                {formatRupiah(data.totalGrossIncome)}
+              </p>
+            </div>
+            <div className="p-2 rounded bg-white/90 border border-amber-200">
+              <p className="text-[10px] font-bold text-slate-500 uppercase">Total Beban Potongan</p>
+              <p className="font-mono font-bold text-rose-700 mt-0.5">
+                {formatRupiah(data.subtotalPengurangan)}
+              </p>
+            </div>
+            <div className="p-2 rounded bg-white/90 border border-amber-200">
+              <p className="text-[10px] font-bold text-slate-500 uppercase">Potongan Tertutup Gaji</p>
+              <p className="font-mono font-bold text-emerald-700 mt-0.5">
+                {formatRupiah(data.coveredDeductionAmount)}
+              </p>
+            </div>
+            <div className="p-2 rounded bg-rose-50 border border-rose-300">
+              <p className="text-[10px] font-bold text-rose-800 uppercase">
+                Selisih Belum Tertutup
+              </p>
+              <p className="font-mono font-black text-rose-700 mt-0.5">
+                {formatRupiah(data.uncoveredDeductionDeficit)}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 4. RINGKASAN JUMLAH BERSIH & TERBILANG */}
       <div className="mt-4 p-4 bg-emerald-50 border-2 border-slate-900 rounded-lg print:bg-white">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-          <span className="text-sm sm:text-base font-black tracking-wider uppercase text-slate-950">
-            JUMLAH BERSIH :
-          </span>
+          <div>
+            <span className="text-sm sm:text-base font-black tracking-wider uppercase text-slate-950">
+              JUMLAH BERSIH (TAKE HOME PAY) :
+            </span>
+            {data.hasUncoveredDeductionDeficit && (
+              <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                Non-Negatif • Selisih Potongan Belum Tertutup: {formatRupiah(data.uncoveredDeductionDeficit)}
+              </span>
+            )}
+          </div>
           <span className="text-lg sm:text-2xl font-black font-mono text-emerald-800 print:text-black">
             {formatRupiah(data.jumlahBersih)}
           </span>
@@ -1388,9 +1475,9 @@ export const OfficialPayslipDocument: React.FC<OfficialPayslipDocumentProps> = (
           </div>
           <div className="grid grid-cols-2 gap-6 text-center text-xs">
             {/* Kolom Kiri: Karyawan */}
-            <div className="flex flex-col justify-between min-h-[110px]">
+            <div className="flex flex-col justify-between min-h-[135px] print:min-h-[135px]">
               <span className="font-semibold text-slate-800">Karyawan,</span>
-              <div className="h-16" />
+              <div className="h-24 print:h-24" />
               <div className="border-t border-slate-800 pt-1.5 mx-auto w-44 max-w-full">
                 <p className="font-bold text-slate-950 truncate">
                   {effectiveEmployee.fullName}
@@ -1398,32 +1485,38 @@ export const OfficialPayslipDocument: React.FC<OfficialPayslipDocumentProps> = (
               </div>
             </div>
 
-            {/* Kolom Kanan: Prepared by Accounting */}
+            {/* Kolom Kanan: Prepared by Accounting (Stempel Menumpuk di Atas Tanda Tangan) */}
             <div
               onClick={onEditSignatories}
-              className={`flex flex-col justify-between min-h-[110px] rounded-lg p-1 ${
+              className={`flex flex-col justify-between min-h-[135px] print:min-h-[135px] rounded-lg p-1 ${
                 onEditSignatories ? 'hover:bg-slate-50 cursor-pointer transition-colors' : ''
               }`}
-              title={onEditSignatories ? 'Klik untuk mengubah nama penandatangan Accounting/HR' : undefined}
+              title={
+                onEditSignatories
+                  ? 'Klik untuk mengubah nama penandatangan Accounting/HR, tanda tangan & stempel'
+                  : undefined
+              }
             >
               <span className="font-semibold text-slate-800">Prepared by Accounting,</span>
-              <div className="relative h-16 flex items-end justify-center my-0.5">
-                {Boolean(signatories.preparedBy?.showStamp && preparedStamp) && (
+              <div className="relative h-24 print:h-24 w-48 max-w-full mx-auto flex items-end justify-center my-0.5 select-none">
+                {/* Layer 1 (Bawah): Tanda Tangan Basah / Digital */}
+                {Boolean(preparedSignature) && (
                   <img
-                    src={preparedStamp}
-                    alt="Stempel"
-                    className="absolute left-1/2 -translate-x-10 bottom-0 w-14 h-14 object-contain opacity-80 pointer-events-none z-10"
+                    src={preparedSignature}
+                    alt={accountingSignatoryName}
+                    className="max-h-[72px] max-w-[165px] print:max-h-[72px] print:max-w-[165px] object-contain relative z-10 mb-1 pointer-events-none select-none"
                   />
                 )}
-                {Boolean(signatories.preparedBy?.signatureDataUrl) && (
+                {/* Layer 2 (Atas): Stempel Resmi Menumpuk di Kiri-Tengah Tanda Tangan (-8deg, 104px, mix-blend-multiply) */}
+                {Boolean(preparedStamp) && (
                   <img
-                    src={signatories.preparedBy.signatureDataUrl}
-                    alt={accountingSignatoryName}
-                    className="max-h-14 max-w-[130px] object-contain relative z-20"
+                    src={preparedStamp}
+                    alt="Stempel Resmi Perusahaan"
+                    className="payslip-stamp-overlay absolute left-1/2 -translate-x-[68%] -bottom-1.5 w-[104px] h-[104px] print:w-[104px] print:h-[104px] object-contain opacity-[0.92] contrast-125 saturate-[1.2] mix-blend-multiply -rotate-[8deg] pointer-events-none select-none z-20 print:opacity-[0.92] print:contrast-125 print:saturate-[1.2] print:mix-blend-multiply print:-rotate-[8deg]"
                   />
                 )}
               </div>
-              <div className="border-t border-slate-800 pt-1.5 mx-auto w-48 max-w-full relative z-20">
+              <div className="border-t border-slate-800 pt-1.5 mx-auto w-48 max-w-full relative z-30">
                 <p className="font-bold text-slate-950 truncate">
                   {accountingSignatoryName}
                 </p>

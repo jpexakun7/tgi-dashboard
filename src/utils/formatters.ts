@@ -20,6 +20,7 @@ import {
   ThrPayoutRecord,
   ThrEligibilityStatus,
   PartTimeWorkLog,
+  CashAdvance,
 } from '../types';
 
 export function formatRupiah(amount: number): string {
@@ -1119,22 +1120,30 @@ export interface OvertimeTierBreakdown {
 export function calculateOvertimeBreakdown(
   employee?: Partial<Employee> | null,
   totalMinutes: number = 0,
-  customRatePerMinute?: number
+  customRatePerMinute?: number,
+  firstHourMultiplier: number = 1.5
 ): OvertimeTierBreakdown {
-  const cleanMinutes = Math.max(0, Math.round(totalMinutes || 0));
+  const cleanMinutes = Math.max(0, Math.round(Number(totalMinutes) || 0));
   const firstHourMinutes = Math.min(60, cleanMinutes);
   const subsequentMinutes = Math.max(0, cleanMinutes - 60);
 
+  const resolvedFirstMultiplier =
+    Number(firstHourMultiplier) > 0 ? Number(firstHourMultiplier) : 1.5;
+  const resolvedSubsequentMultiplier =
+    resolvedFirstMultiplier !== 1.5 ? Math.max(2.0, resolvedFirstMultiplier + 0.5) : 2.0;
+
   const baseRatePerMinute =
     customRatePerMinute && customRatePerMinute > 0
-      ? customRatePerMinute / 1.5
+      ? customRatePerMinute / resolvedFirstMultiplier
       : getBaseOvertimeRatePerMinute(employee);
 
-  const firstHourRatePerMinute = Math.round(baseRatePerMinute * 1.5);
-  const subsequentRatePerMinute = Math.round(baseRatePerMinute * 2.0);
+  const firstHourRatePerMinute = Math.round(baseRatePerMinute * resolvedFirstMultiplier);
+  const subsequentRatePerMinute = Math.round(baseRatePerMinute * resolvedSubsequentMultiplier);
 
-  const firstHourPay = Math.round(firstHourMinutes * baseRatePerMinute * 1.5);
-  const subsequentPay = Math.round(subsequentMinutes * baseRatePerMinute * 2.0);
+  const firstHourPay = Math.round(firstHourMinutes * baseRatePerMinute * resolvedFirstMultiplier);
+  const subsequentPay = Math.round(
+    subsequentMinutes * baseRatePerMinute * resolvedSubsequentMultiplier
+  );
   const totalOvertimePay = firstHourPay + subsequentPay;
 
   return {
@@ -1154,10 +1163,15 @@ export function calculateOvertimeBreakdown(
 export function calculateOvertimePayByMinutes(
   employee?: Partial<Employee> | null,
   totalMinutes: number = 0,
-  _multiplier: number = 1.5,
+  multiplier: number = 1.5,
   customRatePerMinute?: number
 ): number {
-  const breakdown = calculateOvertimeBreakdown(employee, totalMinutes, customRatePerMinute);
+  const breakdown = calculateOvertimeBreakdown(
+    employee,
+    totalMinutes,
+    customRatePerMinute,
+    multiplier
+  );
   return breakdown.totalOvertimePay;
 }
 
@@ -1552,6 +1566,23 @@ export function evaluateAttendanceAgainstShift(
     maxAllowedTotal % 60
   ).padStart(2, '0')}`;
 
+  // Parse actual checkOut — Hitung durasi kerja REAL dan PRESISI dari clockOut - clockIn (tanpa fallback 8/9 jam jika belum Clock-Out)
+  const cleanCheckOut = (checkOut || '').trim();
+  const [outH, outM] = cleanCheckOut.split(':').map(Number);
+  let earlyLeaveMinutes = 0;
+  let workHours = 0;
+  const resolvedMaxNormalHours = Math.max(
+    1,
+    Number(maxNormalHoursPerDay) || STANDARD_WORK_HOURS_PER_DAY
+  );
+
+  // Batas wajar keterlambatan maksimal per shift (maksimal 180 menit / 3 jam atau 50% durasi shift)
+  // untuk mencegah denda ekstrem akibat salah input jam atau lupa absen pagi
+  const maxReasonableLateMinutes = Math.min(
+    180,
+    Math.max(60, Math.round(resolvedMaxNormalHours * 60 * 0.5))
+  );
+
   // Parse actual checkIn
   const [ch, cm] = (checkIn || '').split(':').map(Number);
   let rawLateMinutes = 0;
@@ -1563,22 +1594,12 @@ export function evaluateAttendanceAgainstShift(
       actualStart += 24 * 60;
     }
     if (actualStart > scheduledStart) {
-      rawLateMinutes = actualStart - scheduledStart;
+      rawLateMinutes = Math.min(maxReasonableLateMinutes, actualStart - scheduledStart);
     }
     if (actualStart > scheduledStart + grace) {
-      lateMinutes = actualStart - scheduledStart;
+      lateMinutes = Math.min(maxReasonableLateMinutes, actualStart - scheduledStart);
     }
   }
-
-  // Parse actual checkOut — Hitung durasi kerja REAL dan PRESISI dari clockOut - clockIn (tanpa fallback 8/9 jam jika belum Clock-Out)
-  const cleanCheckOut = (checkOut || '').trim();
-  const [outH, outM] = cleanCheckOut.split(':').map(Number);
-  let earlyLeaveMinutes = 0;
-  let workHours = 0;
-  const resolvedMaxNormalHours = Math.max(
-    1,
-    Number(maxNormalHoursPerDay) || STANDARD_WORK_HOURS_PER_DAY
-  );
 
   if (
     cleanCheckOut !== '' &&
@@ -1739,14 +1760,19 @@ export function deduplicateDailyAttendances(
       const resolvedWorkHours =
         evalRes.workHours > 0 ? evalRes.workHours : cappedRes.cappedWorkHours;
 
+      const maxReasonableLateMins = Math.min(
+        180,
+        Math.max(60, Math.round(empStdHours * 60 * 0.5))
+      );
       const finalStatus = primary.isManualStatus ? primary.status : evalRes.status;
-      const finalLateMins = primary.isManualStatus
+      const rawFinalLateMins = primary.isManualStatus
         ? primary.status === 'Hadir Tepat Waktu'
           ? 0
           : primary.lateMinutes > 0
           ? primary.lateMinutes
           : Math.max(1, evalRes.rawLateMinutes || evalRes.lateMinutes)
         : evalRes.lateMinutes;
+      const finalLateMins = Math.min(maxReasonableLateMins, Math.max(0, rawFinalLateMins));
 
       deduplicated.push({
         ...primary,
@@ -1856,14 +1882,49 @@ export interface EmployeeAttendancePenaltySummary {
 }
 
 // Hitung otomatis Akumulasi Jam Kerja Riil, Gaji Harian Per Jam, Frekuensi Terlambat, Alpha, dan Nominal Potongan per Karyawan
+// Mendukung isolasi periode Cut-Off Bulanan (26 bulan lalu - 25 bulan ini) untuk karyawan bulanan
+// serta menjaga keutuhan siklus mingguan (Senin-Sabtu) untuk karyawan Part-Time tanpa terpotong paksa di tanggal 25/26.
 export function calculateEmployeeAttendancePenalty(
   employee: Employee,
   attendances: AttendanceRecord[],
   shifts?: WorkShift[],
-  penaltyPolicy?: Partial<AttendancePenaltyPolicy> | null
+  penaltyPolicy?: Partial<AttendancePenaltyPolicy> | null,
+  period?: string | null,
+  cutOffStartDay: number = 26,
+  cutOffEndDay: number = 25
 ): EmployeeAttendancePenaltySummary {
   const policy = getAttendancePenaltyPolicy(penaltyPolicy);
-  const empAttendances = (attendances || []).filter((a) => a.employeeId === employee.id);
+  const allEmpAttendances = (attendances || []).filter((a) => a.employeeId === employee.id);
+
+  let empAttendances = allEmpAttendances;
+  if (period && period.trim() !== '') {
+    const trimmedPeriod = period.trim();
+    const weeklyRangeMatch = trimmedPeriod.match(
+      /^(\d{4}-\d{2}-\d{2})\s*(?:s\/d|to|__|-)\s*(\d{4}-\d{2}-\d{2})$/i
+    );
+    if (weeklyRangeMatch) {
+      const wStart = weeklyRangeMatch[1];
+      const wEnd = weeklyRangeMatch[2];
+      empAttendances = allEmpAttendances.filter((a) => a.date >= wStart && a.date <= wEnd);
+    } else if (isEmployeePartTime(employee)) {
+      // Untuk Part-Time Mingguan: jangan pernah memotong paksa siklus mingguan (Senin-Sabtu) di tanggal 25/26.
+      // Jika periode bulanan dipilih, sertakan minggu utuh (Senin-Sabtu) yang bersinggungan dengan periode tersebut.
+      const cutoff = getMonthlyCutoffDateRange(trimmedPeriod, cutOffStartDay, cutOffEndDay);
+      const startWeek = getWeeklyCycleRangeForDate(cutoff.startDate);
+      const endWeek = getWeeklyCycleRangeForDate(cutoff.endDate);
+      empAttendances = allEmpAttendances.filter(
+        (a) => a.date >= startWeek.startDate && a.date <= endWeek.endDate
+      );
+    } else {
+      // Isolasi ketat Periode Cut-Off Bulanan (Tgl 26 bulan lalu s/d Tgl 25 bulan ini)
+      // agar absensi baru mulai tanggal 26 tidak pernah tercampur ke periode sebelumnya.
+      const cutoff = getMonthlyCutoffDateRange(trimmedPeriod, cutOffStartDay, cutOffEndDay);
+      empAttendances = allEmpAttendances.filter(
+        (a) => a.date >= cutoff.startDate && a.date <= cutoff.endDate
+      );
+    }
+  }
+
   const deduped = deduplicateDailyAttendances(empAttendances, [employee], shifts, policy);
 
   const divisor = Math.max(1, policy.alphaWorkingDaysDivisor || 25);
@@ -2056,6 +2117,9 @@ export interface PayrollAttendancePenaltyMeta {
   payrollDeduction?: PayrollDeductionRecord | null;
   thrPayout?: ThrPayoutRecord | null;
   leaveRequests?: LeaveRequest[];
+  employeeBonuses?: EmployeeBonus[];
+  cashAdvances?: CashAdvance[];
+  overtimeMultiplier?: number;
 }
 
 // Hitung Payroll Karyawan Lengkap berbasis Gaji Per Jam (Total Gaji Pokok = Akumulasi Jam Kerja Riil × Tarif Gaji Per Jam)
@@ -2157,10 +2221,10 @@ export function calculatePayroll(
     meal: 0,
     communication: 0,
   };
-  const position = Number(allowances.position) || 0;
-  const rawTransport = Number(allowances.transport) || 0;
-  const rawMeal = Number(allowances.meal) || 0;
-  const rawCommunication = Number(allowances.communication) || 0;
+  const position = Math.max(0, Math.round(Number(allowances.position) || 0));
+  const rawTransport = Math.max(0, Math.round(Number(allowances.transport) || 0));
+  const rawMeal = Math.max(0, Math.round(Number(allowances.meal) || 0));
+  const rawCommunication = Math.max(0, Math.round(Number(allowances.communication) || 0));
 
   const adj = attendancePenaltyMeta?.employeeAdjustment || null;
   const hasExplicitKerajinan =
@@ -2184,19 +2248,34 @@ export function calculatePayroll(
   const meal = hasExplicitKedisiplinan ? tunjanganKedisiplinan : rawMeal;
 
   // Hitungan Lembur Sesuai UU Ketenagakerjaan (PP 35/2021):
-  // Jam ke-1 (60 menit pertama) = 1.5x, Jam ke-2 dst (menit > 60) = 2.0x dari (Gaji Pokok + Tunjangan Jabatan) / 173
-  const normalizedMinutes = Math.max(0, Math.round(overtimeMinutes));
-  const otBreakdown = calculateOvertimeBreakdown(employee, normalizedMinutes);
+  // Jam ke-1 (60 menit pertama) = 1.5x (atau defaultOvertimeMultiplier), Jam ke-2 dst (menit > 60) = 2.0x dari (Gaji Pokok + Tunjangan Jabatan) / 173
+  const normalizedMinutes = Math.max(0, Math.round(Number(overtimeMinutes) || 0));
+  const otBreakdown = calculateOvertimeBreakdown(
+    employee,
+    normalizedMinutes,
+    undefined,
+    attendancePenaltyMeta?.overtimeMultiplier || 1.5
+  );
   const overtimeRatePerMinute = otBreakdown.firstHourRatePerMinute;
   const overtimePay = otBreakdown.totalOvertimePay;
 
+  // Gabungkan Bonus KPI / Manual dasar dengan daftar Bonus dari BonusManagementView (employeeBonuses)
+  const kpiBonus = Math.max(0, Math.round(Number(bonus) || 0));
+  const periodBonusesSummary = Array.isArray(attendancePenaltyMeta?.employeeBonuses)
+    ? getEmployeeBonusesForPeriod(attendancePenaltyMeta!.employeeBonuses!, employee, period)
+    : { bonuses: [], totalAmount: 0 };
+  const resolvedBonus =
+    kpiBonus + Math.max(0, Math.round(Number(periodBonusesSummary.totalAmount) || 0));
+
   // Hitungan Otomatis Insentif / Komisi Penjualan Host Live Streaming (TikTok Shop / Shopee Live)
   const liveSalesSummary = calculateEmployeeLiveSalesCommission(employee, period);
-  const salesCommission = liveSalesSummary.totalCommission;
+  const salesCommission = Math.max(0, Math.round(Number(liveSalesSummary.totalCommission) || 0));
 
   // Tunjangan Hari Raya (THR) - HANYA dihitung jika show_in_payslip === true dari ceklis Admin
   const thrRec = attendancePenaltyMeta?.thrPayout || null;
-  const thrShowInPayslip = Boolean(thrRec && thrRec.show_in_payslip === true && Number(thrRec.total_thr_amount) > 0);
+  const thrShowInPayslip = Boolean(
+    thrRec && thrRec.show_in_payslip === true && Number(thrRec.total_thr_amount) > 0
+  );
   const thrAmount = thrShowInPayslip
     ? Math.max(0, Math.round(Number(thrRec!.total_thr_amount) || 0))
     : 0;
@@ -2210,7 +2289,7 @@ export function calculatePayroll(
     tunjanganKerajinan +
     tunjanganKedisiplinan +
     overtimePay +
-    bonus +
+    resolvedBonus +
     salesCommission +
     thrAmount;
 
@@ -2366,7 +2445,14 @@ export function calculatePayroll(
       : Math.max(0, Math.round(hourlyRate / 60));
   const izinJamDeduction = Math.round(izinJamMenit * izinJamRate);
 
-  const izinHariJumlah = dedRec ? Math.max(0, Number(dedRec.izin_hari_jumlah) || 0) : 0;
+  const unpaidLeaveSummary = getApprovedUnpaidLeaveSummaryForPeriod(
+    attendancePenaltyMeta?.leaveRequests || [],
+    employee,
+    period,
+    dailySalary
+  );
+  const manualIzinHari = dedRec ? Math.max(0, Number(dedRec.izin_hari_jumlah) || 0) : 0;
+  const izinHariJumlah = Math.max(manualIzinHari, unpaidLeaveSummary.unpaidDays);
   const izinHariRate =
     dedRec && dedRec.izin_hari_rate > 0
       ? Math.max(0, Math.round(Number(dedRec.izin_hari_rate) || 0))
@@ -2383,12 +2469,38 @@ export function calculatePayroll(
   const sakitHariRate = sickSummary.sickRatePerDay;
   const sakitDeduction = sickSummary.sickDeductionTotal;
 
+  const activeEmpCashAdvances = Array.isArray(attendancePenaltyMeta?.cashAdvances)
+    ? attendancePenaltyMeta!.cashAdvances!.filter(
+        (c) =>
+          c.employeeId === employee.id &&
+          (c.status === 'disbursed' || c.status === 'approved') &&
+          Number(c.remainingBalance) > 0
+      )
+    : [];
+  const totalActiveCashAdvanceBalance = activeEmpCashAdvances.reduce(
+    (s, c) => s + Math.max(0, Math.round(Number(c.remainingBalance) || 0)),
+    0
+  );
+  const totalActiveMonthlyInstallment = activeEmpCashAdvances.reduce(
+    (s, c) =>
+      s +
+      Math.min(
+        Math.max(0, Math.round(Number(c.monthlyInstallment) || 0)),
+        Math.max(0, Math.round(Number(c.remainingBalance) || 0))
+      ),
+    0
+  );
+
   const sisaKasbonLalu = dedRec
     ? Math.max(0, Math.round(Number(dedRec.sisa_kasbon_lalu) || 0))
+    : totalActiveCashAdvanceBalance > 0
+    ? totalActiveCashAdvanceBalance
     : Math.max(0, Math.round(Number(cashAdvanceDeduction) || 0));
   const rawCicilanKasbon = dedRec
     ? Math.max(0, Math.round(Number(dedRec.cicilan_kasbon_bulan_ini) || 0))
-    : Math.max(0, Math.round(Number(cashAdvanceDeduction) || 0));
+    : Math.max(0, Math.round(Number(cashAdvanceDeduction) || 0)) > 0
+    ? Math.max(0, Math.round(Number(cashAdvanceDeduction) || 0))
+    : totalActiveMonthlyInstallment;
   const cicilanKasbonBulanIni =
     sisaKasbonLalu > 0 ? Math.min(sisaKasbonLalu, rawCicilanKasbon) : rawCicilanKasbon;
   const sisaKasbonDepan = Math.max(0, sisaKasbonLalu - cicilanKasbonBulanIni);
@@ -2435,7 +2547,8 @@ export function calculatePayroll(
     overtimeSubsequentMinutes: otBreakdown.subsequentMinutes,
     overtimeFirstHourPay: otBreakdown.firstHourPay,
     overtimeSubsequentPay: otBreakdown.subsequentPay,
-    bonus,
+    bonus: resolvedBonus,
+    kpiBonus,
     salesCommission,
     totalLiveSalesOmset: liveSalesSummary.totalOmset,
     totalLiveSalesPcs: liveSalesSummary.totalPcs,
@@ -2577,9 +2690,25 @@ export function getContractValidityInfo(employee?: Partial<Employee> | null): {
   warningMessage: string | null;
 } {
   const empStatus = employee?.employmentStatus || 'PKWT (Kontrak)';
-  const startDate = employee?.contractStartDate || employee?.joinDate || '';
-  const endDate = employee?.contractEndDate || '';
-  const isPermanent = empStatus === 'PKWTT (Tetap)' && !endDate;
+  const startDate =
+    employee?.contractStartDate ||
+    employee?.contract_start_date ||
+    employee?.joinDate ||
+    '';
+  const rawContractEnd =
+    employee?.contractEndDate || employee?.contract_end_date || '';
+  const rawProbationEnd =
+    employee?.probationEndDate || employee?.probation_end_date || '';
+  const endDate =
+    rawContractEnd ||
+    (empStatus === 'Probation' || empStatus === 'Internship' ? rawProbationEnd : '') ||
+    rawProbationEnd ||
+    '';
+  const isPartTimeNoContract =
+    isEmployeePartTime(employee) && !rawContractEnd && !rawProbationEnd;
+  const isPermanent =
+    (empStatus === 'PKWTT (Tetap)' && !rawContractEnd && !rawProbationEnd) ||
+    isPartTimeNoContract;
 
   if (isPermanent) {
     return {
@@ -2593,8 +2722,10 @@ export function getContractValidityInfo(employee?: Partial<Employee> | null): {
       totalDurationDays: null,
       progressPercent: 100,
       status: 'permanent',
-      badgeText: 'Aktif Permanen (PKWTT / Karyawan Tetap)',
-      shortBadgeText: 'PKWTT Permanen',
+      badgeText: isPartTimeNoContract
+        ? 'Part-Time (Harian / Mingguan)'
+        : 'Aktif Permanen (PKWTT / Karyawan Tetap)',
+      shortBadgeText: isPartTimeNoContract ? 'Part-Time Aktif' : 'PKWTT Permanen',
       badgeClass: 'bg-emerald-100 text-emerald-800 border-emerald-300',
       warningMessage: null,
     };
@@ -2838,7 +2969,7 @@ export const DEFAULT_PAYROLL_SIGNATORIES: PayrollSignatoriesConfig = {
     jobTitle: 'Accounting & HR Department',
     signatureDataUrl: '',
     stampDataUrl: '',
-    showStamp: false,
+    showStamp: true,
   },
   verifiedBy: {
     headerLabel: 'Diperiksa & Diverifikasi,',
@@ -2911,6 +3042,12 @@ export function getPayrollSignatoriesConfig(
       ? base.city.trim()
       : DEFAULT_PAYROLL_SIGNATORIES.city;
 
+  const preparedMerged = mergeItem(base.preparedBy, DEFAULT_PAYROLL_SIGNATORIES.preparedBy);
+  // Pastikan stempel Prepared by Accounting aktif secara default kecuali sengaja dimatikan eksplisit
+  if (base.preparedBy?.showStamp === undefined) {
+    preparedMerged.showStamp = true;
+  }
+
   return {
     city: resolvedCity,
     customDateText: base.customDateText ?? DEFAULT_PAYROLL_SIGNATORIES.customDateText ?? '',
@@ -2918,7 +3055,7 @@ export function getPayrollSignatoriesConfig(
       base.companyStampDataUrl ?? DEFAULT_PAYROLL_SIGNATORIES.companyStampDataUrl ?? '',
     showAllThreeOnPayslip:
       base.showAllThreeOnPayslip ?? DEFAULT_PAYROLL_SIGNATORIES.showAllThreeOnPayslip ?? false,
-    preparedBy: mergeItem(base.preparedBy, DEFAULT_PAYROLL_SIGNATORIES.preparedBy),
+    preparedBy: preparedMerged,
     verifiedBy: mergeItem(base.verifiedBy, DEFAULT_PAYROLL_SIGNATORIES.verifiedBy),
     approvedBy: mergeItem(base.approvedBy, DEFAULT_PAYROLL_SIGNATORIES.approvedBy),
   };
@@ -2987,57 +3124,65 @@ export function generateStylizedSignatureDataUrl(
  * Generator Stempel Resmi Perusahaan (PNG Transparan) untuk Tas Grosir Import
  */
 export function generateOfficialCompanyStampDataUrl(
-  companyName: string = 'TAS GROSIR IMPORT'
+  companyName: string = 'PT LUPYTA MAJU PERKASA'
 ): string {
   if (typeof document === 'undefined') return '';
   const canvas = document.createElement('canvas');
-  canvas.width = 260;
-  canvas.height = 260;
+  canvas.width = 440;
+  canvas.height = 440;
   const ctx = canvas.getContext('2d');
   if (!ctx) return '';
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  const cx = 130;
-  const cy = 130;
-  const stampColor = 'rgba(16, 185, 129, 0.85)'; // Emerald resmi
+  const cx = 220;
+  const cy = 220;
+  const stampColor = 'rgba(4, 120, 87, 0.96)'; // Deep crisp official emerald-teal ink
+  const accentColor = 'rgba(6, 95, 70, 0.98)';
 
-  // Lingkaran luar ganda
+  // Lingkaran luar tebal
   ctx.strokeStyle = stampColor;
-  ctx.lineWidth = 4.5;
+  ctx.lineWidth = 8.5;
   ctx.beginPath();
-  ctx.arc(cx, cy, 108, 0, Math.PI * 2);
+  ctx.arc(cx, cy, 188, 0, Math.PI * 2);
   ctx.stroke();
 
-  ctx.lineWidth = 2;
+  // Lingkaran luar kedua
+  ctx.lineWidth = 3.5;
   ctx.beginPath();
-  ctx.arc(cx, cy, 98, 0, Math.PI * 2);
+  ctx.arc(cx, cy, 172, 0, Math.PI * 2);
   ctx.stroke();
 
   // Lingkaran dalam
+  ctx.lineWidth = 3.5;
   ctx.beginPath();
-  ctx.arc(cx, cy, 66, 0, Math.PI * 2);
+  ctx.arc(cx, cy, 116, 0, Math.PI * 2);
   ctx.stroke();
 
-  // Pita tengah
-  ctx.fillStyle = 'rgba(236, 253, 245, 0.92)';
-  ctx.fillRect(cx - 104, cy - 18, 208, 36);
-  ctx.strokeRect(cx - 104, cy - 18, 208, 36);
+  // Pita tengah transparan (hanya garis batas atas & bawah agar goresan tanda tangan di bawahnya tetap terlihat jelas)
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(cx - 182, cy - 32);
+  ctx.lineTo(cx + 182, cy - 32);
+  ctx.moveTo(cx - 182, cy + 32);
+  ctx.lineTo(cx + 182, cy + 32);
+  ctx.stroke();
 
   // Teks Tengah
-  ctx.fillStyle = 'rgba(6, 95, 70, 0.95)';
+  ctx.fillStyle = accentColor;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.font = 'bold 17px Arial, sans-serif';
-  ctx.fillText('TGI OFFICIAL', cx, cy - 3);
-  ctx.font = 'bold 9px Arial, sans-serif';
-  ctx.fillText('VERIFIED PAYROLL & HRD', cx, cy + 10);
+  ctx.font = '900 28px Arial, sans-serif';
+  ctx.fillText('TGI OFFICIAL', cx, cy - 7);
+  ctx.font = '800 15px Arial, sans-serif';
+  ctx.fillText('ACCOUNTING & PAYROLL', cx, cy + 16);
 
   // Teks Atas & Bawah
-  ctx.font = 'bold 11px Arial, sans-serif';
-  const shortComp = companyName.toUpperCase().slice(0, 24);
-  ctx.fillText(shortComp, cx, cy - 78);
-  ctx.font = 'bold 10px Arial, sans-serif';
-  ctx.fillText('★ JAKARTA - INDONESIA ★', cx, cy + 80);
+  ctx.fillStyle = stampColor;
+  ctx.font = '900 18px Arial, sans-serif';
+  const shortComp = companyName.toUpperCase().slice(0, 26);
+  ctx.fillText(shortComp, cx, cy - 138);
+  ctx.font = '800 16px Arial, sans-serif';
+  ctx.fillText('★ TANGERang - INDONESIA ★'.toUpperCase(), cx, cy + 140);
 
   return canvas.toDataURL('image/png');
 }
@@ -3145,6 +3290,179 @@ export function formatCutOffPeriodRange(
     return `${startDay} ${prevMonthName} ${prevYear} - ${endDay} ${currMonthName} ${year}`;
   }
   return `${startDay} ${prevMonthName} - ${endDay} ${currMonthName} ${year}`;
+}
+
+export interface MonthlyCutoffDateRange {
+  startDate: string; // YYYY-MM-DD (misal: 2026-10-26)
+  endDate: string; // YYYY-MM-DD (misal: 2026-11-25)
+  label: string; // misal: "26 Oktober - 25 November 2026"
+  periodName: string; // misal: "November 2026"
+  yearMonth: string; // misal: "2026-11"
+}
+
+/**
+ * Menghasilkan rentang tanggal eksplisit (startDate YYYY-MM-DD s/d endDate YYYY-MM-DD)
+ * untuk periode Cut-Off Bulanan (default: tanggal 26 bulan sebelumnya s/d tanggal 25 bulan berjalan).
+ * Memastikan saat kalender memasuki tanggal 26, data absensi periode sebelumnya (26 bln lalu - 25 bln ini)
+ * tetap terisolasi dan tidak tercampur dengan absensi baru mulai tanggal 26.
+ */
+export function getMonthlyCutoffDateRange(
+  periodStr?: string | null,
+  cutOffStartDay: number = 26,
+  cutOffEndDay: number = 25
+): MonthlyCutoffDateRange {
+  const currentYm = getJakartaYearMonth();
+  const norm = normalizePeriodToYearMonth(periodStr) || currentYm;
+  const [yearRaw, monthRaw] = norm.split('-');
+  const wibNow = getJakartaDateParts();
+  const parsedYear = parseInt(yearRaw, 10);
+  const year = !isNaN(parsedYear) && parsedYear >= 2020 ? parsedYear : wibNow.year;
+  const month = parseInt(monthRaw, 10) || wibNow.month;
+
+  const prevMonthNum = month === 1 ? 12 : month - 1;
+  const prevYear = month === 1 ? year - 1 : year;
+
+  const startDay = Math.max(1, Math.min(28, Number(cutOffStartDay) || 26));
+  const endDay = Math.max(1, Math.min(31, Number(cutOffEndDay) || 25));
+
+  const startDate = `${String(prevYear).padStart(4, '0')}-${String(prevMonthNum).padStart(
+    2,
+    '0'
+  )}-${String(startDay).padStart(2, '0')}`;
+  const endDate = `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(
+    endDay
+  ).padStart(2, '0')}`;
+
+  const currMonthKey = String(month).padStart(2, '0');
+  const currMonthName = NUM_TO_INDO_MONTH_NAME[currMonthKey] || 'November';
+  const periodName = `${currMonthName} ${year}`;
+  const yearMonth = `${String(year).padStart(4, '0')}-${currMonthKey}`;
+  const label = formatCutOffPeriodRange(periodName, startDay, endDay);
+
+  return {
+    startDate,
+    endDate,
+    label,
+    periodName,
+    yearMonth,
+  };
+}
+
+export interface WeeklyCycleRangeInfo {
+  startDate: string; // Senin (YYYY-MM-DD)
+  endDate: string; // Sabtu (YYYY-MM-DD)
+  sundayPayoutDate: string; // Minggu pencairan (YYYY-MM-DD)
+  label: string; // Label lengkap siklus mingguan
+  shortLabel: string; // Label ringkas
+  isCrossCutoff2526: boolean; // True jika minggu ini melintasi transisi cut-off tanggal 25/26
+}
+
+/**
+ * Menghitung siklus mingguan Part-Time utuh (Senin s/d Sabtu, pencairan Minggu)
+ * tanpa pernah terpotong paksa di tanggal 25/26.
+ * Contoh: Senin–Rabu (tgl 23–25) tetap menyatu dengan Kamis–Sabtu (tgl 26–28) dalam 1 minggu yang sama.
+ */
+export function getWeeklyCycleRangeForDate(dateStr?: string | null): WeeklyCycleRangeInfo {
+  const cleanDate =
+    dateStr && /^\d{4}-\d{2}-\d{2}/.test(dateStr.trim())
+      ? dateStr.trim().slice(0, 10)
+      : getJakartaDateString();
+  const dayOfWeek = getDayOfWeekFromDateString(cleanDate); // 0 = Minggu, 1 = Senin .. 6 = Sabtu
+  const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+
+  const startDate = addDaysToDateString(cleanDate, diffToMonday);
+  const endDate = addDaysToDateString(startDate, 5); // Sabtu (6 hari kerja: Senin-Sabtu)
+  const sundayPayoutDate = addDaysToDateString(startDate, 6); // Minggu (Jadwal Gajian)
+
+  // Cek apakah rentang Senin s/d Sabtu melintasi tanggal 25 dan 26 (atau pergantian bulan)
+  let isCrossCutoff2526 = startDate.slice(0, 7) !== endDate.slice(0, 7);
+  if (!isCrossCutoff2526) {
+    const startDayNum = parseInt(startDate.slice(8, 10), 10);
+    const endDayNum = parseInt(endDate.slice(8, 10), 10);
+    if (startDayNum <= 25 && endDayNum >= 26) {
+      isCrossCutoff2526 = true;
+    }
+  }
+
+  const shortStart = formatIndoDate(startDate);
+  const shortEnd = formatIndoDate(endDate);
+  const shortPayout = formatIndoDate(sundayPayoutDate);
+  const shortLabel = `${shortStart} – ${shortEnd}`;
+  const label = `Senin, ${shortStart} – Sabtu, ${shortEnd} (Cair Minggu, ${shortPayout})${
+    isCrossCutoff2526 ? ' • Utuh Lintas Cut-Off 25/26' : ''
+  }`;
+
+  return {
+    startDate,
+    endDate,
+    sundayPayoutDate,
+    label,
+    shortLabel,
+    isCrossCutoff2526,
+  };
+}
+
+/**
+ * Menghasilkan daftar pilihan periode mingguan (Senin-Sabtu) untuk dropdown Part-Time Mingguan,
+ * Slip Gaji Part-Time, dan Jurnal Akuntansi sehingga setiap minggu yang sudah lewat maupun
+ * minggu berjalan dapat dipilih secara terpisah dan akurat tanpa data absensi antar-minggu tercampur.
+ */
+export function getSelectableWeeklyCycles(
+  referenceDateStr?: string | null,
+  partTimeLogs?: Array<{ date?: string; work_date?: string }> | null,
+  partTimePayouts?: Array<{
+    weekStartDate?: string;
+    week_start_date?: string;
+    sundayPayoutDate?: string;
+    sunday_payout_date?: string;
+  }> | null,
+  weeksBack: number = 10,
+  weeksForward: number = 2
+): WeeklyCycleRangeInfo[] {
+  const todayStr = getJakartaDateString();
+  const currentCycle = getWeeklyCycleRangeForDate(todayStr);
+  const cycleMap = new Map<string, WeeklyCycleRangeInfo>();
+
+  for (let offset = -weeksBack; offset <= weeksForward; offset++) {
+    const mondayStr = addDaysToDateString(currentCycle.startDate, offset * 7);
+    const info = getWeeklyCycleRangeForDate(mondayStr);
+    cycleMap.set(info.startDate, info);
+  }
+
+  if (referenceDateStr && /^\d{4}-\d{2}-\d{2}/.test(referenceDateStr.trim())) {
+    const refInfo = getWeeklyCycleRangeForDate(referenceDateStr.trim().slice(0, 10));
+    cycleMap.set(refInfo.startDate, refInfo);
+  }
+
+  if (Array.isArray(partTimeLogs)) {
+    for (const l of partTimeLogs) {
+      const d = (l?.date || l?.work_date || '').trim().slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(d)) {
+        const info = getWeeklyCycleRangeForDate(d);
+        cycleMap.set(info.startDate, info);
+      }
+    }
+  }
+
+  if (Array.isArray(partTimePayouts)) {
+    for (const p of partTimePayouts) {
+      const d = (
+        p?.weekStartDate ||
+        p?.week_start_date ||
+        p?.sundayPayoutDate ||
+        p?.sunday_payout_date ||
+        ''
+      )
+        .trim()
+        .slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(d)) {
+        const info = getWeeklyCycleRangeForDate(d);
+        cycleMap.set(info.startDate, info);
+      }
+    }
+  }
+
+  return Array.from(cycleMap.values()).sort((a, b) => b.startDate.localeCompare(a.startDate));
 }
 
 export function formatEndOfPeriodPrintDate(
@@ -3419,6 +3737,119 @@ export function getApprovedSickLeaveSummaryForPeriod(
     sickDeductionTotal,
     sickNotes: notesArr.join(' • '),
   };
+}
+
+export function isUnpaidLeaveType(typeStr?: string | null, reasonStr?: string | null): boolean {
+  const t = (typeStr || '').trim().toLowerCase();
+  const r = (reasonStr || '').trim().toLowerCase();
+  if (t.includes('sakit')) return false;
+  if (
+    t === 'cuti tanpa gaji (unpaid leave)' ||
+    t === 'cuti tanpa gaji' ||
+    t.includes('tanpa gaji') ||
+    t.includes('unpaid') ||
+    t === 'izin pribadi' ||
+    t === 'izin keperluan pribadi' ||
+    r.includes('cuti tanpa gaji') ||
+    r.includes('unpaid leave')
+  ) {
+    return true;
+  }
+  return false;
+}
+
+export function getApprovedUnpaidLeaveSummaryForPeriod(
+  allLeaves: LeaveRequest[] | null | undefined,
+  employee: Partial<Employee> | null | undefined,
+  periodOrDate?: string,
+  dailySalaryRate: number = 0
+): {
+  unpaidDays: number;
+  unpaidRatePerDay: number;
+  unpaidDeductionTotal: number;
+  unpaidNotes: string;
+} {
+  if (!Array.isArray(allLeaves) || !employee) {
+    return {
+      unpaidDays: 0,
+      unpaidRatePerDay: 0,
+      unpaidDeductionTotal: 0,
+      unpaidNotes: '',
+    };
+  }
+
+  const empUnpaidLeaves = allLeaves.filter(
+    (l) =>
+      l &&
+      l.employeeId === employee.id &&
+      l.status === 'Disetujui' &&
+      isUnpaidLeaveType(l.type, l.reason)
+  );
+
+  if (empUnpaidLeaves.length === 0) {
+    return {
+      unpaidDays: 0,
+      unpaidRatePerDay: 0,
+      unpaidDeductionTotal: 0,
+      unpaidNotes: '',
+    };
+  }
+
+  const targetYm = normalizePeriodToYearMonth(periodOrDate);
+  const periodMatched = targetYm
+    ? empUnpaidLeaves.filter((l) => {
+        const startYm = normalizePeriodToYearMonth(l.startDate);
+        const endYm = normalizePeriodToYearMonth(l.endDate);
+        return startYm === targetYm || endYm === targetYm;
+      })
+    : empUnpaidLeaves;
+
+  let unpaidDays = 0;
+  const notesArr: string[] = [];
+
+  for (const item of periodMatched) {
+    const days = Math.max(0, Number(item.totalDays) || 0);
+    unpaidDays += days;
+    if (item.reason) {
+      notesArr.push(`${item.type}: ${item.reason.trim()}`);
+    } else {
+      notesArr.push(item.type);
+    }
+  }
+
+  const unpaidRatePerDay = unpaidDays > 0 ? Math.max(0, Math.round(dailySalaryRate)) : 0;
+  const unpaidDeductionTotal =
+    unpaidDays > 0 ? Math.round(unpaidDays * Math.max(0, dailySalaryRate)) : 0;
+
+  return {
+    unpaidDays,
+    unpaidRatePerDay,
+    unpaidDeductionTotal,
+    unpaidNotes: notesArr.join(' • '),
+  };
+}
+
+export function calculateWorkingDaysBetweenDates(startDate: string, endDate: string): number {
+  if (!startDate || !endDate) return 1;
+  const startMatch = /^(\d{4})-(\d{2})-(\d{2})/.exec(startDate.trim());
+  const endMatch = /^(\d{4})-(\d{2})-(\d{2})/.exec(endDate.trim());
+  if (!startMatch || !endMatch) return 1;
+
+  const startUtc = Date.UTC(Number(startMatch[1]), Number(startMatch[2]) - 1, Number(startMatch[3]));
+  const endUtc = Date.UTC(Number(endMatch[1]), Number(endMatch[2]) - 1, Number(endMatch[3]));
+  if (endUtc < startUtc) return 1;
+
+  let workingDays = 0;
+  let totalCalendarDays = 0;
+  const oneDayMs = 86400000;
+  for (let cur = startUtc; cur <= endUtc; cur += oneDayMs) {
+    totalCalendarDays++;
+    const dayOfWeek = new Date(cur).getUTCDay(); // 0 = Minggu
+    if (dayOfWeek !== 0) {
+      workingDays++;
+    }
+  }
+  return workingDays > 0 ? workingDays : Math.max(1, totalCalendarDays);
 }
 
 // ============================================================================
@@ -3901,4 +4332,191 @@ export function calculateEmployeeThrPermenaker(params: {
   };
 }
 
+// ============================================================================
+// CONTRACT & PROBATION TRACKER (ASIA/JAKARTA WIB) & HR LETTER NUMBER GENERATOR
+// ============================================================================
 
+export interface EmployeeContractProbationAlert {
+  employeeId: string;
+  trackingType: 'Kontrak PKWT' | 'Masa Probation' | 'Kontrak & Probation' | 'PKWTT (Tetap)';
+  contractEndDate: string;
+  probationEndDate: string;
+  effectiveEndDate: string;
+  contractDaysRemaining: number | null;
+  probationDaysRemaining: number | null;
+  daysRemaining: number | null;
+  isPermanent: boolean;
+  isExpired: boolean;
+  isWithin7Days: boolean;
+  isWithin30Days: boolean;
+  urgencyLevel: 'expired' | 'critical_7d' | 'warning_30d' | 'safe' | 'permanent' | 'unset';
+  badgeText: string;
+  badgeClass: string;
+}
+
+export function calculateDaysRemainingWib(targetDateStr?: string | null): number | null {
+  if (!targetDateStr || !targetDateStr.trim()) return null;
+  const clean = targetDateStr.trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(clean)) return null;
+  const todayWibStr = getJakartaDateString();
+  const todayObj = new Date(`${todayWibStr}T00:00:00+07:00`);
+  const targetObj = new Date(`${clean}T00:00:00+07:00`);
+  if (isNaN(targetObj.getTime())) return null;
+  const diffMs = targetObj.getTime() - todayObj.getTime();
+  return Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+}
+
+export function getEmployeeContractProbationAlert(
+  employee?: Partial<Employee> | null
+): EmployeeContractProbationAlert {
+  const empId = employee?.id || '';
+  const empStatus = employee?.employmentStatus || employee?.status || 'PKWT (Kontrak)';
+  const contractEnd = (
+    employee?.contractEndDate ||
+    employee?.contract_end_date ||
+    ''
+  ).trim();
+  const probationEnd = (
+    employee?.probationEndDate ||
+    employee?.probation_end_date ||
+    ''
+  ).trim();
+
+  const contractDays = calculateDaysRemainingWib(contractEnd);
+  const probationDays = calculateDaysRemainingWib(probationEnd);
+
+  const isPartTimeNoDates =
+    isEmployeePartTime(employee) && contractDays === null && probationDays === null;
+
+  if (
+    (empStatus === 'PKWTT (Tetap)' && contractDays === null && probationDays === null) ||
+    isPartTimeNoDates
+  ) {
+    return {
+      employeeId: empId,
+      trackingType: 'PKWTT (Tetap)',
+      contractEndDate: '',
+      probationEndDate: '',
+      effectiveEndDate: '',
+      contractDaysRemaining: null,
+      probationDaysRemaining: null,
+      daysRemaining: null,
+      isPermanent: true,
+      isExpired: false,
+      isWithin7Days: false,
+      isWithin30Days: false,
+      urgencyLevel: 'permanent',
+      badgeText: isPartTimeNoDates ? 'Part-Time Aktif' : 'PKWTT (Tetap)',
+      badgeClass: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+    };
+  }
+
+  let effectiveEndDate = '';
+  let daysRemaining: number | null = null;
+  let trackingType: EmployeeContractProbationAlert['trackingType'] =
+    empStatus === 'Probation' || empStatus === 'Internship' ? 'Masa Probation' : 'Kontrak PKWT';
+
+  if (contractDays !== null && probationDays !== null) {
+    trackingType = 'Kontrak & Probation';
+    if (probationDays <= contractDays) {
+      daysRemaining = probationDays;
+      effectiveEndDate = probationEnd;
+    } else {
+      daysRemaining = contractDays;
+      effectiveEndDate = contractEnd;
+    }
+  } else if (probationDays !== null) {
+    trackingType = 'Masa Probation';
+    daysRemaining = probationDays;
+    effectiveEndDate = probationEnd;
+  } else if (contractDays !== null) {
+    trackingType =
+      empStatus === 'Probation' || empStatus === 'Internship' ? 'Masa Probation' : 'Kontrak PKWT';
+    daysRemaining = contractDays;
+    effectiveEndDate = contractEnd;
+  }
+
+  if (daysRemaining === null) {
+    return {
+      employeeId: empId,
+      trackingType,
+      contractEndDate: contractEnd,
+      probationEndDate: probationEnd,
+      effectiveEndDate: '',
+      contractDaysRemaining: null,
+      probationDaysRemaining: null,
+      daysRemaining: null,
+      isPermanent: false,
+      isExpired: false,
+      isWithin7Days: false,
+      isWithin30Days: false,
+      urgencyLevel: 'unset',
+      badgeText: 'Tanggal Belum Diatur',
+      badgeClass: 'bg-slate-100 text-slate-600 border-slate-300',
+    };
+  }
+
+  const isExpired = daysRemaining < 0;
+  const isWithin7Days = daysRemaining >= 0 && daysRemaining <= 7;
+  const isWithin30Days = daysRemaining >= 0 && daysRemaining <= 30;
+
+  let urgencyLevel: EmployeeContractProbationAlert['urgencyLevel'] = 'safe';
+  let badgeText = `Aktif (Sisa ${daysRemaining} Hari)`;
+  let badgeClass = 'bg-emerald-100 text-emerald-800 border-emerald-300';
+
+  if (isExpired) {
+    urgencyLevel = 'expired';
+    badgeText = `Berakhir ${Math.abs(daysRemaining)} Hari Lalu`;
+    badgeClass = 'bg-rose-100 text-rose-800 border-rose-300';
+  } else if (isWithin7Days) {
+    urgencyLevel = 'critical_7d';
+    badgeText = daysRemaining === 0 ? 'Berakhir Hari Ini!' : `Kritis: Sisa ${daysRemaining} Hari (≤ 7 Hr)`;
+    badgeClass = 'bg-rose-100 text-rose-800 border-rose-300';
+  } else if (isWithin30Days) {
+    urgencyLevel = 'warning_30d';
+    badgeText = `Segera Berakhir: Sisa ${daysRemaining} Hari (≤ 30 Hr)`;
+    badgeClass = 'bg-amber-100 text-amber-900 border-amber-300';
+  }
+
+  return {
+    employeeId: empId,
+    trackingType,
+    contractEndDate: contractEnd,
+    probationEndDate: probationEnd,
+    effectiveEndDate,
+    contractDaysRemaining: contractDays,
+    probationDaysRemaining: probationDays,
+    daysRemaining,
+    isPermanent: false,
+    isExpired,
+    isWithin7Days,
+    isWithin30Days,
+    urgencyLevel,
+    badgeText,
+    badgeClass,
+  };
+}
+
+export function getRomanMonth(monthOneIndexed: number): string {
+  const romans = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII'];
+  const idx = Math.max(1, Math.min(12, Math.round(monthOneIndexed))) - 1;
+  return romans[idx] || 'I';
+}
+
+export function generateAutoHrLetterNumber(
+  letterType: 'PKWT' | 'PKWTT' | 'SP1' | 'SP2' | 'SP3',
+  sequenceNumber: number = 1,
+  dateStrWib?: string
+): string {
+  const wibParts = getJakartaDateParts();
+  let year = wibParts.year;
+  let month = wibParts.month;
+  if (dateStrWib && /^\d{4}-\d{2}-\d{2}/.test(dateStrWib.trim())) {
+    const [y, m] = dateStrWib.trim().slice(0, 10).split('-').map(Number);
+    if (!isNaN(y) && y > 2000) year = y;
+    if (!isNaN(m) && m >= 1 && m <= 12) month = m;
+  }
+  const seqStr = String(Math.max(1, sequenceNumber)).padStart(3, '0');
+  const romanMonth = getRomanMonth(month);
+  return `${seqStr}/HRD-TGI/${letterType}/${romanMonth}/${year}`;
+}

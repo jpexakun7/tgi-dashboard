@@ -18,6 +18,14 @@ CREATE TABLE IF NOT EXISTS public.employees (
   face_photo_url TEXT,
   ktp_number TEXT,
   ktp_photo_url TEXT,
+  npwp_photo_url TEXT,
+  contract_start_date DATE,
+  contract_end_date DATE,
+  probation_end_date DATE,
+  contract_document_number TEXT,
+  contract_document_url TEXT,
+  contract_document_name TEXT,
+  hr_letters_archive JSONB DEFAULT '[]'::jsonb,
   role TEXT NOT NULL DEFAULT 'Staff',
   gender TEXT DEFAULT 'Laki-laki',
   department TEXT NOT NULL DEFAULT 'Operasional',
@@ -38,7 +46,9 @@ CREATE TABLE IF NOT EXISTS public.employees (
   ptkp_status TEXT NOT NULL DEFAULT 'TK/0',
   bpjs_kesehatan_no TEXT DEFAULT '0001000000000',
   bpjs_ketenagakerjaan_no TEXT DEFAULT '00000000000',
-  remaining_leave_days INTEGER NOT NULL DEFAULT 12,
+  remaining_leave_days INTEGER NOT NULL DEFAULT 0,
+  remaining_leave INTEGER NOT NULL DEFAULT 0,
+  leave_quota INTEGER NOT NULL DEFAULT 0,
   is_active BOOLEAN NOT NULL DEFAULT true,
   approval_status TEXT NOT NULL DEFAULT 'approved',
   is_host BOOLEAN DEFAULT false,
@@ -62,6 +72,14 @@ ALTER TABLE public.employees ADD COLUMN IF NOT EXISTS employment_type TEXT DEFAU
 ALTER TABLE public.employees ADD COLUMN IF NOT EXISTS shift_id TEXT DEFAULT 'SHIFT-PAGI';
 ALTER TABLE public.employees ADD COLUMN IF NOT EXISTS ktp_number TEXT;
 ALTER TABLE public.employees ADD COLUMN IF NOT EXISTS ktp_photo_url TEXT;
+ALTER TABLE public.employees ADD COLUMN IF NOT EXISTS npwp_photo_url TEXT;
+ALTER TABLE public.employees ADD COLUMN IF NOT EXISTS contract_start_date DATE;
+ALTER TABLE public.employees ADD COLUMN IF NOT EXISTS contract_end_date DATE;
+ALTER TABLE public.employees ADD COLUMN IF NOT EXISTS probation_end_date DATE;
+ALTER TABLE public.employees ADD COLUMN IF NOT EXISTS contract_document_number TEXT;
+ALTER TABLE public.employees ADD COLUMN IF NOT EXISTS contract_document_url TEXT;
+ALTER TABLE public.employees ADD COLUMN IF NOT EXISTS contract_document_name TEXT;
+ALTER TABLE public.employees ADD COLUMN IF NOT EXISTS hr_letters_archive JSONB DEFAULT '[]'::jsonb;
 ALTER TABLE public.employees ADD COLUMN IF NOT EXISTS is_host BOOLEAN DEFAULT false;
 ALTER TABLE public.employees ADD COLUMN IF NOT EXISTS host_commission_pct NUMERIC DEFAULT 0;
 ALTER TABLE public.employees ADD COLUMN IF NOT EXISTS host_commission_per_pcs NUMERIC DEFAULT 0;
@@ -70,6 +88,9 @@ ALTER TABLE public.employees ADD COLUMN IF NOT EXISTS co_host_commission_pct NUM
 ALTER TABLE public.employees ADD COLUMN IF NOT EXISTS co_host_commission_per_pcs NUMERIC DEFAULT 0;
 ALTER TABLE public.employees ADD COLUMN IF NOT EXISTS access_pin TEXT;
 ALTER TABLE public.employees ADD COLUMN IF NOT EXISTS access_pin_hash TEXT;
+ALTER TABLE public.employees ADD COLUMN IF NOT EXISTS remaining_leave_days INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE public.employees ADD COLUMN IF NOT EXISTS remaining_leave INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE public.employees ADD COLUMN IF NOT EXISTS leave_quota INTEGER NOT NULL DEFAULT 0;
 
 -- Migrasi otomatis access_pin plain-text menjadi bcrypt hash & hapus plain-text dari database
 UPDATE public.employees
@@ -105,6 +126,9 @@ CREATE TABLE IF NOT EXISTS public.tgi_employees (
 );
 ALTER TABLE public.tgi_employees ADD COLUMN IF NOT EXISTS standard_daily_hours NUMERIC DEFAULT 9;
 ALTER TABLE public.tgi_employees ADD COLUMN IF NOT EXISTS full_name TEXT;
+ALTER TABLE public.tgi_employees ADD COLUMN IF NOT EXISTS remaining_leave_days INTEGER DEFAULT 0;
+ALTER TABLE public.tgi_employees ADD COLUMN IF NOT EXISTS remaining_leave INTEGER DEFAULT 0;
+ALTER TABLE public.tgi_employees ADD COLUMN IF NOT EXISTS leave_quota INTEGER DEFAULT 0;
 
 -- 3. TABEL PRESENSI / ABSENSI HARIAN (attendances & attendance_logs)
 CREATE TABLE IF NOT EXISTS public.attendances (

@@ -576,6 +576,50 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
     setEditAttNotes(att.notes || att.locationAddress || '');
   };
 
+  // Aksi Cepat Admin: Lengkapi Clock-Out 1-Klik langsung dari tabel Presensi Harian
+  const handleQuickCompleteClockOut = (att: AttendanceRecord) => {
+    const emp = employees.find((e) => e.id === att.employeeId);
+    const empShift = getEmployeeShift(emp, workShifts);
+    const effectiveGrace = penaltyPolicy.useShiftGracePeriod
+      ? empShift.gracePeriodMinutes
+      : penaltyPolicy.gracePeriodMinutes;
+
+    const validIn =
+      att.checkIn && att.checkIn !== '-' && att.checkIn.includes(':')
+        ? att.checkIn
+        : empShift.checkInTime || '09:00';
+    const targetOut = empShift.checkOutTime || att.scheduledCheckOut || '17:30';
+    const empStd = getEmployeeStandardDailyHours(emp, undefined, empShift);
+
+    const evalRes = evaluateAttendanceAgainstShift(
+      validIn,
+      targetOut,
+      empShift,
+      effectiveGrace,
+      empStd
+    );
+
+    const updatedRecord: AttendanceRecord = {
+      ...att,
+      checkIn: validIn,
+      checkOut: targetOut,
+      scheduledCheckIn: empShift.checkInTime,
+      scheduledCheckOut: targetOut,
+      shiftId: empShift.id,
+      shiftName: empShift.name,
+      status: att.isManualStatus ? att.status : evalRes.status,
+      lateMinutes: att.isManualStatus ? att.lateMinutes : evalRes.lateMinutes,
+      earlyLeaveMinutes: evalRes.earlyLeaveMinutes,
+      workHours: evalRes.workHours,
+      notes: `${att.notes ? `${att.notes} • ` : ''}Clock-Out dilengkapi cepat oleh Admin (${targetOut} WIB)`,
+    };
+
+    onUpdateAttendance?.(updatedRecord);
+    showToast(
+      `Clock-Out ${emp?.fullName || 'Karyawan'} tanggal ${att.date} berhasil dilengkapi (${targetOut} WIB • ${evalRes.workHours} Jam)!`
+    );
+  };
+
   const handleSaveEditedAttendance = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingAttendance) return;
@@ -1994,15 +2038,25 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                             {att.workHours > 0 ? `(${att.workHours}j)` : ''}
                           </span>
                           {isPresentWithoutCheckout && (
-                            <button
-                              type="button"
-                              onClick={() => handleOpenEditAttendanceModal(att)}
-                              className="mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-100 hover:bg-amber-200 text-amber-800 font-sans font-bold text-[10px] cursor-pointer"
-                              title="Klik untuk mengisi jam pulang karyawan yang lupa check-out"
-                            >
-                              <Clock className="w-2.5 h-2.5" />
-                              <span>Lupa Check-Out? Isi Jam</span>
-                            </button>
+                            <div className="mt-1 flex flex-wrap items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => handleQuickCompleteClockOut(att)}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-rose-600 hover:bg-rose-700 text-white font-sans font-extrabold text-[10px] shadow-xs cursor-pointer"
+                                title={`Klik 1x untuk langsung melengkapi jam pulang sesuai jadwal shift (${schedOut} WIB)`}
+                              >
+                                <Clock className="w-2.5 h-2.5" />
+                                <span>⚡ Lengkapi Clock-Out ({schedOut})</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditAttendanceModal(att)}
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-100 hover:bg-amber-200 text-amber-800 font-sans font-bold text-[10px] cursor-pointer"
+                                title="Klik untuk mengatur jam pulang kustom"
+                              >
+                                <span>Atur Jam</span>
+                              </button>
+                            </div>
                           )}
                         </td>
                         <td className="py-3 px-4">
@@ -2074,6 +2128,17 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                         </td>
                         <td className="py-3 px-4 text-right whitespace-nowrap">
                           <div className="inline-flex items-center justify-end gap-1.5">
+                            {isPresentWithoutCheckout && (
+                              <button
+                                type="button"
+                                onClick={() => handleQuickCompleteClockOut(att)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-[11px] shadow-xs transition-colors cursor-pointer"
+                                title={`Lengkapi Clock-Out otomatis sesuai shift (${schedOut} WIB)`}
+                              >
+                                <Clock className="w-3.5 h-3.5" />
+                                <span>⚡ Lengkapi Clock-Out</span>
+                              </button>
+                            )}
                             <button
                               type="button"
                               onClick={() => handleOpenEditAttendanceModal(att)}
