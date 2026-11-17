@@ -87,6 +87,7 @@ import {
   deleteLivestreamSessionFromSupabase,
   generateSessionUuid,
 } from '../services/supabaseService';
+import { sanitizeSafeText } from '../services/authSecurityService';
 
 const SAMPLE_PHOTOS = [
   { label: 'Pria Formal 1', url: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=300&h=300&q=80' },
@@ -691,31 +692,42 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
   const handleSaveEmployee = (e: React.FormEvent) => {
     e.preventDefault();
 
-    const fullNameTrimmed = formData.fullName?.trim() || '';
+    const fullNameTrimmed = sanitizeSafeText(formData.fullName, 120);
     if (!fullNameTrimmed) {
       setFormError('Mohon isi Nama Lengkap karyawan!');
       return;
     }
 
     const currentYear = new Date().getFullYear();
-    const nikTrimmed = formData.nik?.trim() || `TGI-${currentYear}-${String(employees.length + 1).padStart(3, '0')}`;
-    const emailTrimmed = formData.email?.trim() || `${fullNameTrimmed.toLowerCase().replace(/\s+/g, '.')}@tgi.co.id`;
-    const departmentTrimmed = formData.department?.trim() || editingEmployee?.department || 'Operasional';
+    const nikTrimmed =
+      sanitizeSafeText(formData.nik, 40) ||
+      `TGI-${currentYear}-${String(employees.length + 1).padStart(3, '0')}`;
+    const emailTrimmed =
+      sanitizeSafeText(formData.email, 120) ||
+      `${fullNameTrimmed.toLowerCase().replace(/\s+/g, '.')}@tgi.co.id`;
+    const departmentTrimmed =
+      sanitizeSafeText(formData.department, 80) || editingEmployee?.department || 'Operasional';
 
     stopFormCamera();
 
-    const resolvedStdHours = getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY);
-    const explicitHourly = Number(formData.hourlyRate ?? formData.hourly_rate) || 0;
-    const explicitDaily = Number(formData.dailySalary ?? formData.daily_salary) || 0;
+    const resolvedStdHours = Math.max(
+      1,
+      getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY)
+    );
+    const explicitHourly = Math.max(0, Number(formData.hourlyRate ?? formData.hourly_rate) || 0);
+    const explicitDaily = Math.max(0, Number(formData.dailySalary ?? formData.daily_salary) || 0);
     const resolvedHourlyRate =
       explicitHourly > 0
         ? Math.round(explicitHourly)
         : explicitDaily > 0
         ? Math.round(explicitDaily / resolvedStdHours)
-        : Math.round((Number(formData.baseSalary) || 5625000) / (25 * resolvedStdHours));
+        : Math.round(Math.max(0, Number(formData.baseSalary) || 5625000) / (25 * resolvedStdHours));
     const resolvedDailySalary = Math.round(resolvedHourlyRate * resolvedStdHours);
     const resolvedBaseSalary = Math.round(resolvedDailySalary * 25);
-    const explicitOvertimeRate = Number(formData.overtimeRate ?? formData.overtime_rate) || 0;
+    const explicitOvertimeRate = Math.max(
+      0,
+      Number(formData.overtimeRate ?? formData.overtime_rate) || 0
+    );
     const resolvedOvertimeRate =
       explicitOvertimeRate > 0
         ? Math.round(explicitOvertimeRate)
@@ -835,10 +847,10 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         liveStreamSalesLogs:
           formData.liveStreamSalesLogs || editingEmployee.liveStreamSalesLogs || [],
         allowances: {
-          position: Number(formData.allowances?.position) || 0,
-          transport: Number(formData.allowances?.transport) || 0,
-          meal: Number(formData.allowances?.meal) || 0,
-          communication: Number(formData.allowances?.communication) || 0,
+          position: Math.max(0, Math.round(Number(formData.allowances?.position) || 0)),
+          transport: Math.max(0, Math.round(Number(formData.allowances?.transport) || 0)),
+          meal: Math.max(0, Math.round(Number(formData.allowances?.meal) || 0)),
+          communication: Math.max(0, Math.round(Number(formData.allowances?.communication) || 0)),
         },
         avatarUrl: formData.avatarUrl || editingEmployee.avatarUrl,
         facePhotoUrl: formData.facePhotoUrl || formData.avatarUrl || editingEmployee.facePhotoUrl,
@@ -906,14 +918,15 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         co_host_commission_per_pcs: resolvedCoHostCommPerPcs,
         liveStreamSalesLogs: [],
         allowances: {
-          position: Number(formData.allowances?.position) || 0,
-          transport: Number(formData.allowances?.transport) || 0,
-          meal: Number(formData.allowances?.meal) || 0,
-          communication: Number(formData.allowances?.communication) || 0,
+          position: Math.max(0, Math.round(Number(formData.allowances?.position) || 0)),
+          transport: Math.max(0, Math.round(Number(formData.allowances?.transport) || 0)),
+          meal: Math.max(0, Math.round(Number(formData.allowances?.meal) || 0)),
+          communication: Math.max(0, Math.round(Number(formData.allowances?.communication) || 0)),
         },
         bankName: formData.bankName || 'BCA',
-        bankAccountNumber: formData.bankAccountNumber?.trim() || '1234567890',
-        bankAccountHolder: formData.bankAccountHolder?.trim() || fullNameTrimmed,
+        bankAccountNumber:
+          (formData.bankAccountNumber || '').replace(/[^\d-]/g, '').slice(0, 30) || '1234567890',
+        bankAccountHolder: sanitizeSafeText(formData.bankAccountHolder, 120) || fullNameTrimmed,
         npwp: formData.npwp?.trim() || '00.000.000.0-000.000',
         ptkpStatus: formData.ptkpStatus || 'TK/0',
         bpjsKesehatanNo: formData.bpjsKesehatanNo?.trim() || '0001000000000',

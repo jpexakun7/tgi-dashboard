@@ -40,6 +40,11 @@ import {
   getActiveEmployeeThrForPayslip,
   generateOfficialCompanyStampDataUrl,
   generateStylizedSignatureDataUrl,
+  isEmployeePartTime,
+  normalizeEmploymentType,
+  clampNonNegativeNumber,
+  getWeeklyCycleRangeForDate,
+  getJakartaDateString,
 } from '../utils/formatters';
 import { getPayslipWhatsAppUrl, getPayslipEmailUrl } from '../utils/notificationHelper';
 import {
@@ -67,6 +72,11 @@ import {
 
 export interface OfficialPayslipComputedData {
   effectiveEmployee: Employee;
+  isPartTime: boolean;
+  weeklyPeriodLabel: string;
+  weeklyStartDate?: string;
+  weeklyEndDate?: string;
+  sundayPayoutDate?: string;
   periodCutOffLabel: string;
   printCityAndDate: string;
   workDaysCount: number;
@@ -74,6 +84,7 @@ export interface OfficialPayslipComputedData {
   maxNormalHoursPerDay: number;
   hourlyRate: number;
   dailyWorkBreakdown: DailyWorkWageItem[];
+  missingClockOutDaysCount: number;
   positionLines: string[];
   // 1. Gaji Tetap
   dailySalaryRate: number;
@@ -101,7 +112,9 @@ export interface OfficialPayslipComputedData {
   totalTambahanLainnya: number;
   liveOmsetAmount: number;
   liveCommissionPct: number;
+  liveCommissionPerPcs: number;
   liveCommissionPcsNote: string;
+  liveCommissionFormulaLabel: string;
   salesCommissionAmount: number;
   // Tunjangan Hari Raya (THR) - HANYA aktif jika show_in_payslip === true dari ceklis Admin
   thrShowInPayslip: boolean;
@@ -152,6 +165,76 @@ export interface OfficialPayslipComputedData {
   hasUncoveredDeductionDeficit: boolean;
   jumlahBersih: number;
   terbilangText: string;
+}
+
+function getLocalPartTimeBreakdownForEmployee(
+  employeeId: string,
+  maxNormalHoursPerDay: number,
+  hourlyRate: number
+): DailyWorkWageItem[] {
+  if (!employeeId || typeof window === 'undefined') return [];
+  try {
+    const rawPt = localStorage.getItem('tgi_part_time_logs_data');
+    if (rawPt) {
+      const parsedPt = JSON.parse(rawPt);
+      if (Array.isArray(parsedPt)) {
+        const empPtLogs = parsedPt
+          .filter((l: any) => l && (l.employeeId === employeeId || l.employee_id === employeeId) && l.date)
+          .sort((a: any, b: any) => String(a.date).localeCompare(String(b.date)));
+        if (empPtLogs.length > 0) {
+          const latestDate = empPtLogs[empPtLogs.length - 1].date;
+          const weekCycle = getWeeklyCycleRangeForDate(latestDate);
+          const weekFiltered = empPtLogs.filter(
+            (l: any) => l.date >= weekCycle.startDate && l.date <= weekCycle.endDate
+          );
+          const targetLogs = weekFiltered.length > 0 ? weekFiltered : empPtLogs.slice(-6);
+          return targetLogs.map((l: any) => {
+            const cIn = String(l.clockIn || l.clock_in || '-').trim();
+            const cOut = String(l.clockOut || l.clock_out || '-').trim();
+            const rawHours = clampNonNegativeNumber(
+              l.normalHours ?? l.normal_hours ?? l.hoursWorked ?? l.hours_worked,
+              0
+            );
+            const capped = calculateCappedDailyWorkHours(
+              cIn,
+              cOut,
+              rawHours,
+              maxNormalHoursPerDay,
+              0,
+              String(l.date).slice(0, 10)
+            );
+            const isMissingOut = Boolean(
+              capped.isMissingClockOut ||
+                !cOut ||
+                cOut === '-' ||
+                cOut.toLowerCase().includes('belum') ||
+                (cIn && cIn !== '-' && cIn === cOut)
+            );
+            const finalHours =
+              capped.cappedWorkHours > 0
+                ? capped.cappedWorkHours
+                : isMissingOut
+                ? 0
+                : Math.min(maxNormalHoursPerDay, Math.max(0, rawHours));
+            return {
+              date: String(l.date).slice(0, 10),
+              checkIn: cIn,
+              checkOut: isMissingOut ? 'Belum Clock-Out' : cOut,
+              workHours: finalHours,
+              rawDurationHours: capped.rawDurationHours || rawHours,
+              isCappedToMax: capped.isCappedToMax,
+              isMissingClockOut: isMissingOut,
+              dailyWage: Math.round(finalHours * hourlyRate),
+              status: 'Hadir Tepat Waktu',
+            };
+          });
+        }
+      }
+    }
+  } catch {
+    // ignore fallback error
+  }
+  return [];
 }
 
 function getLocalCashAdvancesForEmployee(employeeId: string): CashAdvance[] {
@@ -227,16 +310,11 @@ export function computeOfficialPayslipData(params: {
     signatories,
   } = params;
 
+  const isPartTime =
+    isEmployeePartTime(employee) ||
+    normalizeEmploymentType((payroll as any)?.employmentType || (payroll as any)?.employmentStatus) ===
+      'Part-Time';
   const periodStr = payroll.period || companyConfig.currentPayrollPeriod || 'November 2026';
-  const periodCutOffLabel = formatCutOffPeriodRange(
-    periodStr,
-    companyConfig.cutOffStartDay || 26,
-    companyConfig.cutOffEndDay || 25
-  );
-
-  const resolvedCity = signatories?.city?.trim() || 'Tangerang';
-  const printDateStr = formatEndOfPeriodPrintDate(periodStr, signatories?.customDateText);
-  const printCityAndDate = `${resolvedCity}, ${printDateStr}`;
 
   // Multi-line Posisi / Jabatan dengan tanda "-"
   const rawRoleParts = (employee.role || '-')
@@ -260,60 +338,135 @@ export function computeOfficialPayslipData(params: {
   const positionLines = rawRoleParts.length > 0 ? rawRoleParts : [employee.role || '-'];
 
   // 1. GAJI TETAP (Batas Maksimal Jam Kerja Normal = employee.standard_daily_hours || 9 Jam/Hari, Total Jam Kerja Aktual × Tarif Per Jam)
-  const maxNormalHoursPerDay = getEmployeeStandardDailyHours(
-    employee,
-    Number(payroll.standardWorkHoursPerDay) || STANDARD_WORK_HOURS_PER_DAY
+  const maxNormalHoursPerDay = Math.max(
+    1,
+    getEmployeeStandardDailyHours(
+      employee,
+      clampNonNegativeNumber(payroll.standardWorkHoursPerDay, STANDARD_WORK_HOURS_PER_DAY) ||
+        STANDARD_WORK_HOURS_PER_DAY
+    )
+  );
+  const stdWorkDaysDivisor = Math.max(
+    1,
+    clampNonNegativeNumber(payroll.standardWorkingDays, 25) || 25
   );
   const hourlyRate = Math.max(
     0,
     Math.round(
-      Number(payroll.hourlyRate) ||
-        getEmployeeHourlyRate(employee, maxNormalHoursPerDay, payroll.standardWorkingDays || 25)
+      clampNonNegativeNumber(payroll.hourlyRate, 0) ||
+        getEmployeeHourlyRate(employee, maxNormalHoursPerDay, stdWorkDaysDivisor)
     )
   );
   const dailySalaryRate = Math.max(
     0,
     Math.round(
       hourlyRate * maxNormalHoursPerDay ||
-        Number(payroll.dailySalary) ||
-        getEmployeeDailySalary(employee, payroll.standardWorkingDays || 25, maxNormalHoursPerDay)
+        clampNonNegativeNumber(payroll.dailySalary, 0) ||
+        getEmployeeDailySalary(employee, stdWorkDaysDivisor, maxNormalHoursPerDay)
     )
   );
 
-  const rawBreakdown = Array.isArray(payroll.dailyWorkBreakdown)
+  const rawBreakdownFromPayroll = Array.isArray(payroll.dailyWorkBreakdown)
     ? payroll.dailyWorkBreakdown
     : [];
-  const dailyWorkBreakdown: DailyWorkWageItem[] = rawBreakdown.map((item) => {
-    const isNonPresent =
-      item.status === 'Alpa' ||
-      item.status === 'Sakit' ||
-      item.status === 'Izin' ||
-      item.status === 'Cuti';
-    if (isNonPresent) {
+  const rawBreakdown =
+    rawBreakdownFromPayroll.length > 0
+      ? rawBreakdownFromPayroll
+      : isPartTime
+      ? getLocalPartTimeBreakdownForEmployee(employee.id, maxNormalHoursPerDay, hourlyRate)
+      : [];
+
+  const dailyWorkBreakdown: DailyWorkWageItem[] = rawBreakdown
+    .map((item) => {
+      const isNonPresent =
+        item.status === 'Alpa' ||
+        item.status === 'Sakit' ||
+        item.status === 'Izin' ||
+        item.status === 'Cuti';
+      if (isNonPresent) {
+        return {
+          ...item,
+          workHours: 0,
+          rawDurationHours: 0,
+          isCappedToMax: false,
+          isMissingClockOut: false,
+          dailyWage: 0,
+        };
+      }
+      const cleanIn = String(item.checkIn || '').trim();
+      const cleanOut = String(item.checkOut || '').trim();
+      const cappedRes = calculateCappedDailyWorkHours(
+        cleanIn,
+        cleanOut,
+        item.workHours,
+        maxNormalHoursPerDay,
+        0,
+        item.date
+      );
+      const isMissingOut = Boolean(
+        item.isMissingClockOut ||
+          cappedRes.isMissingClockOut ||
+          !cleanOut ||
+          cleanOut === '-' ||
+          cleanOut.toLowerCase().includes('belum') ||
+          (cleanIn && cleanIn !== '-' && cleanIn === cleanOut)
+      );
+      const effectiveHours =
+        cappedRes.cappedWorkHours > 0
+          ? cappedRes.cappedWorkHours
+          : isMissingOut
+          ? 0
+          : Math.min(maxNormalHoursPerDay, clampNonNegativeNumber(item.workHours, 0));
       return {
         ...item,
-        workHours: 0,
-        rawDurationHours: 0,
-        isCappedToMax: false,
-        isMissingClockOut: false,
-        dailyWage: 0,
+        checkIn: cleanIn || '-',
+        checkOut: isMissingOut ? 'Belum Clock-Out' : cleanOut || '-',
+        workHours: effectiveHours,
+        rawDurationHours: cappedRes.rawDurationHours || effectiveHours,
+        isCappedToMax: cappedRes.isCappedToMax,
+        isMissingClockOut: isMissingOut,
+        dailyWage: Math.round(effectiveHours * hourlyRate),
       };
+    })
+    .sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+
+  const missingClockOutDaysCount = dailyWorkBreakdown.filter((d) => d.isMissingClockOut).length;
+
+  // Penentuan rentang periode: Bulanan (Cut-Off 26-25) vs Part-Time Mingguan (Senin-Sabtu)
+  let weeklyCycle = getWeeklyCycleRangeForDate(getJakartaDateString());
+  const explicitWeekMatch = periodStr.match(
+    /(\d{4}-\d{2}-\d{2})\s*(?:s\/d|to|__|–|-)\s*(\d{4}-\d{2}-\d{2})/i
+  );
+  if (explicitWeekMatch) {
+    weeklyCycle = getWeeklyCycleRangeForDate(explicitWeekMatch[1]);
+  } else if (dailyWorkBreakdown.length > 0) {
+    const validDates = dailyWorkBreakdown
+      .map((d) => (d.date || '').slice(0, 10))
+      .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d));
+    if (validDates.length > 0) {
+      weeklyCycle = getWeeklyCycleRangeForDate(validDates[validDates.length - 1]);
     }
-    const cappedRes = calculateCappedDailyWorkHours(
-      item.checkIn,
-      item.checkOut,
-      item.workHours,
-      maxNormalHoursPerDay
-    );
-    return {
-      ...item,
-      workHours: cappedRes.cappedWorkHours,
-      rawDurationHours: cappedRes.rawDurationHours,
-      isCappedToMax: cappedRes.isCappedToMax,
-      isMissingClockOut: cappedRes.isMissingClockOut,
-      dailyWage: Math.round(cappedRes.cappedWorkHours * hourlyRate),
-    };
-  });
+  }
+
+  const weeklyStartFormatted = formatIndoDate(weeklyCycle.startDate);
+  const weeklyEndFormatted = formatIndoDate(weeklyCycle.endDate);
+  const weeklyRangeShort = `Senin, ${weeklyStartFormatted} – Sabtu, ${weeklyEndFormatted}`;
+  const weeklyPeriodLabel = `Periode Mingguan: ${weeklyRangeShort}`;
+
+  const periodCutOffLabel = isPartTime
+    ? weeklyRangeShort
+    : formatCutOffPeriodRange(
+        periodStr,
+        companyConfig.cutOffStartDay || 26,
+        companyConfig.cutOffEndDay || 25
+      );
+
+  const resolvedCity = signatories?.city?.trim() || 'Tangerang';
+  const printDateStr =
+    isPartTime && !signatories?.customDateText?.trim()
+      ? formatIndoDate(weeklyCycle.sundayPayoutDate)
+      : formatEndOfPeriodPrintDate(periodStr, signatories?.customDateText);
+  const printCityAndDate = `${resolvedCity}, ${printDateStr}`;
 
   const hasDailyBreakdown = dailyWorkBreakdown.length > 0;
   const presentDaysFromBreakdown = hasDailyBreakdown
@@ -331,6 +484,8 @@ export function computeOfficialPayslipData(params: {
       ? Math.max(0, Math.round(Number(payroll.presentDaysCount)))
       : presentDaysFromBreakdown !== undefined
       ? presentDaysFromBreakdown
+      : isPartTime
+      ? 6
       : payroll.standardWorkingDays || 25;
 
   const totalActualWorkHours = hasDailyBreakdown
@@ -348,7 +503,7 @@ export function computeOfficialPayslipData(params: {
       )
     : Number((workDaysCount * maxNormalHoursPerDay).toFixed(2));
 
-  // Gaji Pokok = Total Akumulasi Jam Kerja Aktual (sudah dibatasi maks 9 jam/hari) × Tarif Per Jam
+  // Gaji Pokok / Upah Kerja = Total Akumulasi Jam Kerja Aktual (sudah dibatasi maks jam normal/hari) × Tarif Per Jam
   const gajiPokokTotal = Math.round(totalActualWorkHours * hourlyRate);
 
   const tunjanganJabatanRate = Math.max(
@@ -420,17 +575,24 @@ export function computeOfficialPayslipData(params: {
       : calculateOvertimePayByMinutes(employee, overtimeMinutes, otMultiplier);
 
   const baseOtRatePerMin =
-    Number(payroll.overtimeRatePerMinute) || getOvertimeRatePerMinute(employee, otMultiplier);
-  const overtimeHourlyRate =
+    clampNonNegativeNumber(payroll.overtimeRatePerMinute, 0) ||
+    getOvertimeRatePerMinute(employee, otMultiplier);
+  const rawOvertimeHourlyRate =
     overtimeMinutes > 0 && lemburJamTotal > 0
       ? Math.round(lemburJamTotal / (overtimeMinutes / 60))
       : Math.round(baseOtRatePerMin * 60);
-  const overtimeHoursQty =
+  const overtimeHourlyRate = Number.isFinite(rawOvertimeHourlyRate)
+    ? Math.max(0, rawOvertimeHourlyRate)
+    : 0;
+  const rawOvertimeHoursQty =
     overtimeMinutes > 0
       ? Number((overtimeMinutes / 60).toFixed(1))
       : lemburJamTotal > 0 && overtimeHourlyRate > 0
       ? Number((lemburJamTotal / overtimeHourlyRate).toFixed(1))
       : 0;
+  const overtimeHoursQty = Number.isFinite(rawOvertimeHoursQty)
+    ? Math.max(0, rawOvertimeHoursQty)
+    : 0;
 
   const overtimeDailyRate = dailySalaryRate;
   const overtimeDaysQty = 0;
@@ -468,24 +630,52 @@ export function computeOfficialPayslipData(params: {
 
   const totalTambahanLainnya = bonusItems.reduce((sum, item) => sum + item.amount, 0);
 
-  // Komisi Penjualan Live Streaming
+  // Komisi Penjualan Live Streaming (Akurat untuk % Omset, Bonus Per Pcs, maupun Kombinasi)
   const liveSalesSummary = calculateEmployeeLiveSalesCommission(employee, periodStr);
   const salesCommissionAmount = Math.max(
     0,
-    Math.round(Number(payroll.salesCommission) || 0),
-    Math.round(Number(liveSalesSummary.totalCommission) || 0)
+    Math.round(clampNonNegativeNumber(payroll.salesCommission, 0)),
+    Math.round(clampNonNegativeNumber(liveSalesSummary.totalCommission, 0))
   );
-  const liveOmsetAmount = Math.max(0, Math.round(Number(liveSalesSummary.totalOmset) || 0));
-  const liveCommissionPct =
+  const liveCommissionPct = clampNonNegativeNumber(
     liveSalesSummary.commissionPercentage > 0
       ? liveSalesSummary.commissionPercentage
       : liveSalesSummary.coHostCommissionPercentage > 0
       ? liveSalesSummary.coHostCommissionPercentage
-      : Number(employee.salesCommissionPercentage || employee.coHostCommissionPercentage) || 0;
+      : employee.salesCommissionPercentage || employee.coHostCommissionPercentage || 0,
+    0
+  );
+  const liveCommissionPerPcs = Math.round(
+    clampNonNegativeNumber(
+      liveSalesSummary.commissionPerPcs > 0
+        ? liveSalesSummary.commissionPerPcs
+        : liveSalesSummary.coHostCommissionPerPcs > 0
+        ? liveSalesSummary.coHostCommissionPerPcs
+        : employee.salesCommissionPerPcs || employee.coHostCommissionPerPcs || 0,
+      0
+    )
+  );
+  const rawLiveOmset = Math.round(clampNonNegativeNumber(liveSalesSummary.totalOmset, 0));
+  const liveOmsetAmount =
+    rawLiveOmset > 0
+      ? rawLiveOmset
+      : salesCommissionAmount > 0 && liveCommissionPct > 0
+      ? Math.round(salesCommissionAmount / (liveCommissionPct / 100))
+      : 0;
   const liveCommissionPcsNote =
     liveSalesSummary.totalPcs > 0
-      ? `${liveSalesSummary.totalPcs.toLocaleString('id-ID')} Pcs`
+      ? `${liveSalesSummary.totalPcs.toLocaleString('id-ID')} Pcs${
+          liveCommissionPerPcs > 0 ? ` × ${formatRupiah(liveCommissionPerPcs)}/pcs` : ''
+        }`
       : '';
+  const liveCommissionFormulaLabel =
+    liveCommissionPct > 0
+      ? `× ${liveCommissionPct}%${liveCommissionPcsNote ? ` (${liveCommissionPcsNote})` : ''}`
+      : liveCommissionPcsNote
+      ? liveCommissionPcsNote
+      : salesCommissionAmount > 0
+      ? 'Komisi Penjualan Live'
+      : '× 0%';
 
   // Tunjangan Hari Raya (THR): WAJIB CEKLIS ADMIN (show_in_payslip === true)
   // Jika show_in_payslip === false, thrAmount WAJIB 0 dan TIDAK BOLEH muncul atau dihitung di Slip Gaji!
@@ -747,6 +937,11 @@ export function computeOfficialPayslipData(params: {
 
   return {
     effectiveEmployee: employee,
+    isPartTime,
+    weeklyPeriodLabel,
+    weeklyStartDate: weeklyCycle.startDate,
+    weeklyEndDate: weeklyCycle.endDate,
+    sundayPayoutDate: weeklyCycle.sundayPayoutDate,
     periodCutOffLabel,
     printCityAndDate,
     workDaysCount,
@@ -754,6 +949,7 @@ export function computeOfficialPayslipData(params: {
     maxNormalHoursPerDay,
     hourlyRate,
     dailyWorkBreakdown,
+    missingClockOutDaysCount,
     positionLines,
     dailySalaryRate,
     gajiPokokTotal,
@@ -774,7 +970,9 @@ export function computeOfficialPayslipData(params: {
     totalTambahanLainnya,
     liveOmsetAmount,
     liveCommissionPct,
+    liveCommissionPerPcs,
     liveCommissionPcsNote,
+    liveCommissionFormulaLabel,
     salesCommissionAmount,
     thrShowInPayslip,
     thrAmount,
@@ -836,7 +1034,7 @@ export const OfficialPayslipDocument: React.FC<OfficialPayslipDocumentProps> = (
   signatories,
   onEditSignatories,
 }) => {
-  const { effectiveEmployee } = data;
+  const { effectiveEmployee, isPartTime } = data;
   const accountingSignatoryName =
     signatories.preparedBy?.name && signatories.preparedBy.name.trim()
       ? signatories.preparedBy.name.trim()
@@ -860,11 +1058,18 @@ export const OfficialPayslipDocument: React.FC<OfficialPayslipDocumentProps> = (
       generateStylizedSignatureDataUrl(accountingSignatoryName, '#0f172a'),
     [signatories.preparedBy?.signatureDataUrl, accountingSignatoryName]
   );
-  const hourlyRateRef = getEmployeeHourlyRate(
-    effectiveEmployee,
-    STANDARD_WORK_HOURS_PER_DAY,
-    25
-  );
+
+  // Filter daftar rincian kerja harian khusus minggu aktif jika Part-Time memiliki data lintas minggu
+  const weeklyBreakdownItems = useMemo(() => {
+    if (!data.dailyWorkBreakdown || data.dailyWorkBreakdown.length === 0) return [];
+    if (isPartTime && data.weeklyStartDate && data.weeklyEndDate) {
+      const inWeek = data.dailyWorkBreakdown.filter(
+        (d) => d.date >= data.weeklyStartDate! && d.date <= data.weeklyEndDate!
+      );
+      if (inWeek.length > 0) return inWeek;
+    }
+    return data.dailyWorkBreakdown.slice(-6);
+  }, [data.dailyWorkBreakdown, isPartTime, data.weeklyStartDate, data.weeklyEndDate]);
 
   return (
     <div className="bg-white text-slate-900 border border-slate-300 rounded-xl p-5 sm:p-8 print:p-3 print:border-slate-400 print:rounded-none print:shadow-none font-sans text-xs leading-relaxed">
@@ -878,11 +1083,28 @@ export const OfficialPayslipDocument: React.FC<OfficialPayslipDocumentProps> = (
           />
         </div>
       </div>
-      <div className="text-center pb-3 mb-4 print:pb-2 print:mb-3 border-b border-slate-300">
-        <h1 className="text-lg sm:text-xl print:text-lg font-black tracking-[0.25em] uppercase text-slate-950">
-          SLIP GAJI
-        </h1>
-      </div>
+
+      {/* HEADER JUDUL: KHUSUS PART-TIME (MINGGUAN) VS REGULER BULANAN */}
+      {isPartTime ? (
+        <div className="text-center pb-3 mb-4 print:pb-2.5 print:mb-3 border-b-2 border-orange-300 bg-gradient-to-r from-orange-50/80 via-amber-50/90 to-orange-50/80 rounded-lg py-2.5 px-3 print:bg-amber-50/60">
+          <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-orange-600 text-white print:bg-orange-100 print:text-orange-950 print:border-2 print:border-orange-600 text-[11px] sm:text-xs font-black tracking-[0.14em] uppercase shadow-2xs">
+            <span>SLIP GAJI PART-TIME (MINGGUAN)</span>
+          </div>
+          <p className="text-xs sm:text-sm font-extrabold text-orange-950 mt-1.5">
+            {data.weeklyPeriodLabel}
+          </p>
+          <p className="text-[10px] font-semibold text-orange-800 mt-0.5">
+            Siklus Kerja Mingguan (Senin s/d Sabtu) • Jadwal Pencairan Setiap Hari Minggu
+            {data.sundayPayoutDate ? ` (${formatIndoDate(data.sundayPayoutDate)})` : ''}
+          </p>
+        </div>
+      ) : (
+        <div className="text-center pb-3 mb-4 print:pb-2 print:mb-3 border-b border-slate-300">
+          <h1 className="text-lg sm:text-xl print:text-lg font-black tracking-[0.25em] uppercase text-slate-950">
+            SLIP GAJI
+          </h1>
+        </div>
+      )}
 
       {/* INFORMASI KARYAWAN (LAYOUT 2 KOLOM) */}
       <div className="grid grid-cols-1 md:grid-cols-2 print:grid-cols-2 gap-x-8 gap-y-2 pb-4 mb-4 border-b border-slate-300 text-xs">
@@ -903,9 +1125,15 @@ export const OfficialPayslipDocument: React.FC<OfficialPayslipDocumentProps> = (
           <div className="grid grid-cols-[135px_12px_1fr] items-start">
             <span className="font-semibold text-slate-700">Status Karyawan</span>
             <span className="text-slate-600">:</span>
-            <span className="font-semibold text-slate-900">
-              {effectiveEmployee.employmentStatus || effectiveEmployee.status || '-'}
-            </span>
+            {isPartTime ? (
+              <span className="inline-flex items-center px-2 py-0.5 rounded bg-orange-100 text-orange-900 border border-orange-300 font-extrabold text-[11px] w-fit">
+                Part-Time (Mingguan)
+              </span>
+            ) : (
+              <span className="font-semibold text-slate-900">
+                {effectiveEmployee.employmentStatus || effectiveEmployee.status || '-'}
+              </span>
+            )}
           </div>
           <div className="grid grid-cols-[135px_12px_1fr] items-start">
             <span className="font-semibold text-slate-700">Divisi</span>
@@ -930,14 +1158,24 @@ export const OfficialPayslipDocument: React.FC<OfficialPayslipDocumentProps> = (
         {/* Kolom Kanan */}
         <div className="space-y-1.5">
           <div className="grid grid-cols-[135px_12px_1fr] items-start">
-            <span className="font-semibold text-slate-700">Periode</span>
+            <span className="font-semibold text-slate-700">
+              {isPartTime ? 'Periode Mingguan' : 'Periode'}
+            </span>
             <span className="text-slate-600">:</span>
-            <span className="font-bold text-slate-950">{data.periodCutOffLabel}</span>
+            <span className={`font-bold ${isPartTime ? 'text-orange-900' : 'text-slate-950'}`}>
+              {data.periodCutOffLabel}
+            </span>
           </div>
           <div className="grid grid-cols-[135px_12px_1fr] items-start">
-            <span className="font-semibold text-slate-700">Jumlah Hari Kerja</span>
+            <span className="font-semibold text-slate-700">
+              {isPartTime ? 'Total Jam & Hari Kerja' : 'Jumlah Hari Kerja'}
+            </span>
             <span className="text-slate-600">:</span>
-            <span className="font-bold text-slate-950">{data.workDaysCount} Hari</span>
+            <span className="font-bold text-slate-950">
+              {isPartTime
+                ? `${data.totalActualWorkHours} Jam (${data.workDaysCount} Hari Kerja)`
+                : `${data.workDaysCount} Hari`}
+            </span>
           </div>
           <div className="grid grid-cols-[135px_12px_1fr] items-start">
             <span className="font-semibold text-slate-700">*Bank</span>
@@ -962,427 +1200,932 @@ export const OfficialPayslipDocument: React.FC<OfficialPayslipDocumentProps> = (
       </div>
 
       {/* 2. TABEL RINCIAN PENDAPATAN & 3. PENGURANGAN */}
-      <div className="overflow-x-auto">
-        <table className="w-full border-collapse border border-slate-300 text-[11px] sm:text-xs">
-          <thead>
-            <tr className="bg-slate-800 text-white font-bold uppercase tracking-wider">
-              <th className="py-2 px-3 text-left border border-slate-300 w-[34%]">
-                Komponen Slip Gaji
-              </th>
-              <th className="py-2 px-3 text-right border border-slate-300 w-[22%]">
-                Tarif / Dasar (Rp)
-              </th>
-              <th className="py-2 px-3 text-left border border-slate-300 w-[24%]">
-                Kuantitas / Keterangan
-              </th>
-              <th className="py-2 px-3 text-right border border-slate-300 w-[20%]">
-                Total (Rp)
-              </th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-200">
-            {/* ============================================================== */}
-            {/* BAGIAN 1 — GAJI TETAP                                          */}
-            {/* ============================================================== */}
-            <tr className="bg-emerald-50/90 font-extrabold text-emerald-950">
-              <td colSpan={4} className="py-1.5 px-3 border border-slate-300 uppercase tracking-wider">
-                1. GAJI TETAP
-              </td>
-            </tr>
-            <tr>
-              <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
-                <div>Gaji Pokok</div>
-                <div className="text-[10px] text-slate-500">
-                  Jam kerja standar adalah {data.maxNormalHoursPerDay} jam/hari (Maks. {data.maxNormalHoursPerDay} Jam/Hari • {formatAccountingRupiah(data.dailySalaryRate)}/hari)
-                </div>
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
-                <div>{formatAccountingRupiah(data.hourlyRate)} / jam</div>
-                <div className="text-[10px] text-slate-500">
-                  ({formatAccountingRupiah(data.dailySalaryRate)} / hari)
-                </div>
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
-                <div className="font-semibold text-slate-900">
-                  × {data.totalActualWorkHours} Jam Aktual
-                </div>
-                <div className="text-[10px] text-slate-500">
-                  ({data.workDaysCount} Hari Kerja • Maks. {data.maxNormalHoursPerDay} Jam/Hari)
-                </div>
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-slate-900">
-                {formatAccountingRupiah(data.gajiPokokTotal)}
-              </td>
-            </tr>
-            <tr>
-              <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
-                Tunjangan Jabatan
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
-                {formatAccountingRupiah(data.tunjanganJabatanRate)}
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
-                × 1 Kali / Bulan
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-slate-900">
-                {formatAccountingRupiah(data.tunjanganJabatanTotal)}
-              </td>
-            </tr>
-            <tr className="bg-emerald-100/80 font-extrabold text-slate-950">
-              <td colSpan={3} className="py-2 px-3 border border-slate-300 text-right uppercase">
-                Subtotal Gaji Tetap
-              </td>
-              <td className="py-2 px-3 border border-slate-300 text-right font-mono text-emerald-900">
-                {formatAccountingRupiah(data.subtotalGajiTetap)}
-              </td>
-            </tr>
-
-            {/* ============================================================== */}
-            {/* BAGIAN 2 — GAJI TIDAK TETAP                                    */}
-            {/* ============================================================== */}
-            <tr className="bg-teal-50/90 font-extrabold text-teal-950">
-              <td colSpan={4} className="py-1.5 px-3 border border-slate-300 uppercase tracking-wider">
-                2. GAJI TIDAK TETAP
-              </td>
-            </tr>
-            <tr>
-              <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
-                Tunjangan Kerajinan
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
-                {formatAccountingRupiah(data.tunjanganKerajinanRate)}
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
-                × 1 Kali / Bulan
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-slate-900">
-                {formatAccountingRupiah(data.tunjanganKerajinanTotal)}
-              </td>
-            </tr>
-            <tr>
-              <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
-                Tunjangan Kedisiplinan
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
-                {formatAccountingRupiah(data.tunjanganKedisiplinanRate)}
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
-                × 1 Kali / Bulan
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-slate-900">
-                {formatAccountingRupiah(data.tunjanganKedisiplinanTotal)}
-              </td>
-            </tr>
-            <tr>
-              <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
-                Lembur (Jam)
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
-                {formatAccountingRupiah(data.lemburJamTotal > 0 ? data.overtimeHourlyRate : 0)}
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
-                × {data.overtimeHoursQty} Jam
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-slate-900">
-                {formatAccountingRupiah(data.lemburJamTotal)}
-              </td>
-            </tr>
-            <tr>
-              <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
-                Lembur (Hari)
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
-                {formatAccountingRupiah(data.lemburHariTotal > 0 ? data.overtimeDailyRate : 0)}
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
-                × {data.overtimeDaysQty} Hari
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-slate-900">
-                {formatAccountingRupiah(data.lemburHariTotal)}
-              </td>
-            </tr>
-
-            {/* Tambahan Lainnya (Terintegrasi dengan Manajemen Bonus) */}
-            {data.bonusItems.length > 0 ? (
-              data.bonusItems.map((bItem, idx) => (
-                <tr key={bItem.id} className="bg-amber-50/40">
-                  <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
-                    {idx === 0 ? 'Tambahan Lainnya' : '↳ Tambahan Lainnya'}
-                  </td>
-                  <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
-                    {formatAccountingRupiah(bItem.amount)}
-                  </td>
-                  <td className="py-1.5 px-3 border border-slate-300 text-slate-800">
-                    <span className="font-semibold">× {bItem.qty}</span>{' '}
-                    <span className="text-slate-600">({bItem.reason_note})</span>
-                  </td>
-                  <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-emerald-800">
-                    {formatAccountingRupiah(bItem.amount)}
+      {isPartTime ? (
+        /* ==================================================================== */
+        /* FORMAT KHUSUS KARYAWAN PART-TIME (MINGGUAN) — BERBASIS JAM/HARI KERJA */
+        /* ==================================================================== */
+        <div className="space-y-3">
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse border border-slate-300 text-[11px] sm:text-xs">
+              <thead>
+                <tr className="bg-orange-900 print:bg-slate-800 text-white font-bold uppercase tracking-wider">
+                  <th className="py-2 px-3 text-left border border-slate-300 w-[36%]">
+                    Komponen Upah &amp; Rincian Mingguan
+                  </th>
+                  <th className="py-2 px-3 text-right border border-slate-300 w-[20%]">
+                    Tarif / Dasar (Rp)
+                  </th>
+                  <th className="py-2 px-3 text-left border border-slate-300 w-[24%]">
+                    Jam / Hari Kerja
+                  </th>
+                  <th className="py-2 px-3 text-right border border-slate-300 w-[20%]">
+                    Total (Rp)
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200">
+                {/* BAGIAN 1 — PENDAPATAN KERJA MINGGUAN (BERBASIS JAM/HARI KERJA) */}
+                <tr className="bg-orange-50/90 font-extrabold text-orange-950">
+                  <td colSpan={4} className="py-1.5 px-3 border border-slate-300 uppercase tracking-wider">
+                    1. RINCIAN PENDAPATAN KERJA MINGGUAN (JAM / HARI KERJA)
                   </td>
                 </tr>
-              ))
-            ) : (
+                <tr>
+                  <td className="py-2 px-3 border border-slate-300 font-bold text-slate-900">
+                    <div>
+                      Upah Kerja ({data.totalActualWorkHours} Jam × {formatRupiah(data.hourlyRate)})
+                    </div>
+                    <div className="text-[10px] font-normal text-slate-600 mt-0.5">
+                      {data.workDaysCount} Hari Kerja Aktif • Shift Normal Maks. {data.maxNormalHoursPerDay} Jam/Hari ({formatAccountingRupiah(data.dailySalaryRate)}/hari)
+                    </div>
+                  </td>
+                  <td className="py-2 px-3 border border-slate-300 text-right font-mono">
+                    <div className="font-bold text-slate-900">
+                      {formatAccountingRupiah(data.hourlyRate)} / jam
+                    </div>
+                    <div className="text-[10px] text-slate-500">
+                      ({formatAccountingRupiah(data.dailySalaryRate)} / hari)
+                    </div>
+                  </td>
+                  <td className="py-2 px-3 border border-slate-300 text-slate-800">
+                    <div className="font-bold text-orange-900">
+                      {data.totalActualWorkHours} Jam Kerja
+                    </div>
+                    <div className="text-[10px] text-slate-600">
+                      ({data.workDaysCount} Hari Kerja)
+                    </div>
+                  </td>
+                  <td className="py-2 px-3 border border-slate-300 text-right font-mono font-bold text-slate-950">
+                    {formatAccountingRupiah(data.gajiPokokTotal)}
+                  </td>
+                </tr>
+
+                {/* Rincian Jam Masuk/Kerja Per Hari dalam Periode Minggu Tersebut (Ringkas) */}
+                {weeklyBreakdownItems.length > 0 && (
+                  <tr className="bg-amber-50/30 print:bg-white">
+                    <td colSpan={4} className="py-2 px-3 border border-slate-300">
+                      <div className="flex items-center justify-between flex-wrap gap-1 mb-1.5">
+                        <div className="text-[10px] font-extrabold uppercase tracking-wider text-orange-900">
+                          Rincian Jam Masuk &amp; Jam Kerja Per Hari ({data.periodCutOffLabel}):
+                        </div>
+                        {data.missingClockOutDaysCount > 0 && (
+                          <span className="px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-300 text-[9px] font-extrabold">
+                            ⚠️ {data.missingClockOutDaysCount} Hari Belum Clock-Out
+                          </span>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 print:grid-cols-3 gap-1.5">
+                        {weeklyBreakdownItems.map((dayItem, idx) => {
+                          const isMissingOut = Boolean(
+                            dayItem.isMissingClockOut ||
+                              !dayItem.checkOut ||
+                              dayItem.checkOut === '-' ||
+                              String(dayItem.checkOut).toLowerCase().includes('belum') ||
+                              (dayItem.checkIn &&
+                                dayItem.checkIn !== '-' &&
+                                dayItem.checkIn === dayItem.checkOut)
+                          );
+                          return (
+                            <div
+                              key={`${dayItem.date}-${idx}`}
+                              className={`p-1.5 rounded border flex items-center justify-between gap-2 text-[10px] ${
+                                isMissingOut
+                                  ? 'border-rose-300 bg-rose-50/60 print:bg-white'
+                                  : 'border-slate-200 bg-white'
+                              }`}
+                            >
+                              <div className="min-w-0">
+                                <div className="font-bold text-slate-800 truncate">
+                                  {formatIndoDate(dayItem.date)}
+                                </div>
+                                <div className="text-slate-500 font-mono">
+                                  {dayItem.checkIn || '-'} –{' '}
+                                  {isMissingOut ? (
+                                    <span className="text-rose-700 font-bold">Belum Clock-Out</span>
+                                  ) : (
+                                    `${dayItem.checkOut || '-'} WIB`
+                                  )}
+                                </div>
+                              </div>
+                              <div className="text-right shrink-0">
+                                <div className="font-extrabold text-orange-800 font-mono">
+                                  {dayItem.workHours} Jam
+                                </div>
+                                {isMissingOut ? (
+                                  <div className="text-[9px] font-bold text-rose-700">
+                                    ⚠️ Belum Clock-Out
+                                  </div>
+                                ) : (
+                                  <div className="text-slate-600 font-mono">
+                                    {formatRupiah(dayItem.dailyWage)}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+
+                {/* Tunjangan Jabatan Tetap HANYA ditampilkan jika nilainya > 0 */}
+                {data.tunjanganJabatanTotal > 0 && (
+                  <tr>
+                    <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                      Tunjangan Jabatan
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                      {formatAccountingRupiah(data.tunjanganJabatanRate)}
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                      × 1 Periode
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-slate-900">
+                      {formatAccountingRupiah(data.tunjanganJabatanTotal)}
+                    </td>
+                  </tr>
+                )}
+
+                {/* Tunjangan Harian / Kerajinan (Hanya jika > 0) */}
+                {data.tunjanganKerajinanTotal > 0 && (
+                  <tr>
+                    <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                      Tunjangan Harian / Kerajinan
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                      {formatAccountingRupiah(data.tunjanganKerajinanRate)}
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                      Tunjangan Aktif
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-slate-900">
+                      {formatAccountingRupiah(data.tunjanganKerajinanTotal)}
+                    </td>
+                  </tr>
+                )}
+
+                {/* Tunjangan Kedisiplinan / Makan Harian (Hanya jika > 0) */}
+                {data.tunjanganKedisiplinanTotal > 0 && (
+                  <tr>
+                    <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                      Tunjangan Makan / Kedisiplinan
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                      {formatAccountingRupiah(data.tunjanganKedisiplinanRate)}
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                      Tunjangan Aktif
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-slate-900">
+                      {formatAccountingRupiah(data.tunjanganKedisiplinanTotal)}
+                    </td>
+                  </tr>
+                )}
+
+                {/* Upah Lembur (Ditampilkan jika > 0 atau sebagai informasi lembur mingguan) */}
+                {(data.lemburJamTotal > 0 || data.overtimeHoursQty > 0) && (
+                  <tr>
+                    <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                      Upah Lembur ({data.overtimeHoursQty} Jam × {formatRupiah(data.overtimeHourlyRate)})
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                      {formatAccountingRupiah(data.overtimeHourlyRate)} / jam
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-slate-700 font-semibold">
+                      × {data.overtimeHoursQty} Jam Lembur
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-indigo-900">
+                      {formatAccountingRupiah(data.lemburJamTotal)}
+                    </td>
+                  </tr>
+                )}
+
+                {/* Bonus / Tambahan Lainnya (Hanya jika > 0) */}
+                {data.bonusItems.map((bItem, idx) => (
+                  <tr key={bItem.id} className="bg-amber-50/40">
+                    <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                      {idx === 0 ? 'Bonus & Insentif Mingguan' : '↳ Bonus Tambahan'}
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                      {formatAccountingRupiah(bItem.amount)}
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-slate-800">
+                      <span className="font-semibold">× {bItem.qty}</span>{' '}
+                      <span className="text-slate-600">({bItem.reason_note})</span>
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-emerald-800">
+                      {formatAccountingRupiah(bItem.amount)}
+                    </td>
+                  </tr>
+                ))}
+
+                {/* Komisi Live Streaming (Hanya jika > 0) */}
+                {data.salesCommissionAmount > 0 && (
+                  <tr>
+                    <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                      Komisi Live Streaming
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                      {formatAccountingRupiah(
+                        data.liveOmsetAmount > 0 ? data.liveOmsetAmount : data.salesCommissionAmount
+                      )}
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                      {data.liveCommissionFormulaLabel}
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-emerald-800">
+                      {formatAccountingRupiah(data.salesCommissionAmount)}
+                    </td>
+                  </tr>
+                )}
+
+                {/* Tunjangan Hari Raya (THR) — HANYA MUNCUL JIKA CEKLIS ADMIN (show_in_payslip === true) */}
+                {Boolean(data.thrShowInPayslip && data.thrAmount > 0) && (
+                  <tr className="bg-emerald-50/70">
+                    <td className="py-1.5 px-3 border border-slate-300 font-bold text-emerald-950">
+                      <div>Tunjangan Hari Raya (THR)</div>
+                      <div className="text-[10px] font-medium text-emerald-700">
+                        {data.thrHolidayName} • Masa Kerja: {data.thrTenureLabel}
+                      </div>
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-right font-mono text-slate-800">
+                      {formatAccountingRupiah(data.thrBasisAmount)}
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-slate-800">
+                      <div className="font-semibold text-emerald-900">{data.thrProportionFormula}</div>
+                      <div className="text-[10px] text-slate-600">
+                        Status: {data.thrPaymentStatus === 'Sudah Dibayar' ? 'Sudah Dibayar (Cair)' : 'Terjadwal Pencairan'}
+                      </div>
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-bold text-emerald-800">
+                      {formatAccountingRupiah(data.thrAmount)}
+                    </td>
+                  </tr>
+                )}
+
+                <tr className="bg-orange-100/80 font-extrabold text-slate-950">
+                  <td colSpan={3} className="py-2 px-3 border border-slate-300 text-right uppercase">
+                    Subtotal Pendapatan Mingguan (Bruto)
+                  </td>
+                  <td className="py-2 px-3 border border-slate-300 text-right font-mono text-orange-950">
+                    {formatAccountingRupiah(data.totalGrossIncome)}
+                  </td>
+                </tr>
+
+                {/* BAGIAN 2 — POTONGAN MINGGUAN (DISEDERHANAKAN UNTUK PART-TIME) */}
+                <tr className="bg-rose-50/90 font-extrabold text-rose-950">
+                  <td colSpan={4} className="py-1.5 px-3 border border-slate-300 uppercase tracking-wider">
+                    2. POTONGAN (KASBON, KETERLAMBATAN &amp; ABSENSI)
+                  </td>
+                </tr>
+
+                {/* Keterlambatan */}
+                <tr>
+                  <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                    Potongan Keterlambatan
+                  </td>
+                  <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                    {formatAccountingRupiah(data.totalLateMinutes > 0 ? data.lateRatePerMinute : 0)}
+                  </td>
+                  <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                    × {data.totalLateMinutes} Menit
+                  </td>
+                  <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
+                    {formatAccountingRupiah(data.lateDeductionTotal)}
+                  </td>
+                </tr>
+
+                {/* Tanpa Keterangan / Alpha (Tampil jika ada potongan/hari alpha) */}
+                {(data.alphaDays > 0 || data.alphaDeductionTotal > 0) && (
+                  <tr>
+                    <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                      Tanpa Keterangan (Alpha)
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                      {formatAccountingRupiah(data.alphaRate)}
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                      × {data.alphaDays} Hari
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
+                      {formatAccountingRupiah(data.alphaDeductionTotal)}
+                    </td>
+                  </tr>
+                )}
+
+                {/* Izin Jam / Menit (Tampil jika > 0) */}
+                {(data.izinJamMinutes > 0 || data.izinJamDeduction > 0) && (
+                  <tr>
+                    <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                      Potongan Izin (Jam / Menit)
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                      {formatAccountingRupiah(data.izinJamRate)}
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                      × {data.izinJamMinutes} Menit
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
+                      {formatAccountingRupiah(data.izinJamDeduction)}
+                    </td>
+                  </tr>
+                )}
+
+                {/* Izin Hari / Unpaid (Tampil jika > 0) */}
+                {(data.izinHariDays > 0 || data.izinHariDeduction > 0) && (
+                  <tr>
+                    <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                      Potongan Izin (Hari)
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                      {formatAccountingRupiah(data.izinHariRate)}
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                      × {data.izinHariDays} Hari
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
+                      {formatAccountingRupiah(data.izinHariDeduction)}
+                    </td>
+                  </tr>
+                )}
+
+                {/* Sakit Tanpa Surat Dokter (Tampil jika > 0) */}
+                {data.sakitDeduction > 0 && (
+                  <tr>
+                    <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                      Potongan Sakit
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                      {formatAccountingRupiah(data.sakitRate)}
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                      × {data.sakitDays} Hari
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
+                      {formatAccountingRupiah(data.sakitDeduction)}
+                    </td>
+                  </tr>
+                )}
+
+                {/* Kesalahan / Penyesuaian (Tampil jika > 0) */}
+                {(data.kesalahanQty > 0 || data.kesalahanTotal > 0) && (
+                  <tr>
+                    <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                      Potongan Kesalahan / Penyesuaian
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                      {formatAccountingRupiah(data.kesalahanRate)}
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                      × {data.kesalahanQty} Kali
+                      {Boolean(data.catatanKesalahan) && (
+                        <span className="text-slate-600 italic"> ({data.catatanKesalahan})</span>
+                      )}
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
+                      {formatAccountingRupiah(data.kesalahanTotal)}
+                    </td>
+                  </tr>
+                )}
+
+                {/* Kasbon & Cicilan Kasbon */}
+                {data.sisaKasbonBulanLalu > 0 && (
+                  <tr className="bg-slate-50/80">
+                    <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-700">
+                      Saldo Kasbon Sebelumnya
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-right font-mono text-slate-700">
+                      {formatAccountingRupiah(data.sisaKasbonBulanLalu)}
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-slate-600 italic">
+                      Sisa Kasbon periode lalu
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-right font-mono text-slate-400">
+                      Rp -
+                    </td>
+                  </tr>
+                )}
+                <tr className="bg-amber-50/40">
+                  <td className="py-1.5 px-3 border border-slate-300 font-semibold text-slate-800">
+                    Potongan Cicilan Kasbon
+                  </td>
+                  <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                    {formatAccountingRupiah(data.pembayaranKasbonBulanIni)}
+                  </td>
+                  <td className="py-1.5 px-3 border border-slate-300 text-slate-700 font-medium">
+                    Potongan kasbon periode ini
+                  </td>
+                  <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
+                    {formatAccountingRupiah(data.pembayaranKasbonBulanIni)}
+                  </td>
+                </tr>
+                {data.sisaKasbonBulanDepan > 0 && (
+                  <tr className="bg-slate-50/80">
+                    <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-700">
+                      Sisa Kasbon Berikutnya
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-right font-mono text-slate-700">
+                      {formatAccountingRupiah(data.sisaKasbonBulanDepan)}
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-slate-600 italic">
+                      Sisa Kasbon periode depan
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-right font-mono text-slate-400">
+                      Rp -
+                    </td>
+                  </tr>
+                )}
+
+                {/* BPJS & PPh 21 HANYA ditampilkan untuk Part-Time jika nilainya > 0 */}
+                {data.bpjsTkEmployeeTotal > 0 && (
+                  <tr>
+                    <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                      BPJS Ketenagakerjaan
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                      {formatAccountingRupiah(data.bpjsTkEmployeeTotal)}
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                      Potongan Manual
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
+                      {formatAccountingRupiah(data.bpjsTkEmployeeTotal)}
+                    </td>
+                  </tr>
+                )}
+                {data.bpjsKesEmployeeTotal > 0 && (
+                  <tr>
+                    <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                      BPJS Kesehatan
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                      {formatAccountingRupiah(data.bpjsKesEmployeeTotal)}
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                      Potongan Manual
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
+                      {formatAccountingRupiah(data.bpjsKesEmployeeTotal)}
+                    </td>
+                  </tr>
+                )}
+                {data.pph21Total > 0 && (
+                  <tr>
+                    <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                      PPh 21
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                      {formatAccountingRupiah(data.pph21Total)}
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                      Potongan Manual
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
+                      {formatAccountingRupiah(data.pph21Total)}
+                    </td>
+                  </tr>
+                )}
+
+                <tr className="bg-rose-100/80 font-extrabold text-slate-950">
+                  <td colSpan={3} className="py-2 px-3 border border-slate-300 text-right uppercase">
+                    Subtotal Potongan Mingguan
+                  </td>
+                  <td className="py-2 px-3 border border-slate-300 text-right font-mono text-rose-800">
+                    {formatAccountingRupiah(data.subtotalPengurangan)}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : (
+        /* ==================================================================== */
+        /* FORMAT REGULER KARYAWAN FULL-TIME / KONTRAK (BULANAN)                */
+        /* ==================================================================== */
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse border border-slate-300 text-[11px] sm:text-xs">
+            <thead>
+              <tr className="bg-slate-800 text-white font-bold uppercase tracking-wider">
+                <th className="py-2 px-3 text-left border border-slate-300 w-[34%]">
+                  Komponen Slip Gaji
+                </th>
+                <th className="py-2 px-3 text-right border border-slate-300 w-[22%]">
+                  Tarif / Dasar (Rp)
+                </th>
+                <th className="py-2 px-3 text-left border border-slate-300 w-[24%]">
+                  Kuantitas / Keterangan
+                </th>
+                <th className="py-2 px-3 text-right border border-slate-300 w-[20%]">
+                  Total (Rp)
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-200">
+              {/* ============================================================== */}
+              {/* BAGIAN 1 — GAJI TETAP                                          */}
+              {/* ============================================================== */}
+              <tr className="bg-emerald-50/90 font-extrabold text-emerald-950">
+                <td colSpan={4} className="py-1.5 px-3 border border-slate-300 uppercase tracking-wider">
+                  1. GAJI TETAP
+                </td>
+              </tr>
               <tr>
                 <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
-                  Tambahan Lainnya
+                  <div>Gaji Pokok</div>
+                  <div className="text-[10px] text-slate-500">
+                    Jam kerja standar adalah {data.maxNormalHoursPerDay} jam/hari (Maks. {data.maxNormalHoursPerDay} Jam/Hari • {formatAccountingRupiah(data.dailySalaryRate)}/hari)
+                  </div>
                 </td>
                 <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
-                  Rp -
+                  <div>{formatAccountingRupiah(data.hourlyRate)} / jam</div>
+                  <div className="text-[10px] text-slate-500">
+                    ({formatAccountingRupiah(data.dailySalaryRate)} / hari)
+                  </div>
                 </td>
-                <td className="py-1.5 px-3 border border-slate-300 text-slate-500">
-                  × 0 (-)
+                <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                  <div className="font-semibold text-slate-900">
+                    × {data.totalActualWorkHours} Jam Aktual
+                  </div>
+                  <div className="text-[10px] text-slate-500">
+                    ({data.workDaysCount} Hari Kerja • Maks. {data.maxNormalHoursPerDay} Jam/Hari)
+                  </div>
                 </td>
                 <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-slate-900">
+                  {formatAccountingRupiah(data.gajiPokokTotal)}
+                </td>
+              </tr>
+              <tr>
+                <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                  Tunjangan Jabatan
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                  {formatAccountingRupiah(data.tunjanganJabatanRate)}
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                  × 1 Kali / Bulan
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-slate-900">
+                  {formatAccountingRupiah(data.tunjanganJabatanTotal)}
+                </td>
+              </tr>
+              <tr className="bg-emerald-100/80 font-extrabold text-slate-950">
+                <td colSpan={3} className="py-2 px-3 border border-slate-300 text-right uppercase">
+                  Subtotal Gaji Tetap
+                </td>
+                <td className="py-2 px-3 border border-slate-300 text-right font-mono text-emerald-900">
+                  {formatAccountingRupiah(data.subtotalGajiTetap)}
+                </td>
+              </tr>
+
+              {/* ============================================================== */}
+              {/* BAGIAN 2 — GAJI TIDAK TETAP                                    */}
+              {/* ============================================================== */}
+              <tr className="bg-teal-50/90 font-extrabold text-teal-950">
+                <td colSpan={4} className="py-1.5 px-3 border border-slate-300 uppercase tracking-wider">
+                  2. GAJI TIDAK TETAP
+                </td>
+              </tr>
+              <tr>
+                <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                  Tunjangan Kerajinan
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                  {formatAccountingRupiah(data.tunjanganKerajinanRate)}
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                  × 1 Kali / Bulan
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-slate-900">
+                  {formatAccountingRupiah(data.tunjanganKerajinanTotal)}
+                </td>
+              </tr>
+              <tr>
+                <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                  Tunjangan Kedisiplinan
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                  {formatAccountingRupiah(data.tunjanganKedisiplinanRate)}
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                  × 1 Kali / Bulan
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-slate-900">
+                  {formatAccountingRupiah(data.tunjanganKedisiplinanTotal)}
+                </td>
+              </tr>
+              <tr>
+                <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                  Lembur (Jam)
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                  {formatAccountingRupiah(data.lemburJamTotal > 0 ? data.overtimeHourlyRate : 0)}
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                  × {data.overtimeHoursQty} Jam
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-slate-900">
+                  {formatAccountingRupiah(data.lemburJamTotal)}
+                </td>
+              </tr>
+              <tr>
+                <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                  Lembur (Hari)
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                  {formatAccountingRupiah(data.lemburHariTotal > 0 ? data.overtimeDailyRate : 0)}
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                  × {data.overtimeDaysQty} Hari
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-slate-900">
+                  {formatAccountingRupiah(data.lemburHariTotal)}
+                </td>
+              </tr>
+
+              {/* Tambahan Lainnya (Terintegrasi dengan Manajemen Bonus) */}
+              {data.bonusItems.length > 0 ? (
+                data.bonusItems.map((bItem, idx) => (
+                  <tr key={bItem.id} className="bg-amber-50/40">
+                    <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                      {idx === 0 ? 'Tambahan Lainnya' : '↳ Tambahan Lainnya'}
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                      {formatAccountingRupiah(bItem.amount)}
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-slate-800">
+                      <span className="font-semibold">× {bItem.qty}</span>{' '}
+                      <span className="text-slate-600">({bItem.reason_note})</span>
+                    </td>
+                    <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-emerald-800">
+                      {formatAccountingRupiah(bItem.amount)}
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                    Tambahan Lainnya
+                  </td>
+                  <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                    Rp -
+                  </td>
+                  <td className="py-1.5 px-3 border border-slate-300 text-slate-500">
+                    × 0 (-)
+                  </td>
+                  <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-slate-900">
+                    Rp -
+                  </td>
+                </tr>
+              )}
+
+              <tr>
+                <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                  Komisi
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                  {formatAccountingRupiah(
+                    data.liveOmsetAmount > 0 ? data.liveOmsetAmount : data.salesCommissionAmount
+                  )}
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                  {data.liveCommissionFormulaLabel}
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-slate-900">
+                  {formatAccountingRupiah(data.salesCommissionAmount)}
+                </td>
+              </tr>
+
+              {/* Tunjangan Hari Raya (THR) — HANYA MUNCUL JIKA CEKLIS ADMIN (show_in_payslip === true) */}
+              {Boolean(data.thrShowInPayslip && data.thrAmount > 0) && (
+                <tr className="bg-emerald-50/70">
+                  <td className="py-1.5 px-3 border border-slate-300 font-bold text-emerald-950">
+                    <div>Tunjangan Hari Raya (THR)</div>
+                    <div className="text-[10px] font-medium text-emerald-700">
+                      {data.thrHolidayName} • Masa Kerja: {data.thrTenureLabel}
+                    </div>
+                  </td>
+                  <td className="py-1.5 px-3 border border-slate-300 text-right font-mono text-slate-800">
+                    {formatAccountingRupiah(data.thrBasisAmount)}
+                  </td>
+                  <td className="py-1.5 px-3 border border-slate-300 text-slate-800">
+                    <div className="font-semibold text-emerald-900">{data.thrProportionFormula}</div>
+                    <div className="text-[10px] text-slate-600">
+                      Status: {data.thrPaymentStatus === 'Sudah Dibayar' ? 'Sudah Dibayar (Cair)' : 'Terjadwal Pencairan'}
+                    </div>
+                  </td>
+                  <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-bold text-emerald-800">
+                    {formatAccountingRupiah(data.thrAmount)}
+                  </td>
+                </tr>
+              )}
+
+              <tr className="bg-teal-100/80 font-extrabold text-slate-950">
+                <td colSpan={3} className="py-2 px-3 border border-slate-300 text-right uppercase">
+                  Subtotal Gaji Tidak Tetap
+                </td>
+                <td className="py-2 px-3 border border-slate-300 text-right font-mono text-teal-900">
+                  {formatAccountingRupiah(data.subtotalGajiTidakTetap)}
+                </td>
+              </tr>
+
+              {/* ============================================================== */}
+              {/* BAGIAN 3 — PENGURANGAN                                         */}
+              {/* ============================================================== */}
+              <tr className="bg-rose-50/90 font-extrabold text-rose-950">
+                <td colSpan={4} className="py-1.5 px-3 border border-slate-300 uppercase tracking-wider">
+                  3. PENGURANGAN
+                </td>
+              </tr>
+              <tr>
+                <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                  Tanpa Keterangan
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                  {formatAccountingRupiah(data.alphaDays > 0 ? data.alphaRate : 0)}
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                  × {data.alphaDays} Hari
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
+                  {formatAccountingRupiah(data.alphaDeductionTotal)}
+                </td>
+              </tr>
+              <tr>
+                <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                  Izin (Jam)
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                  {formatAccountingRupiah(data.izinJamMinutes > 0 ? data.izinJamRate : 0)}
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                  × {data.izinJamMinutes} Menit
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
+                  {formatAccountingRupiah(data.izinJamDeduction)}
+                </td>
+              </tr>
+              <tr>
+                <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                  Izin (Hari)
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                  {formatAccountingRupiah(
+                    data.izinHariDeduction > 0 || data.izinHariDays > 0 ? data.izinHariRate : 0
+                  )}
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                  × {data.izinHariDays} Hari
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
+                  {formatAccountingRupiah(data.izinHariDeduction)}
+                </td>
+              </tr>
+              <tr>
+                <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                  Sakit
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                  {formatAccountingRupiah(data.sakitDeduction > 0 ? data.sakitRate : 0)}
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                  × {data.sakitDays} Hari
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
+                  {formatAccountingRupiah(data.sakitDeduction)}
+                </td>
+              </tr>
+              <tr>
+                <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                  Keterlambatan
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                  {formatAccountingRupiah(data.totalLateMinutes > 0 ? data.lateRatePerMinute : 0)}
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                  × {data.totalLateMinutes} Menit
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
+                  {formatAccountingRupiah(data.lateDeductionTotal)}
+                </td>
+              </tr>
+              <tr>
+                <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                  Kesalahan
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                  {formatAccountingRupiah(data.kesalahanQty > 0 ? data.kesalahanRate : 0)}
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                  × {data.kesalahanQty} Kesalahan / Bulan
+                  {Boolean(data.catatanKesalahan) && (
+                    <span className="text-slate-600 italic"> ({data.catatanKesalahan})</span>
+                  )}
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
+                  {formatAccountingRupiah(data.kesalahanTotal)}
+                </td>
+              </tr>
+
+              {/* Blok Rincian Kasbon */}
+              <tr className="bg-slate-50/80">
+                <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-700">
+                  Kasbon
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono text-slate-700">
+                  {formatAccountingRupiah(data.sisaKasbonBulanLalu)}
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-slate-600 italic">
+                  Sisa Kasbon bulan lalu
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono text-slate-400">
                   Rp -
                 </td>
               </tr>
-            )}
-
-            <tr>
-              <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
-                Komisi
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
-                {formatAccountingRupiah(data.liveOmsetAmount)}
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
-                × {data.liveCommissionPct}%
-                {Boolean(data.liveCommissionPcsNote) ? ` (${data.liveCommissionPcsNote})` : ''}
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-slate-900">
-                {formatAccountingRupiah(data.salesCommissionAmount)}
-              </td>
-            </tr>
-
-            {/* Tunjangan Hari Raya (THR) — HANYA MUNCUL JIKA CEKLIS ADMIN (show_in_payslip === true) */}
-            {Boolean(data.thrShowInPayslip && data.thrAmount > 0) && (
-              <tr className="bg-emerald-50/70">
-                <td className="py-1.5 px-3 border border-slate-300 font-bold text-emerald-950">
-                  <div>Tunjangan Hari Raya (THR)</div>
-                  <div className="text-[10px] font-medium text-emerald-700">
-                    {data.thrHolidayName} • Masa Kerja: {data.thrTenureLabel}
-                  </div>
+              <tr className="bg-amber-50/40">
+                <td className="py-1.5 px-3 border border-slate-300 font-semibold text-slate-800">
+                  Pembayaran Kasbon
                 </td>
-                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono text-slate-800">
-                  {formatAccountingRupiah(data.thrBasisAmount)}
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                  {formatAccountingRupiah(data.pembayaranKasbonBulanIni)}
                 </td>
-                <td className="py-1.5 px-3 border border-slate-300 text-slate-800">
-                  <div className="font-semibold text-emerald-900">{data.thrProportionFormula}</div>
-                  <div className="text-[10px] text-slate-600">
-                    Status: {data.thrPaymentStatus === 'Sudah Dibayar' ? 'Sudah Dibayar (Cair)' : 'Terjadwal Pencairan'}
-                  </div>
+                <td className="py-1.5 px-3 border border-slate-300 text-slate-700 font-medium">
+                  Cicilan bulan ini
                 </td>
-                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-bold text-emerald-800">
-                  {formatAccountingRupiah(data.thrAmount)}
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
+                  {formatAccountingRupiah(data.pembayaranKasbonBulanIni)}
                 </td>
               </tr>
-            )}
+              <tr className="bg-slate-50/80">
+                <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-700">
+                  Sisa Kasbon
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono text-slate-700">
+                  {formatAccountingRupiah(data.sisaKasbonBulanDepan)}
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-slate-600 italic">
+                  Sisa Kasbon bulan depan
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono text-slate-400">
+                  Rp -
+                </td>
+              </tr>
 
-            <tr className="bg-teal-100/80 font-extrabold text-slate-950">
-              <td colSpan={3} className="py-2 px-3 border border-slate-300 text-right uppercase">
-                Subtotal Gaji Tidak Tetap
-              </td>
-              <td className="py-2 px-3 border border-slate-300 text-right font-mono text-teal-900">
-                {formatAccountingRupiah(data.subtotalGajiTidakTetap)}
-              </td>
-            </tr>
-
-            {/* ============================================================== */}
-            {/* BAGIAN 3 — PENGURANGAN                                         */}
-            {/* ============================================================== */}
-            <tr className="bg-rose-50/90 font-extrabold text-rose-950">
-              <td colSpan={4} className="py-1.5 px-3 border border-slate-300 uppercase tracking-wider">
-                3. PENGURANGAN
-              </td>
-            </tr>
-            <tr>
-              <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
-                Tanpa Keterangan
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
-                {formatAccountingRupiah(data.alphaDays > 0 ? data.alphaRate : 0)}
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
-                × {data.alphaDays} Hari
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
-                {formatAccountingRupiah(data.alphaDeductionTotal)}
-              </td>
-            </tr>
-            <tr>
-              <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
-                Izin (Jam)
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
-                {formatAccountingRupiah(data.izinJamMinutes > 0 ? data.izinJamRate : 0)}
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
-                × {data.izinJamMinutes} Menit
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
-                {formatAccountingRupiah(data.izinJamDeduction)}
-              </td>
-            </tr>
-            <tr>
-              <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
-                Izin (Hari)
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
-                {formatAccountingRupiah(
-                  data.izinHariDeduction > 0 || data.izinHariDays > 0 ? data.izinHariRate : 0
-                )}
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
-                × {data.izinHariDays} Hari
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
-                {formatAccountingRupiah(data.izinHariDeduction)}
-              </td>
-            </tr>
-            <tr>
-              <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
-                Sakit
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
-                {formatAccountingRupiah(data.sakitDeduction > 0 ? data.sakitRate : 0)}
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
-                × {data.sakitDays} Hari
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
-                {formatAccountingRupiah(data.sakitDeduction)}
-              </td>
-            </tr>
-            <tr>
-              <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
-                Keterlambatan
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
-                {formatAccountingRupiah(data.totalLateMinutes > 0 ? data.lateRatePerMinute : 0)}
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
-                × {data.totalLateMinutes} Menit
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
-                {formatAccountingRupiah(data.lateDeductionTotal)}
-              </td>
-            </tr>
-            <tr>
-              <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
-                Kesalahan
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
-                {formatAccountingRupiah(data.kesalahanQty > 0 ? data.kesalahanRate : 0)}
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
-                × {data.kesalahanQty} Kesalahan / Bulan
-                {Boolean(data.catatanKesalahan) && (
-                  <span className="text-slate-600 italic"> ({data.catatanKesalahan})</span>
-                )}
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
-                {formatAccountingRupiah(data.kesalahanTotal)}
-              </td>
-            </tr>
-
-            {/* Blok Rincian Kasbon */}
-            <tr className="bg-slate-50/80">
-              <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-700">
-                Kasbon
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono text-slate-700">
-                {formatAccountingRupiah(data.sisaKasbonBulanLalu)}
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-slate-600 italic">
-                Sisa Kasbon bulan lalu
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono text-slate-400">
-                Rp -
-              </td>
-            </tr>
-            <tr className="bg-amber-50/40">
-              <td className="py-1.5 px-3 border border-slate-300 font-semibold text-slate-800">
-                Pembayaran Kasbon
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
-                {formatAccountingRupiah(data.pembayaranKasbonBulanIni)}
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-slate-700 font-medium">
-                Cicilan bulan ini
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
-                {formatAccountingRupiah(data.pembayaranKasbonBulanIni)}
-              </td>
-            </tr>
-            <tr className="bg-slate-50/80">
-              <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-700">
-                Sisa Kasbon
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono text-slate-700">
-                {formatAccountingRupiah(data.sisaKasbonBulanDepan)}
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-slate-600 italic">
-                Sisa Kasbon bulan depan
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono text-slate-400">
-                Rp -
-              </td>
-            </tr>
-
-            {/* Potongan Pajak & BPJS (Input Manual / Default Rp 0) */}
-            <tr>
-              <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
-                **BPJS Ketenagakerjaan
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
-                {formatAccountingRupiah(data.bpjsTkEmployeeTotal)}
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
-                {data.bpjsTkEmployeeTotal > 0 ? 'Potongan Manual' : '-'}
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
-                {formatAccountingRupiah(data.bpjsTkEmployeeTotal)}
-              </td>
-            </tr>
-            <tr>
-              <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
-                **BPJS Kesehatan
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
-                {formatAccountingRupiah(data.bpjsKesEmployeeTotal)}
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
-                {data.bpjsKesEmployeeTotal > 0 ? 'Potongan Manual' : '-'}
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
-                {formatAccountingRupiah(data.bpjsKesEmployeeTotal)}
-              </td>
-            </tr>
-            <tr>
-              <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
-                **PPh 21
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
-                {formatAccountingRupiah(data.pph21Total)}
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
-                {data.pph21Total > 0 ? 'Potongan Manual' : '-'}
-              </td>
-              <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
-                {formatAccountingRupiah(data.pph21Total)}
-              </td>
-            </tr>
-            <tr className="bg-rose-100/80 font-extrabold text-slate-950">
-              <td colSpan={3} className="py-2 px-3 border border-slate-300 text-right uppercase">
-                Subtotal Pengurangan
-              </td>
-              <td className="py-2 px-3 border border-slate-300 text-right font-mono text-rose-800">
-                {formatAccountingRupiah(data.subtotalPengurangan)}
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+              {/* Potongan Pajak & BPJS (Input Manual / Default Rp 0) */}
+              <tr>
+                <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                  **BPJS Ketenagakerjaan
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                  {formatAccountingRupiah(data.bpjsTkEmployeeTotal)}
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                  {data.bpjsTkEmployeeTotal > 0 ? 'Potongan Manual' : '-'}
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
+                  {formatAccountingRupiah(data.bpjsTkEmployeeTotal)}
+                </td>
+              </tr>
+              <tr>
+                <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                  **BPJS Kesehatan
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                  {formatAccountingRupiah(data.bpjsKesEmployeeTotal)}
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                  {data.bpjsKesEmployeeTotal > 0 ? 'Potongan Manual' : '-'}
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
+                  {formatAccountingRupiah(data.bpjsKesEmployeeTotal)}
+                </td>
+              </tr>
+              <tr>
+                <td className="py-1.5 px-3 border border-slate-300 font-medium text-slate-800">
+                  **PPh 21
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono">
+                  {formatAccountingRupiah(data.pph21Total)}
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-slate-700">
+                  {data.pph21Total > 0 ? 'Potongan Manual' : '-'}
+                </td>
+                <td className="py-1.5 px-3 border border-slate-300 text-right font-mono font-semibold text-rose-700">
+                  {formatAccountingRupiah(data.pph21Total)}
+                </td>
+              </tr>
+              <tr className="bg-rose-100/80 font-extrabold text-slate-950">
+                <td colSpan={3} className="py-2 px-3 border border-slate-300 text-right uppercase">
+                  Subtotal Pengurangan
+                </td>
+                <td className="py-2 px-3 border border-slate-300 text-right font-mono text-rose-800">
+                  {formatAccountingRupiah(data.subtotalPengurangan)}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {/* CATATAN KHUSUS PROTEKSI TAKE HOME PAY NON-NEGATIF (JIKA TOTAL POTONGAN > TOTAL PENGHASILAN BRUTO) */}
       {data.hasUncoveredDeductionDeficit && (
@@ -1434,11 +2177,17 @@ export const OfficialPayslipDocument: React.FC<OfficialPayslipDocumentProps> = (
       )}
 
       {/* 4. RINGKASAN JUMLAH BERSIH & TERBILANG */}
-      <div className="mt-4 p-4 bg-emerald-50 border-2 border-slate-900 rounded-lg print:bg-white">
+      <div
+        className={`mt-4 p-4 border-2 border-slate-900 rounded-lg print:bg-white ${
+          isPartTime ? 'bg-orange-50/80' : 'bg-emerald-50'
+        }`}
+      >
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div>
             <span className="text-sm sm:text-base font-black tracking-wider uppercase text-slate-950">
-              JUMLAH BERSIH (TAKE HOME PAY) :
+              {isPartTime
+                ? 'JUMLAH BERSIH MINGGUAN (TAKE HOME PAY) :'
+                : 'JUMLAH BERSIH (TAKE HOME PAY) :'}
             </span>
             {data.hasUncoveredDeductionDeficit && (
               <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
@@ -1446,7 +2195,11 @@ export const OfficialPayslipDocument: React.FC<OfficialPayslipDocumentProps> = (
               </span>
             )}
           </div>
-          <span className="text-lg sm:text-2xl font-black font-mono text-emerald-800 print:text-black">
+          <span
+            className={`text-lg sm:text-2xl font-black font-mono print:text-black ${
+              isPartTime ? 'text-orange-900' : 'text-emerald-800'
+            }`}
+          >
             {formatRupiah(data.jumlahBersih)}
           </span>
         </div>
@@ -1465,7 +2218,11 @@ export const OfficialPayslipDocument: React.FC<OfficialPayslipDocumentProps> = (
         {/* Catatan Kaki di Kiri Bawah */}
         <div className="md:col-span-5 print:col-span-5 space-y-1 text-[11px] text-slate-600 italic self-start">
           <p>*Pembayaran akan dilakukan pada nomor rekening tujuan tercantum</p>
-          <p>**Akan dilakukan pemotongan sesuai dengan aturan pemerintah (akan datang)</p>
+          {isPartTime ? (
+            <p>*Pencairan upah Part-Time dilakukan setiap akhir siklus mingguan (Hari Minggu)</p>
+          ) : (
+            <p>**Akan dilakukan pemotongan sesuai dengan aturan pemerintah (akan datang)</p>
+          )}
         </div>
 
         {/* Blok Tanda Tangan di Kanan Bawah */}
@@ -1794,13 +2551,32 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
       <div className="relative w-full max-w-4xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh] print:max-h-none print:shadow-none print:border-none print:rounded-none">
         {/* Modal Action Bar (Hidden during print) */}
         <div className="flex flex-wrap items-center justify-between gap-2 px-6 py-4 bg-slate-50 border-b border-slate-200 print:hidden">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center font-bold text-sm">
+          <div className="flex items-center gap-2.5">
+            <div
+              className={`w-8 h-8 rounded-lg text-white flex items-center justify-center font-bold text-sm ${
+                computedData.isPartTime ? 'bg-orange-600' : 'bg-emerald-600'
+              }`}
+            >
               TGI
             </div>
             <div>
-              <h3 className="font-semibold text-slate-800 text-sm">Slip Gaji Karyawan (A4)</h3>
-              <p className="text-xs text-slate-500">{payroll.referenceNumber}</p>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="font-semibold text-slate-800 text-sm">
+                  {computedData.isPartTime
+                    ? 'Slip Gaji Part-Time (Mingguan) — A4'
+                    : 'Slip Gaji Karyawan (A4)'}
+                </h3>
+                {computedData.isPartTime && (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-orange-100 text-orange-900 border border-orange-300">
+                    SLIP GAJI PART-TIME (MINGGUAN)
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-slate-500">
+                {computedData.isPartTime
+                  ? `${computedData.weeklyPeriodLabel} • ${payroll.referenceNumber}`
+                  : payroll.referenceNumber}
+              </p>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">

@@ -39,6 +39,9 @@ import {
   getEmployeeShift,
   calculateEmployeeAttendancePenalty,
   getEmployeePayrollDeductionForPeriod,
+  getPayrollSignatoriesConfig,
+  generateOfficialCompanyStampDataUrl,
+  generateStylizedSignatureDataUrl,
 } from '../utils/formatters';
 import {
   PartTimeLogs,
@@ -741,6 +744,11 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
       showToast(
         `Clock-Out ${logsToFix.length} hari kerja untuk ${emp.fullName} berhasil dilengkapi sesuai target jam kerja (${empStd} jam/hari)!`
       );
+    } catch (err: any) {
+      showToast(
+        err?.message ||
+          `Gagal melengkapi Clock-Out untuk ${emp.fullName}. Periksa koneksi internet/Supabase.`
+      );
     } finally {
       setProcessingEmpId(null);
     }
@@ -815,6 +823,10 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
       showToast(
         `Berhasil menarik & mengoreksi durasi absensi Portal Karyawan Part-Time untuk siklus ${weekStart} s/d ${weekEnd}!`
       );
+    } catch (err: any) {
+      showToast(
+        err?.message || 'Gagal menarik data absensi mingguan dari Supabase. Menggunakan data lokal.'
+      );
     } finally {
       setIsPullingAttendance(false);
     }
@@ -872,6 +884,10 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
 
       showToast(
         `Status Paid ${row.employee.fullName} berhasil di-reset ke Unpaid & durasi jam kerja telah dihitung ulang dari jam masuk/keluar asli.`
+      );
+    } catch (err: any) {
+      showToast(
+        err?.message || `Gagal mereset status Paid untuk ${row.employee.fullName}.`
       );
     } finally {
       setProcessingEmpId(null);
@@ -942,6 +958,10 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
           row.unpaidGrossPay
         )} (${row.unpaidNormalHours}j normal + ${row.unpaidOvertimeHours}j lembur) telah ditandai Paid & masuk Laporan Pengeluaran Mingguan.`
       );
+    } catch (err: any) {
+      showToast(
+        err?.message || `Gagal menyimpan Sunday Payout untuk ${row.employee.fullName}.`
+      );
     } finally {
       setProcessingEmpId(null);
     }
@@ -1011,6 +1031,10 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
       }
       showToast(
         `Sunday Payout Massal selesai! ${unpaidRows.length} karyawan Part-Time telah ditandai Paid dan tercatat ke Laporan Pengeluaran Mingguan.`
+      );
+    } catch (err: any) {
+      showToast(
+        err?.message || 'Gagal memproses Sunday Payout Massal. Periksa koneksi jaringan.'
       );
     } finally {
       setIsBulkPaying(false);
@@ -1441,6 +1465,11 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
                             ? ` (Belum cair: ${row.unpaidHours}j)`
                             : ''}
                         </span>
+                        {row.missingClockOutLogs.length > 0 && (
+                          <span className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-300 text-[10px] font-extrabold">
+                            ⚠️ {row.missingClockOutLogs.length} Hari Belum Clock-Out
+                          </span>
+                        )}
                       </td>
 
                       <td className="py-3.5 px-4 text-right font-mono text-[11px]">
@@ -1775,296 +1804,396 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
       )}
 
       {/* MODAL SLIP GAJI MINGGUAN PART-TIME (SUNDAY PAYOUT SLIP) */}
-      {Boolean(viewingSlipRow) && viewingSlipRow && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-slate-200 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between pb-4 border-b border-slate-200">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2 rounded-xl bg-orange-600 text-white">
-                  <Building2 className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-base font-extrabold text-slate-900">
-                    SLIP GAJI MINGGUAN PART-TIME (SUNDAY PAYOUT)
-                  </h3>
-                  <p className="text-xs text-slate-500">
-                    Tas Grosir Import • Siklus Kerja 6 Hari ({weekStart} s/d {weekEnd})
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setViewingSlipRow(null)}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+      {Boolean(viewingSlipRow) && viewingSlipRow && (() => {
+        const ptSignatories = getPayrollSignatoriesConfig();
+        const ptAccountingName =
+          ptSignatories.preparedBy?.name && ptSignatories.preparedBy.name.trim()
+            ? ptSignatories.preparedBy.name.trim()
+            : 'Siti Rahma Ramadany, S.KM';
+        const ptStampUrl =
+          ptSignatories.preparedBy?.stampDataUrl ||
+          ptSignatories.companyStampDataUrl ||
+          generateOfficialCompanyStampDataUrl('PT LUPYTA MAJU PERKASA');
+        const ptSignatureUrl =
+          ptSignatories.preparedBy?.signatureDataUrl ||
+          generateStylizedSignatureDataUrl(ptAccountingName, '#0f172a');
+        const ptCity = ptSignatories.city?.trim() || 'Tangerang';
 
-            <div className="py-4 space-y-4 text-xs">
-              <div className="grid grid-cols-2 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+        return (
+          <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 print:p-0 print:bg-white">
+            <div className="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-slate-200 max-h-[90vh] overflow-y-auto print:max-h-none print:shadow-none print:border-slate-400 print:rounded-none">
+              <div className="flex items-center justify-between pb-4 border-b border-slate-200">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-xl bg-orange-600 text-white print:hidden">
+                    <Building2 className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="inline-flex items-center px-3 py-0.5 rounded-full bg-orange-600 text-white print:bg-orange-100 print:text-orange-950 print:border print:border-orange-600 text-[10px] font-black tracking-wider uppercase mb-1">
+                      SLIP GAJI PART-TIME (MINGGUAN)
+                    </div>
+                    <h3 className="text-sm sm:text-base font-extrabold text-slate-900">
+                      Periode Mingguan: Senin, {formatIndoDate(weekStart)} – Sabtu, {formatIndoDate(weekEnd)}
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      Tas Grosir Import • Siklus Kerja 6 Hari Operasional (Cair Minggu, {formatIndoDate(sundayPayoutDate)})
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setViewingSlipRow(null)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 cursor-pointer print:hidden"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="py-4 space-y-4 text-xs">
+                <div className="grid grid-cols-2 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+                  <div>
+                    <span className="text-[10px] text-slate-400 uppercase font-bold block">
+                      Nama Karyawan Part-Time
+                    </span>
+                    <span className="font-bold text-slate-900 text-sm">
+                      {viewingSlipRow.employee.fullName}
+                    </span>
+                    <span className="block text-[11px] text-slate-500">
+                      {viewingSlipRow.employee.nik} •{' '}
+                      {formatRoleAndDepartment(
+                        viewingSlipRow.employee.role,
+                        viewingSlipRow.employee.department,
+                        'paren'
+                      )}
+                    </span>
+                    <span className="block text-[10px] text-orange-800 font-semibold mt-0.5">
+                      Status: Part-Time (Mingguan) • Normal: {formatRupiah(viewingSlipRow.hourlyRate)}/jam
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-400 uppercase font-bold block">
+                      Jadwal Pencairan Minggu
+                    </span>
+                    <span className="font-bold text-orange-700 text-sm">
+                      {formatIndoDate(sundayPayoutDate)}
+                    </span>
+                    <span className="block text-[11px] text-slate-500">
+                      Status: {viewingSlipRow.isFullyPaid ? 'LUNAS (PAID)' : 'BELUM CAIR (UNPAID)'}
+                    </span>
+                    <span className="block text-[10px] text-slate-500 mt-0.5">
+                      Total Kerja: {viewingSlipRow.normalHoursWorked} Jam ({viewingSlipRow.totalDaysWorked} Hari Kerja)
+                    </span>
+                  </div>
+                </div>
+
+                {/* Tabel Rincian Harian */}
                 <div>
-                  <span className="text-[10px] text-slate-400 uppercase font-bold block">
-                    Nama Karyawan Part-Time
-                  </span>
-                  <span className="font-bold text-slate-900 text-sm">
-                    {viewingSlipRow.employee.fullName}
-                  </span>
-                  <span className="block text-[11px] text-slate-500">
-                    {viewingSlipRow.employee.nik} •{' '}
-                    {formatRoleAndDepartment(
-                      viewingSlipRow.employee.role,
-                      viewingSlipRow.employee.department,
-                      'paren'
+                  <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+                    <h4 className="font-bold text-slate-800">
+                      Rincian Jam Masuk &amp; Jam Kerja Per Hari (Senin, {formatIndoDate(weekStart)} – Sabtu, {formatIndoDate(weekEnd)}):
+                    </h4>
+                    {viewingSlipRow.missingClockOutLogs.length > 0 && (
+                      <span className="px-2.5 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-300 text-[10px] font-extrabold">
+                        ⚠️ {viewingSlipRow.missingClockOutLogs.length} Hari Belum Clock-Out
+                      </span>
                     )}
-                  </span>
-                  <span className="block text-[10px] text-slate-500 mt-0.5">
-                    Normal: {formatRupiah(viewingSlipRow.hourlyRate)}/jam • Lembur:{' '}
-                    {formatRupiah(viewingSlipRow.overtimeRate)}/jam
-                  </span>
-                </div>
-                <div>
-                  <span className="text-[10px] text-slate-400 uppercase font-bold block">
-                    Jadwal Pencairan Minggu
-                  </span>
-                  <span className="font-bold text-orange-700 text-sm">
-                    {formatIndoDate(sundayPayoutDate)}
-                  </span>
-                  <span className="block text-[11px] text-slate-500">
-                    Status: {viewingSlipRow.isFullyPaid ? 'LUNAS (PAID)' : 'BELUM CAIR (UNPAID)'}
-                  </span>
-                </div>
-              </div>
+                  </div>
+                  <div className="border border-slate-200 rounded-xl overflow-hidden">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-200 text-[10px] font-bold text-slate-600 uppercase">
+                          <th className="py-2 px-3">Tanggal &amp; Jam Masuk–Pulang</th>
+                          <th className="py-2 px-3 text-center">Jam Kerja</th>
+                          <th className="py-2 px-3 text-center">Jam Lembur</th>
+                          <th className="py-2 px-3 text-right">Subtotal Harian</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {viewingSlipRow.weekLogs.map((l) => {
+                          const cIn = String(l.clockIn || l.clock_in || '').trim();
+                          const cOut = String(l.clockOut || l.clock_out || '').trim();
+                          const isMissingOut = Boolean(
+                            cIn &&
+                              cIn !== '-' &&
+                              (!cOut ||
+                                cOut === '-' ||
+                                cOut.toLowerCase().includes('belum') ||
+                                cIn === cOut)
+                          );
+                          const totalH = Math.max(0, Number(l.hoursWorked ?? l.hours_worked) || 0);
+                          const normH =
+                            l.normalHours !== undefined || l.normal_hours !== undefined
+                              ? Math.min(
+                                  STANDARD_WORK_HOURS_PER_DAY,
+                                  Math.max(0, Number(l.normalHours ?? l.normal_hours) || 0)
+                                )
+                              : Math.min(STANDARD_WORK_HOURS_PER_DAY, totalH);
+                          const otH =
+                            l.overtimeHours !== undefined || l.overtime_hours !== undefined
+                              ? Math.max(0, Number(l.overtimeHours ?? l.overtime_hours) || 0)
+                              : 0;
+                          const rowHrRate = Math.max(
+                            0,
+                            Number(l.hourlyRate ?? l.hourlyRateSnapshot ?? l.hourly_rate) ||
+                              viewingSlipRow.hourlyRate
+                          );
+                          const rowOtRate = Math.max(
+                            0,
+                            Number(l.overtimeRate ?? l.overtime_rate) || viewingSlipRow.overtimeRate
+                          );
+                          const rowWage =
+                            Math.round(normH * rowHrRate) + Math.round(otH * rowOtRate);
 
-              {/* Tabel Rincian Harian */}
-              <div>
-                <h4 className="font-bold text-slate-800 mb-2">
-                  Rincian Jam Kerja Harian (Siklus 6 Hari Operasional):
-                </h4>
-                <div className="border border-slate-200 rounded-xl overflow-hidden">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead>
-                      <tr className="bg-slate-50 border-b border-slate-200 text-[10px] font-bold text-slate-600 uppercase">
-                        <th className="py-2 px-3">Tanggal &amp; Jam</th>
-                        <th className="py-2 px-3 text-center">Jam Normal</th>
-                        <th className="py-2 px-3 text-center">Jam Lembur</th>
-                        <th className="py-2 px-3 text-right">Subtotal Harian</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {viewingSlipRow.weekLogs.map((l) => {
-                        const totalH = Math.max(0, Number(l.hoursWorked ?? l.hours_worked) || 0);
-                        const normH =
-                          l.normalHours !== undefined || l.normal_hours !== undefined
-                            ? Math.min(
-                                STANDARD_WORK_HOURS_PER_DAY,
-                                Math.max(0, Number(l.normalHours ?? l.normal_hours) || 0)
-                              )
-                            : Math.min(STANDARD_WORK_HOURS_PER_DAY, totalH);
-                        const otH =
-                          l.overtimeHours !== undefined || l.overtime_hours !== undefined
-                            ? Math.max(0, Number(l.overtimeHours ?? l.overtime_hours) || 0)
-                            : 0;
-                        const rowHrRate =
-                          Number(l.hourlyRate ?? l.hourlyRateSnapshot ?? l.hourly_rate) ||
-                          viewingSlipRow.hourlyRate;
-                        const rowOtRate =
-                          Number(l.overtimeRate ?? l.overtime_rate) || viewingSlipRow.overtimeRate;
-                        const rowWage =
-                          Math.round(normH * rowHrRate) + Math.round(otH * rowOtRate);
-
-                        return (
-                          <tr key={l.id}>
-                            <td className="py-2 px-3 font-mono">
-                              {l.date}
-                              {Boolean(l.clockIn || l.clock_in) && (
-                                <span className="block text-[10px] text-slate-400">
-                                  {l.clockIn || l.clock_in} – {l.clockOut || l.clock_out || '-'} WIB
-                                </span>
-                              )}
-                            </td>
-                            <td className="py-2 px-3 text-center font-bold text-emerald-800">
-                              {normH} Jam
-                            </td>
-                            <td className="py-2 px-3 text-center font-bold text-indigo-800">
-                              {otH} Jam
-                            </td>
-                            <td className="py-2 px-3 text-right font-mono font-bold">
-                              {formatRupiah(rowWage)}
+                          return (
+                            <tr
+                              key={l.id}
+                              className={isMissingOut ? 'bg-rose-50/50 print:bg-white' : ''}
+                            >
+                              <td className="py-2 px-3 font-mono">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span>{formatIndoDate(l.date)}</span>
+                                  {isMissingOut && (
+                                    <span className="px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 border border-rose-300 text-[9px] font-bold">
+                                      ⚠️ Belum Clock-Out
+                                    </span>
+                                  )}
+                                </div>
+                                {Boolean(cIn) && (
+                                  <span className="block text-[10px] text-slate-500">
+                                    {cIn} –{' '}
+                                    {isMissingOut ? (
+                                      <strong className="text-rose-700">Belum Clock-Out</strong>
+                                    ) : (
+                                      `${cOut} WIB`
+                                    )}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-2 px-3 text-center font-bold text-emerald-800">
+                                {normH} Jam
+                              </td>
+                              <td className="py-2 px-3 text-center font-bold text-indigo-800">
+                                {otH} Jam
+                              </td>
+                              <td className="py-2 px-3 text-right font-mono font-bold">
+                                {formatRupiah(rowWage)}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                        {viewingSlipRow.weekLogs.length === 0 && (
+                          <tr>
+                            <td colSpan={4} className="py-4 text-center text-slate-400">
+                              Belum ada log jam kerja pada siklus minggu ini.
                             </td>
                           </tr>
-                        );
-                      })}
-                      {viewingSlipRow.weekLogs.length === 0 && (
-                        <tr>
-                          <td colSpan={4} className="py-4 text-center text-slate-400">
-                            Belum ada log jam kerja pada siklus minggu ini.
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
-              </div>
 
-              {/* Total Gaji Kotor Mingguan */}
-              <div className="p-4 rounded-xl bg-gradient-to-r from-orange-50 to-amber-50 border-2 border-orange-300 space-y-2">
-                <div className="flex items-center justify-between text-xs text-slate-700">
-                  <span>
-                    Upah Jam Normal ({viewingSlipRow.normalHoursWorked} Jam ×{' '}
-                    {formatRupiah(viewingSlipRow.hourlyRate)}/jam)
-                  </span>
-                  <span className="font-mono font-bold">
-                    {formatRupiah(viewingSlipRow.normalPay)}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between text-xs text-indigo-800">
-                  <span>
-                    Upah Jam Lembur ({viewingSlipRow.overtimeHoursWorked} Jam ×{' '}
-                    {formatRupiah(viewingSlipRow.overtimeRate)}/jam)
-                  </span>
-                  <span className="font-mono font-bold">
-                    {formatRupiah(viewingSlipRow.overtimePay)}
-                  </span>
-                </div>
-                {viewingSlipRow.bonusPay > 0 && (
-                  <div className="flex items-start justify-between text-xs text-emerald-800 pt-1 border-t border-orange-200/60">
-                    <div>
-                      <span className="font-bold block">
-                        Bonus Tambahan / Apresiasi
+                {/* Total Gaji Kotor Mingguan */}
+                <div className="p-4 rounded-xl bg-gradient-to-r from-orange-50 to-amber-50 border-2 border-orange-300 space-y-2">
+                  <div className="flex items-center justify-between text-xs text-slate-800 font-semibold">
+                    <span>
+                      Upah Kerja ({viewingSlipRow.normalHoursWorked} Jam ×{' '}
+                      {formatRupiah(viewingSlipRow.hourlyRate)}/jam • {viewingSlipRow.totalDaysWorked} Hari Kerja)
+                    </span>
+                    <span className="font-mono font-bold">
+                      {formatRupiah(viewingSlipRow.normalPay)}
+                    </span>
+                  </div>
+                  {viewingSlipRow.overtimeHoursWorked > 0 && (
+                    <div className="flex items-center justify-between text-xs text-indigo-800">
+                      <span>
+                        Upah Jam Lembur ({viewingSlipRow.overtimeHoursWorked} Jam ×{' '}
+                        {formatRupiah(viewingSlipRow.overtimeRate)}/jam)
                       </span>
-                      {Boolean(viewingSlipRow.bonusNotes) && (
-                        <span className="text-[10px] text-emerald-700 block">
-                          Catatan: {viewingSlipRow.bonusNotes}
-                        </span>
-                      )}
-                    </div>
-                    <span className="font-mono font-bold text-emerald-700">
-                      +{formatRupiah(viewingSlipRow.bonusPay)}
-                    </span>
-                  </div>
-                )}
-                {viewingSlipRow.thrShowInPayslip && viewingSlipRow.thrPay > 0 && (
-                  <div className="flex items-start justify-between text-xs text-emerald-900 pt-1 border-t border-orange-200/60">
-                    <div>
-                      <span className="font-extrabold block">
-                        Tunjangan Hari Raya (THR)
+                      <span className="font-mono font-bold">
+                        {formatRupiah(viewingSlipRow.overtimePay)}
                       </span>
-                      {Boolean(viewingSlipRow.thrNotes) && (
-                        <span className="text-[10px] text-emerald-700 block">
-                          {viewingSlipRow.thrNotes}
+                    </div>
+                  )}
+                  {viewingSlipRow.bonusPay > 0 && (
+                    <div className="flex items-start justify-between text-xs text-emerald-800 pt-1 border-t border-orange-200/60">
+                      <div>
+                        <span className="font-bold block">
+                          Bonus Tambahan / Apresiasi
                         </span>
+                        {Boolean(viewingSlipRow.bonusNotes) && (
+                          <span className="text-[10px] text-emerald-700 block">
+                            Catatan: {viewingSlipRow.bonusNotes}
+                          </span>
+                        )}
+                      </div>
+                      <span className="font-mono font-bold text-emerald-700">
+                        +{formatRupiah(viewingSlipRow.bonusPay)}
+                      </span>
+                    </div>
+                  )}
+                  {viewingSlipRow.thrShowInPayslip && viewingSlipRow.thrPay > 0 && (
+                    <div className="flex items-start justify-between text-xs text-emerald-900 pt-1 border-t border-orange-200/60">
+                      <div>
+                        <span className="font-extrabold block">
+                          Tunjangan Hari Raya (THR)
+                        </span>
+                        {Boolean(viewingSlipRow.thrNotes) && (
+                          <span className="text-[10px] text-emerald-700 block">
+                            {viewingSlipRow.thrNotes}
+                          </span>
+                        )}
+                      </div>
+                      <span className="font-mono font-extrabold text-emerald-700">
+                        +{formatRupiah(viewingSlipRow.thrPay)}
+                      </span>
+                    </div>
+                  )}
+                  {viewingSlipRow.totalDeductions > 0 && (
+                    <div className="pt-2 border-t border-orange-200/80 space-y-1 text-xs">
+                      <div className="flex items-center justify-between text-slate-700 font-semibold">
+                        <span>Subtotal Penghasilan Bruto Mingguan</span>
+                        <span className="font-mono font-bold">{formatRupiah(viewingSlipRow.grossPay)}</span>
+                      </div>
+                      {viewingSlipRow.latePenaltyDeduction > 0 && (
+                        <div className="flex items-center justify-between text-rose-700">
+                          <span>
+                            Potongan Keterlambatan ({viewingSlipRow.lateMinutesTotal} menit — batas wajar shift)
+                          </span>
+                          <span className="font-mono font-bold">
+                            -{formatRupiah(viewingSlipRow.latePenaltyDeduction)}
+                          </span>
+                        </div>
+                      )}
+                      {viewingSlipRow.kasbonDeduction > 0 && (
+                        <div className="flex items-center justify-between text-rose-700">
+                          <span>Potongan Cicilan Kasbon</span>
+                          <span className="font-mono font-bold">
+                            -{formatRupiah(viewingSlipRow.kasbonDeduction)}
+                          </span>
+                        </div>
+                      )}
+                      {viewingSlipRow.otherDeduction > 0 && (
+                        <div className="flex items-center justify-between text-rose-700">
+                          <span>Potongan Absensi / Izin Lainnya</span>
+                          <span className="font-mono font-bold">
+                            -{formatRupiah(viewingSlipRow.otherDeduction)}
+                          </span>
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between text-rose-800 font-bold pt-1 border-t border-orange-200/50">
+                        <span>Total Potongan Periode Ini</span>
+                        <span className="font-mono">-{formatRupiah(viewingSlipRow.totalDeductions)}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {viewingSlipRow.uncoveredDeductionDeficit > 0 && (
+                    <div className="p-3 rounded-xl bg-amber-100/90 border-2 border-amber-400 text-amber-950 space-y-1.5">
+                      <p className="text-[11px] font-black uppercase tracking-wide text-amber-900">
+                        ⚠️ Catatan Rincian Potongan &amp; Proteksi Take Home Pay Non-Negatif
+                      </p>
+                      <p className="text-[11px] text-amber-800 leading-relaxed">
+                        Total potongan (<strong>{formatRupiah(viewingSlipRow.totalDeductions)}</strong>) melebihi
+                        Penghasilan Bruto Mingguan (<strong>{formatRupiah(viewingSlipRow.grossPay)}</strong>).
+                        Take Home Pay ditetapkan minimal <strong>Rp 0 (tidak minus)</strong>. Selisih potongan
+                        yang belum tertutup sebesar{' '}
+                        <strong className="text-rose-700 underline">
+                          {formatRupiah(viewingSlipRow.uncoveredDeductionDeficit)}
+                        </strong>{' '}
+                        dicatat sebagai sisa kewajiban periode berikutnya.
+                      </p>
+                    </div>
+                  )}
+
+                  <div className="pt-2 border-t border-orange-200 flex items-center justify-between">
+                    <div>
+                      <span className="text-xs font-extrabold text-orange-950 block">
+                        TOTAL TAKE HOME PAY BERSIH MINGGUAN (NON-NEGATIF)
+                      </span>
+                      <span className="text-[11px] text-orange-800">
+                        Upah Kerja ({viewingSlipRow.normalHoursWorked} Jam × {formatRupiah(viewingSlipRow.hourlyRate)})
+                        {viewingSlipRow.overtimeHoursWorked > 0 ? ' + Lembur' : ''}
+                        {viewingSlipRow.bonusPay > 0 ? ' + Bonus Apresiasi' : ''}
+                        {viewingSlipRow.thrShowInPayslip && viewingSlipRow.thrPay > 0 ? ' + THR' : ''}
+                        {viewingSlipRow.totalDeductions > 0 ? ' − Potongan' : ''}
+                      </span>
+                    </div>
+                    <span className="text-lg font-extrabold text-orange-900 font-mono">
+                      {formatRupiah(viewingSlipRow.netTakeHomePay)}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="text-[11px] text-slate-500">
+                  Rekening Transfer: <strong>{viewingSlipRow.employee.bankName}</strong> • No. Rek:{' '}
+                  <strong>{viewingSlipRow.employee.bankAccountNumber || '-'}</strong> a/n{' '}
+                  <strong>
+                    {viewingSlipRow.employee.bankAccountHolder || viewingSlipRow.employee.fullName}
+                  </strong>
+                </div>
+
+                {/* Area Tanda Tangan & Stempel Menumpuk di Atas Tanda Tangan (Prepared by Accounting) */}
+                <div className="pt-4 mt-2 border-t border-slate-300 grid grid-cols-2 gap-6 text-center text-xs break-inside-avoid">
+                  <div className="flex flex-col justify-between min-h-[125px]">
+                    <span className="font-semibold text-slate-800">Karyawan Part-Time,</span>
+                    <div className="h-20" />
+                    <div className="border-t border-slate-800 pt-1.5 mx-auto w-44 max-w-full">
+                      <p className="font-bold text-slate-950 truncate">
+                        {viewingSlipRow.employee.fullName}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex flex-col justify-between min-h-[125px]">
+                    <div>
+                      <div className="text-[11px] text-slate-600 mb-0.5">
+                        {ptCity}, {formatIndoDate(sundayPayoutDate)}
+                      </div>
+                      <span className="font-semibold text-slate-800">Prepared by Accounting,</span>
+                    </div>
+                    <div className="relative h-24 w-48 max-w-full mx-auto flex items-end justify-center my-0.5 select-none">
+                      {Boolean(ptSignatureUrl) && (
+                        <img
+                          src={ptSignatureUrl}
+                          alt={ptAccountingName}
+                          className="max-h-[70px] max-w-[160px] object-contain relative z-10 mb-1 pointer-events-none select-none"
+                        />
+                      )}
+                      {Boolean(ptStampUrl) && (
+                        <img
+                          src={ptStampUrl}
+                          alt="Stempel Resmi Perusahaan"
+                          className="payslip-stamp-overlay absolute left-1/2 -translate-x-[68%] -bottom-1.5 w-[104px] h-[104px] print:w-[104px] print:h-[104px] object-contain opacity-[0.92] contrast-125 saturate-[1.2] mix-blend-multiply -rotate-[8deg] pointer-events-none select-none z-20"
+                        />
                       )}
                     </div>
-                    <span className="font-mono font-extrabold text-emerald-700">
-                      +{formatRupiah(viewingSlipRow.thrPay)}
-                    </span>
-                  </div>
-                )}
-                {viewingSlipRow.totalDeductions > 0 && (
-                  <div className="pt-2 border-t border-orange-200/80 space-y-1 text-xs">
-                    <div className="flex items-center justify-between text-slate-700 font-semibold">
-                      <span>Subtotal Penghasilan Bruto Mingguan</span>
-                      <span className="font-mono font-bold">{formatRupiah(viewingSlipRow.grossPay)}</span>
-                    </div>
-                    {viewingSlipRow.latePenaltyDeduction > 0 && (
-                      <div className="flex items-center justify-between text-rose-700">
-                        <span>
-                          Potongan Keterlambatan ({viewingSlipRow.lateMinutesTotal} menit — batas wajar shift)
-                        </span>
-                        <span className="font-mono font-bold">
-                          -{formatRupiah(viewingSlipRow.latePenaltyDeduction)}
-                        </span>
-                      </div>
-                    )}
-                    {viewingSlipRow.kasbonDeduction > 0 && (
-                      <div className="flex items-center justify-between text-rose-700">
-                        <span>Potongan Cicilan Kasbon</span>
-                        <span className="font-mono font-bold">
-                          -{formatRupiah(viewingSlipRow.kasbonDeduction)}
-                        </span>
-                      </div>
-                    )}
-                    {viewingSlipRow.otherDeduction > 0 && (
-                      <div className="flex items-center justify-between text-rose-700">
-                        <span>Potongan Absensi / Izin Lainnya</span>
-                        <span className="font-mono font-bold">
-                          -{formatRupiah(viewingSlipRow.otherDeduction)}
-                        </span>
-                      </div>
-                    )}
-                    <div className="flex items-center justify-between text-rose-800 font-bold pt-1 border-t border-orange-200/50">
-                      <span>Total Potongan Periode Ini</span>
-                      <span className="font-mono">-{formatRupiah(viewingSlipRow.totalDeductions)}</span>
+                    <div className="border-t border-slate-800 pt-1.5 mx-auto w-48 max-w-full relative z-30">
+                      <p className="font-bold text-slate-950 truncate">{ptAccountingName}</p>
                     </div>
                   </div>
-                )}
-
-                {viewingSlipRow.uncoveredDeductionDeficit > 0 && (
-                  <div className="p-3 rounded-xl bg-amber-100/90 border-2 border-amber-400 text-amber-950 space-y-1.5">
-                    <p className="text-[11px] font-black uppercase tracking-wide text-amber-900">
-                      ⚠️ Catatan Rincian Potongan &amp; Proteksi Take Home Pay Non-Negatif
-                    </p>
-                    <p className="text-[11px] text-amber-800 leading-relaxed">
-                      Total potongan (<strong>{formatRupiah(viewingSlipRow.totalDeductions)}</strong>) melebihi
-                      Penghasilan Bruto Mingguan (<strong>{formatRupiah(viewingSlipRow.grossPay)}</strong>).
-                      Take Home Pay ditetapkan minimal <strong>Rp 0 (tidak minus)</strong>. Selisih potongan
-                      yang belum tertutup sebesar{' '}
-                      <strong className="text-rose-700 underline">
-                        {formatRupiah(viewingSlipRow.uncoveredDeductionDeficit)}
-                      </strong>{' '}
-                      dicatat sebagai sisa kewajiban periode berikutnya.
-                    </p>
-                  </div>
-                )}
-
-                <div className="pt-2 border-t border-orange-200 flex items-center justify-between">
-                  <div>
-                    <span className="text-xs font-extrabold text-orange-950 block">
-                      TOTAL TAKE HOME PAY BERSIH MINGGUAN (NON-NEGATIF)
-                    </span>
-                    <span className="text-[11px] text-orange-800">
-                      (Jam Normal × hourly_rate) + (Jam Lembur × overtime_rate)
-                      {viewingSlipRow.bonusPay > 0 ? ' + Bonus Apresiasi' : ''}
-                      {viewingSlipRow.thrShowInPayslip && viewingSlipRow.thrPay > 0 ? ' + THR' : ''}
-                      {viewingSlipRow.totalDeductions > 0 ? ' − Potongan' : ''}
-                    </span>
-                  </div>
-                  <span className="text-lg font-extrabold text-orange-900 font-mono">
-                    {formatRupiah(viewingSlipRow.netTakeHomePay)}
-                  </span>
                 </div>
               </div>
 
-              <div className="text-[11px] text-slate-500">
-                Rekening Transfer: <strong>{viewingSlipRow.employee.bankName}</strong> • No. Rek:{' '}
-                <strong>{viewingSlipRow.employee.bankAccountNumber || '-'}</strong> a/n{' '}
-                <strong>
-                  {viewingSlipRow.employee.bankAccountHolder || viewingSlipRow.employee.fullName}
-                </strong>
+              <div className="pt-4 border-t border-slate-200 flex items-center justify-end gap-2 print:hidden">
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="px-4 py-2 rounded-xl bg-orange-600 hover:bg-orange-700 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>Cetak / Unduh PDF Slip Mingguan (A4)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewingSlipRow(null)}
+                  className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
+                >
+                  Tutup
+                </button>
               </div>
-            </div>
-
-            <div className="pt-4 border-t border-slate-200 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => window.print()}
-                className="px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-              >
-                <Printer className="w-4 h-4" />
-                <span>Cetak Slip Mingguan</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewingSlipRow(null)}
-                className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
-              >
-                Tutup
-              </button>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 };

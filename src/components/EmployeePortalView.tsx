@@ -916,20 +916,25 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     e.preventDefault();
     setCashAdvanceError(null);
 
-    if (cashAdvanceAmount <= 0) {
+    const safeAmount = Math.max(0, Math.round(Number(cashAdvanceAmount) || 0));
+    const safeReason = sanitizeSafeText(cashAdvanceReason, 300);
+
+    if (safeAmount <= 0) {
       setCashAdvanceError('Nominal pengajuan kasbon harus lebih dari Rp 0.');
       return;
     }
-    if (cashAdvanceAmount > maxCashAdvancePlafon) {
+    if (safeAmount > maxCashAdvancePlafon) {
       setCashAdvanceError(
         `Nominal kasbon melebihi plafon maksimum gaji pokok Anda (${formatRupiah(maxCashAdvancePlafon)}).`
       );
       return;
     }
-    if (!cashAdvanceReason.trim()) {
+    if (!safeReason) {
       setCashAdvanceError('Mohon isi alasan atau keperluan pengajuan kasbon.');
       return;
     }
+
+    const safeTenor = Math.max(1, Number(cashAdvanceTenor) || 1) as CashAdvanceTenorMonths;
 
     if (onApplyCashAdvance) {
       onApplyCashAdvance({
@@ -940,17 +945,17 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
         position: currentEmployee.role,
         baseSalary: currentEmployee.baseSalary,
         maxAllowedAmount: maxCashAdvancePlafon,
-        amount: cashAdvanceAmount,
-        reason: cashAdvanceReason.trim(),
-        tenorMonths: cashAdvanceTenor,
-        monthlyInstallment: Math.round(cashAdvanceAmount / cashAdvanceTenor),
+        amount: safeAmount,
+        reason: safeReason,
+        tenorMonths: safeTenor,
+        monthlyInstallment: Math.round(safeAmount / safeTenor),
       });
     }
 
     setIsCashAdvanceModalOpen(false);
     setCashAdvanceReason('');
     setCashAdvanceSuccessMsg(
-      `Pengajuan kasbon sebesar ${formatRupiah(cashAdvanceAmount)} (Tenor ${cashAdvanceTenor} bulan) berhasil dikirim ke Panel Admin HR & Finance!`
+      `Pengajuan kasbon sebesar ${formatRupiah(safeAmount)} (Tenor ${safeTenor} bulan) berhasil dikirim ke Panel Admin HR & Finance!`
     );
     setTimeout(() => setCashAdvanceSuccessMsg(null), 5000);
   };
@@ -1257,10 +1262,11 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
   const [overtimeError, setOvertimeError] = useState<string | null>(null);
   const [reimbursementError, setReimbursementError] = useState<string | null>(null);
 
-  // Leave Submit Handler (Supports Evidence Photo Attachment)
+  // Leave Submit Handler (Supports Evidence Photo Attachment & XSS Sanitization)
   const handleSubmitLeave = (e: React.FormEvent) => {
     e.preventDefault();
     setLeaveError(null);
+    const safeReason = sanitizeSafeText(leaveForm.reason, 400);
     if (!leaveForm.startDate || !leaveForm.endDate) {
       setLeaveError('Mohon pilih tanggal mulai dan tanggal selesai cuti/izin.');
       return;
@@ -1269,7 +1275,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       setLeaveError('Tanggal selesai cuti/izin tidak boleh lebih awal dari tanggal mulai.');
       return;
     }
-    if (!leaveForm.reason.trim()) {
+    if (!safeReason) {
       setLeaveError('Mohon isi alasan atau keperluan cuti.');
       return;
     }
@@ -1290,12 +1296,12 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       type: leaveForm.type,
       startDate: leaveForm.startDate,
       endDate: leaveForm.endDate,
-      totalDays: calculatedLeaveDays,
-      reason: leaveForm.reason.trim(),
+      totalDays: Math.max(1, calculatedLeaveDays),
+      reason: safeReason,
       status: 'Menunggu Persetujuan',
       appliedAt: todayWib,
       attachmentUrl: leaveForm.attachmentUrl || undefined,
-      attachmentName: leaveForm.attachmentName || undefined,
+      attachmentName: sanitizeSafeText(leaveForm.attachmentName, 120) || undefined,
       attachmentUploadedAt: leaveForm.attachmentUrl ? nowTimestamp : undefined,
     };
 
@@ -1312,11 +1318,12 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     });
   };
 
-  // Overtime Submit Handler (Hitungan Per Menit)
+  // Overtime Submit Handler (Hitungan Per Menit & XSS Sanitization)
   const handleSubmitOvertime = (e: React.FormEvent) => {
     e.preventDefault();
     setOvertimeError(null);
     const rawMins = Math.round(Number(overtimeForm.minutes) || 0);
+    const safeTask = sanitizeSafeText(overtimeForm.taskDescription, 400);
     if (!overtimeForm.date) {
       setOvertimeError('Mohon pilih tanggal lembur.');
       return;
@@ -1325,7 +1332,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       setOvertimeError('Durasi lembur wajib antara 1 hingga 720 menit.');
       return;
     }
-    if (!overtimeForm.taskDescription.trim()) {
+    if (!safeTask) {
       setOvertimeError('Mohon isi uraian tugas operasional yang dikerjakan saat lembur.');
       return;
     }
@@ -1341,8 +1348,8 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       startTime: overtimeForm.startTime || undefined,
       endTime: overtimeForm.endTime || undefined,
       ratePerMinute: myOvertimeRatePerMinute,
-      taskDescription: overtimeForm.taskDescription.trim(),
-      calculatedPay: estimatedOvertimePay,
+      taskDescription: safeTask,
+      calculatedPay: Math.max(0, estimatedOvertimePay),
       status: 'Menunggu Persetujuan',
     };
 
@@ -1358,16 +1365,17 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     });
   };
 
-  // Reimbursement Submit Handler
+  // Reimbursement Submit Handler (XSS Sanitization & Numeric Bound Check)
   const handleSubmitReimbursement = (e: React.FormEvent) => {
     e.preventDefault();
     setReimbursementError(null);
-    const cleanAmount = Math.round(Number(reimbursementForm.amount) || 0);
+    const cleanAmount = Math.max(0, Math.round(Number(reimbursementForm.amount) || 0));
+    const safeDesc = sanitizeSafeText(reimbursementForm.description, 400);
     if (cleanAmount <= 0) {
       setReimbursementError('Nominal klaim reimbursement harus lebih dari Rp 0.');
       return;
     }
-    if (!reimbursementForm.description.trim()) {
+    if (!safeDesc) {
       setReimbursementError('Mohon isi keterangan pengeluaran reimbursement.');
       return;
     }
@@ -1383,9 +1391,10 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       date: todayWib,
       category: reimbursementForm.category,
       amount: cleanAmount,
-      description: reimbursementForm.description.trim(),
+      description: safeDesc,
       receiptNumber: `RCP-${Date.now().toString().slice(-6)}`,
-      receiptFileName: reimbursementForm.receiptFileName || 'Struk_Nota_Pengeluaran.jpg',
+      receiptFileName:
+        sanitizeSafeText(reimbursementForm.receiptFileName, 120) || 'Struk_Nota_Pengeluaran.jpg',
       receiptFileType: 'image',
       receiptPhotoUrl:
         reimbursementForm.receiptPhotoUrl ||
@@ -1616,18 +1625,32 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
           dailyWage: 0,
         };
       }
+      const cleanIn = String(item.checkIn || '').trim();
+      const cleanOut = String(item.checkOut || '').trim();
       const cappedRes = calculateCappedDailyWorkHours(
-        item.checkIn,
-        item.checkOut,
+        cleanIn,
+        cleanOut,
         item.workHours,
-        myStandardDailyHours
+        myStandardDailyHours,
+        0,
+        item.date
+      );
+      const isMissingOut = Boolean(
+        item.isMissingClockOut ||
+          cappedRes.isMissingClockOut ||
+          !cleanOut ||
+          cleanOut === '-' ||
+          cleanOut.toLowerCase().includes('belum') ||
+          (cleanIn && cleanIn !== '-' && cleanIn === cleanOut)
       );
       return {
         ...item,
+        checkIn: cleanIn || '-',
+        checkOut: isMissingOut ? 'Belum Clock-Out' : cleanOut || '-',
         workHours: cappedRes.cappedWorkHours,
         rawDurationHours: cappedRes.rawDurationHours,
         isCappedToMax: cappedRes.isCappedToMax,
-        isMissingClockOut: cappedRes.isMissingClockOut,
+        isMissingClockOut: isMissingOut,
         dailyWage: Math.round(cappedRes.cappedWorkHours * myHourlyRate),
       };
     });
@@ -2644,23 +2667,34 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
           {/* 3-Card Summary Row: Slip Gaji, Sisa Cuti, & Klaim Lembur Per Menit */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* Take Home Pay Summary */}
-            <div className="bg-gradient-to-br from-emerald-600 to-teal-700 rounded-2xl p-4 sm:p-5 text-white shadow-sm flex flex-col justify-between">
+            <div
+              className={`rounded-2xl p-4 sm:p-5 text-white shadow-sm flex flex-col justify-between ${
+                isPartTimeEmployee
+                  ? 'bg-gradient-to-br from-orange-600 to-amber-700'
+                  : 'bg-gradient-to-br from-emerald-600 to-teal-700'
+              }`}
+            >
               <div>
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-100">
-                    Take Home Pay (Gaji Bersih)
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-white/90">
+                    {isPartTimeEmployee
+                      ? 'Take Home Pay Mingguan'
+                      : 'Take Home Pay (Gaji Bersih)'}
                   </span>
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-white/20">
-                    {companyConfig.currentPayrollPeriod}
+                    {isPartTimeEmployee
+                      ? officialPayslipData.periodCutOffLabel
+                      : companyConfig.currentPayrollPeriod}
                   </span>
                 </div>
                 <div className="text-2xl font-extrabold mt-2 tabular-nums tracking-tight">
                   {formatCurrency(takeHomePay)}
                 </div>
-                <p className="text-[11px] text-emerald-50 font-semibold mt-1">
-                  {myTotalActualWorkHours} Jam Kerja Riil ({myPresentDaysCount} Hari) × {formatRupiah(myHourlyRate)}/jam
+                <p className="text-[11px] text-white/95 font-semibold mt-1">
+                  Upah Kerja: {myTotalActualWorkHours} Jam ({myPresentDaysCount} Hari Kerja) ×{' '}
+                  {formatRupiah(myHourlyRate)}/jam
                 </p>
-                <p className="text-[11px] text-emerald-100 mt-0.5">
+                <p className="text-[11px] text-white/80 mt-0.5">
                   Rekening: {currentEmployee.bankName} ({currentEmployee.bankAccountNumber})
                 </p>
               </div>
@@ -2668,15 +2702,19 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 <button
                   type="button"
                   onClick={() => setActivePortalTab('payroll')}
-                  className="flex-1 min-h-[38px] py-2 px-3 rounded-xl bg-white text-emerald-900 text-xs font-bold hover:bg-emerald-50 transition-colors cursor-pointer text-center"
+                  className={`flex-1 min-h-[38px] py-2 px-3 rounded-xl bg-white text-xs font-bold transition-colors cursor-pointer text-center ${
+                    isPartTimeEmployee
+                      ? 'text-orange-900 hover:bg-orange-50'
+                      : 'text-emerald-900 hover:bg-emerald-50'
+                  }`}
                 >
-                  Rincian Gaji
+                  {isPartTimeEmployee ? 'Slip Mingguan' : 'Rincian Gaji'}
                 </button>
                 {Boolean(effectivePayRecord) && (
                   <button
                     type="button"
                     onClick={() => onOpenPayslip(effectivePayRecord)}
-                    className="min-h-[38px] py-2 px-3 rounded-xl bg-emerald-900/50 hover:bg-emerald-900/70 text-white border border-white/25 text-xs font-bold transition-colors cursor-pointer flex items-center gap-1"
+                    className="min-h-[38px] py-2 px-3 rounded-xl bg-slate-950/35 hover:bg-slate-950/50 text-white border border-white/25 text-xs font-bold transition-colors cursor-pointer flex items-center gap-1"
                   >
                     <Download className="w-3.5 h-3.5" />
                     <span>PDF</span>
@@ -2685,35 +2723,68 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
               </div>
             </div>
 
-            {/* Leave Balance Summary */}
-            <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-xs flex flex-col justify-between">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                    Sisa Cuti Tahunan
-                  </span>
-                  <div className="text-2xl font-extrabold text-slate-900 mt-1 tabular-nums">
-                    {currentEmployee.remainingLeaveDays}{' '}
-                    <span className="text-xs font-normal text-slate-500">Hari Tersisa</span>
+            {/* Leave Balance Summary (Full-Time/Contract) OR Weekly Work Hours Summary (Part-Time) */}
+            {isPartTimeEmployee ? (
+              <div className="bg-white rounded-2xl p-4 sm:p-5 border border-orange-200 shadow-xs flex flex-col justify-between">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-orange-700">
+                      Jam &amp; Hari Kerja Mingguan
+                    </span>
+                    <div className="text-2xl font-extrabold text-slate-900 mt-1 tabular-nums">
+                      {myTotalActualWorkHours} Jam{' '}
+                      <span className="text-xs font-semibold text-orange-700">
+                        ({myPresentDaysCount} Hari Kerja)
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-1">
+                      {officialPayslipData.weeklyPeriodLabel}
+                    </p>
                   </div>
-                  <p className="text-xs text-slate-500 mt-1">
-                    {myLeaveRequests.filter((l) => l.status === 'Menunggu Persetujuan').length} pengajuan menunggu HR
-                  </p>
+                  <div className="p-2.5 bg-orange-50 text-orange-600 rounded-xl shrink-0">
+                    <Clock className="w-5 h-5" />
+                  </div>
                 </div>
-                <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl shrink-0">
-                  <CalendarDays className="w-5 h-5" />
+                <div className="mt-4 pt-3 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => setActivePortalTab('payroll')}
+                    className="w-full min-h-[38px] py-2 px-3 rounded-xl bg-orange-50 hover:bg-orange-100 text-orange-900 text-xs font-bold transition-colors cursor-pointer"
+                  >
+                    Lihat Slip Gaji Part-Time (Mingguan) →
+                  </button>
                 </div>
               </div>
-              <div className="mt-4 pt-3 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setActivePortalTab('leave')}
-                  className="w-full min-h-[38px] py-2 px-3 rounded-xl bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 text-slate-700 text-xs font-bold transition-colors cursor-pointer"
-                >
-                  Ajukan Cuti / Izin Baru →
-                </button>
+            ) : (
+              <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-xs flex flex-col justify-between">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                      Sisa Cuti Tahunan
+                    </span>
+                    <div className="text-2xl font-extrabold text-slate-900 mt-1 tabular-nums">
+                      {currentEmployee.remainingLeaveDays}{' '}
+                      <span className="text-xs font-normal text-slate-500">Hari Tersisa</span>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-1">
+                      {myLeaveRequests.filter((l) => l.status === 'Menunggu Persetujuan').length} pengajuan menunggu HR
+                    </p>
+                  </div>
+                  <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl shrink-0">
+                    <CalendarDays className="w-5 h-5" />
+                  </div>
+                </div>
+                <div className="mt-4 pt-3 border-t border-slate-100">
+                  <button
+                    type="button"
+                    onClick={() => setActivePortalTab('leave')}
+                    className="w-full min-h-[38px] py-2 px-3 rounded-xl bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 text-slate-700 text-xs font-bold transition-colors cursor-pointer"
+                  >
+                    Ajukan Cuti / Izin Baru →
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Overtime Per Minute & Claims Summary */}
             <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-xs flex flex-col justify-between">
@@ -2807,10 +2878,14 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 },
                 {
                   id: 'payroll' as const,
-                  label: 'Slip Gaji PDF',
-                  sub: companyConfig.currentPayrollPeriod,
+                  label: isPartTimeEmployee ? 'Slip Mingguan PDF' : 'Slip Gaji PDF',
+                  sub: isPartTimeEmployee
+                    ? officialPayslipData.periodCutOffLabel
+                    : companyConfig.currentPayrollPeriod,
                   icon: WalletCards,
-                  color: 'bg-teal-50 text-teal-700 border-teal-200',
+                  color: isPartTimeEmployee
+                    ? 'bg-orange-50 text-orange-800 border-orange-200'
+                    : 'bg-teal-50 text-teal-700 border-teal-200',
                 },
                 ...(canAccessLiveCommissionPanel
                   ? [
@@ -2830,8 +2905,10 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   : []),
                 {
                   id: 'leave' as const,
-                  label: 'Cuti & Izin',
-                  sub: `Sisa ${currentEmployee.remainingLeaveDays} Hari`,
+                  label: isPartTimeEmployee ? 'Izin Harian' : 'Cuti & Izin',
+                  sub: isPartTimeEmployee
+                    ? 'Pengajuan Izin Kerja'
+                    : `Sisa ${currentEmployee.remainingLeaveDays} Hari`,
                   icon: CalendarDays,
                   color: 'bg-blue-50 text-blue-700 border-blue-200',
                 },
@@ -2902,20 +2979,30 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
           {/* Highlight Cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* Take Home Pay */}
-            <div className="bg-gradient-to-br from-emerald-500 to-teal-700 rounded-2xl p-5 text-white shadow-sm flex flex-col justify-between">
+            <div
+              className={`rounded-2xl p-5 text-white shadow-sm flex flex-col justify-between ${
+                isPartTimeEmployee
+                  ? 'bg-gradient-to-br from-orange-600 to-amber-700'
+                  : 'bg-gradient-to-br from-emerald-500 to-teal-700'
+              }`}
+            >
               <div>
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-emerald-100 uppercase tracking-wider">
-                    Gaji Bersih (Take Home Pay)
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <span className="text-xs font-semibold text-white/90 uppercase tracking-wider">
+                    {isPartTimeEmployee
+                      ? 'Upah Bersih Mingguan (THP)'
+                      : 'Gaji Bersih (Take Home Pay)'}
                   </span>
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-white/20 text-white">
-                    {companyConfig.currentPayrollPeriod}
+                    {isPartTimeEmployee
+                      ? 'SLIP GAJI PART-TIME (MINGGUAN)'
+                      : companyConfig.currentPayrollPeriod}
                   </span>
                 </div>
                 <h2 className="text-2xl sm:text-3xl font-extrabold mt-2 tracking-tight">
                   {formatCurrency(takeHomePay)}
                 </h2>
-                <p className="text-xs text-emerald-100 mt-1">
+                <p className="text-xs text-white/90 mt-1">
                   Ditransfer ke {currentEmployee.bankName} (No: {currentEmployee.bankAccountNumber})
                 </p>
               </div>
@@ -2924,10 +3011,20 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 <div className="mt-4 pt-3 border-t border-white/20">
                   <button
                     onClick={() => onOpenPayslip(effectivePayRecord)}
-                    className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-white text-emerald-800 text-xs font-bold hover:bg-emerald-50 transition-colors shadow-xs cursor-pointer"
+                    className={`w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-white text-xs font-bold transition-colors shadow-xs cursor-pointer ${
+                      isPartTimeEmployee
+                        ? 'text-orange-900 hover:bg-orange-50'
+                        : 'text-emerald-800 hover:bg-emerald-50'
+                    }`}
                   >
-                    <Download className="w-3.5 h-3.5 text-emerald-600" />
-                    Unduh PDF / Cetak Slip Gaji Pribadi
+                    <Download
+                      className={`w-3.5 h-3.5 ${
+                        isPartTimeEmployee ? 'text-orange-600' : 'text-emerald-600'
+                      }`}
+                    />
+                    {isPartTimeEmployee
+                      ? 'Unduh PDF / Cetak Slip Part-Time (Mingguan)'
+                      : 'Unduh PDF / Cetak Slip Gaji Pribadi'}
                   </button>
                 </div>
               )}
@@ -2938,9 +3035,17 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
               <div>
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                    Total Penghasilan Bruto
+                    {isPartTimeEmployee
+                      ? 'Pendapatan Mingguan (Bruto)'
+                      : 'Total Penghasilan Bruto'}
                   </span>
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                  <span
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                      isPartTimeEmployee
+                        ? 'bg-orange-50 text-orange-900 border-orange-200'
+                        : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                    }`}
+                  >
                     {formatRupiah(myHourlyRate)} / jam
                   </span>
                 </div>
@@ -2948,11 +3053,16 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   {formatCurrency(grossSalary)}
                 </h3>
                 <p className="text-xs text-slate-500 mt-1">
-                  Gaji Jam Kerja Riil ({myTotalActualWorkHours} Jam) + Tunjangan + Lembur &amp; Bonus
+                  {isPartTimeEmployee
+                    ? `Upah Kerja (${myTotalActualWorkHours} Jam / ${myPresentDaysCount} Hari Kerja) + Lembur & Bonus`
+                    : `Gaji Jam Kerja Riil (${myTotalActualWorkHours} Jam) + Tunjangan + Lembur & Bonus`}
                 </p>
               </div>
               <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-600">
-                <span>Gaji Pokok ({myTotalActualWorkHours} Jam × {formatRupiah(myHourlyRate)}/jam):</span>
+                <span>
+                  {isPartTimeEmployee ? 'Upah Kerja' : 'Gaji Pokok'} ({myTotalActualWorkHours} Jam ×{' '}
+                  {formatRupiah(myHourlyRate)}/jam):
+                </span>
                 <span className="font-bold text-emerald-700">{formatCurrency(baseSal)}</span>
               </div>
             </div>
@@ -2961,19 +3071,27 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
             <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs flex flex-col justify-between">
               <div>
                 <span className="text-xs font-semibold text-rose-600 uppercase tracking-wider">
-                  Total Potongan Wajib
+                  {isPartTimeEmployee ? 'Potongan Mingguan' : 'Total Potongan Wajib'}
                 </span>
                 <h3 className="text-2xl font-bold text-rose-700 mt-1">
                   - {formatCurrency(totalDeduct)}
                 </h3>
                 <p className="text-xs text-slate-500 mt-1">
-                  Potongan Absensi, Kasbon &amp; Pajak/BPJS (Input Manual Admin)
+                  {isPartTimeEmployee
+                    ? 'Potongan Kasbon, Keterlambatan & Izin/Alpha (jika ada)'
+                    : 'Potongan Absensi, Kasbon & Pajak/BPJS (Input Manual Admin)'}
                 </p>
               </div>
               <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-600">
                 <span>Jadwal Pencairan:</span>
-                <span className="font-semibold text-emerald-600">
-                  Tgl {companyConfig.payrollDisbursementDay} {companyConfig.currentPayrollPeriod.split(' ')[0]}
+                <span
+                  className={`font-semibold ${
+                    isPartTimeEmployee ? 'text-orange-700' : 'text-emerald-600'
+                  }`}
+                >
+                  {isPartTimeEmployee
+                    ? 'Setiap Hari Minggu (Weekly Payout)'
+                    : `Tgl ${companyConfig.payrollDisbursementDay} ${companyConfig.currentPayrollPeriod.split(' ')[0]}`}
                 </span>
               </div>
             </div>
@@ -2983,11 +3101,22 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
           <div className="bg-white rounded-2xl p-4 sm:p-6 border border-slate-200 shadow-xs space-y-5">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-4">
               <div>
-                <h3 className="text-base font-bold text-slate-900">
-                  SLIP GAJI KARYAWAN — {officialPayslipData.periodCutOffLabel}
-                </h3>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {isPartTimeEmployee && (
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-orange-600 text-white shadow-2xs">
+                      SLIP GAJI PART-TIME (MINGGUAN)
+                    </span>
+                  )}
+                  <h3 className="text-base font-bold text-slate-900">
+                    {isPartTimeEmployee
+                      ? officialPayslipData.weeklyPeriodLabel
+                      : `SLIP GAJI KARYAWAN — ${officialPayslipData.periodCutOffLabel}`}
+                  </h3>
+                </div>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Format resmi Slip Gaji Tas Grosir Import (mendukung Cetak &amp; Simpan PDF ukuran A4)
+                  {isPartTimeEmployee
+                    ? 'Format khusus Slip Gaji Part-Time Mingguan (Senin – Sabtu) lengkap dengan TTD & Stempel Resmi (siap Cetak PDF A4)'
+                    : 'Format resmi Slip Gaji Tas Grosir Import (mendukung Cetak & Simpan PDF ukuran A4)'}
                 </p>
               </div>
               <div className="flex items-center gap-2 flex-wrap">
@@ -3004,7 +3133,11 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 <button
                   type="button"
                   onClick={() => onOpenPayslip(effectivePayRecord)}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 transition-colors shadow-xs cursor-pointer"
+                  className={`inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded-xl text-white transition-colors shadow-xs cursor-pointer ${
+                    isPartTimeEmployee
+                      ? 'bg-orange-600 hover:bg-orange-700'
+                      : 'bg-emerald-600 hover:bg-emerald-700'
+                  }`}
                 >
                   <Printer className="w-3.5 h-3.5" />
                   <span>Cetak / Save as PDF (A4)</span>
@@ -3083,6 +3216,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                           item.isMissingClockOut ||
                             !item.checkOut ||
                             item.checkOut === '-' ||
+                            String(item.checkOut).toLowerCase().includes('belum') ||
                             (item.checkIn && item.checkIn !== '-' && item.checkIn === item.checkOut)
                         );
                         const isCapped = Boolean(
@@ -3090,13 +3224,23 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                             (Number(item.rawDurationHours) || 0) > myStandardDailyHours
                         );
                         return (
-                          <tr key={item.date} className="hover:bg-emerald-50/40">
+                          <tr
+                            key={item.date}
+                            className={`hover:bg-emerald-50/40 ${
+                              isNotClockedOut ? 'bg-rose-50/40' : ''
+                            }`}
+                          >
                             <td className="py-2 px-3 font-medium text-slate-800">
                               {formatIndoDate(item.date)}
                             </td>
                             <td className="py-2 px-3 font-mono text-slate-600">
                               <span>
-                                {item.checkIn || '-'} – {item.checkOut || '-'} WIB
+                                {item.checkIn || '-'} –{' '}
+                                {isNotClockedOut ? (
+                                  <strong className="text-rose-700">Belum Clock-Out</strong>
+                                ) : (
+                                  `${item.checkOut || '-'} WIB`
+                                )}
                               </span>
                             </td>
                             <td className="py-2 px-3">
@@ -3116,8 +3260,8 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                                   </span>
                                 )}
                                 {Boolean(isNotClockedOut && item.status !== 'Alpa' && item.status !== 'Sakit' && item.status !== 'Izin' && item.status !== 'Cuti') && (
-                                  <span className="px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-200 font-bold text-[10px]">
-                                    Belum Clock-Out
+                                  <span className="px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-300 font-bold text-[10px]">
+                                    ⚠️ Belum Clock-Out
                                   </span>
                                 )}
                               </div>
@@ -6894,8 +7038,13 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
         </div>
       )}
 
-      {/* Modal Pilih Identitas / Ganti Akun Karyawan (Dilindungi PIN per Akun) */}
-      {isSwitchProfileModalOpen && (
+      {/* Modal Pilih Identitas / Ganti Akun Karyawan (Khusus Admin Terverifikasi & Dilindungi PIN per Akun) */}
+      {Boolean(
+        isSwitchProfileModalOpen &&
+          isAdminUnlocked &&
+          isAdminSessionVerified() &&
+          onSelectEmployee
+      ) && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl max-w-md w-full p-5 shadow-2xl border border-slate-200 space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">

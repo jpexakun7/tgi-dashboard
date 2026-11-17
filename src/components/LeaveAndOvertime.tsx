@@ -43,6 +43,7 @@ import {
   formatWhatsAppPhone,
 } from '../utils/notificationHelper';
 import { validateImageFile, compressImage } from '../utils/imageUtils';
+import { sanitizeSafeText } from '../services/authSecurityService';
 
 interface LeaveAndOvertimeProps {
   employees: Employee[];
@@ -172,6 +173,8 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
     const nowTimestamp = getJakartaFullDateTimeLabel().compactLabel;
     const resolvedEmpId = leaveEmpId || employees[0]?.id || '';
     const resolvedDays = Math.max(1, Math.round(Number(leaveDays) || 1));
+    const safeReason =
+      sanitizeSafeText(leaveReason, 400) || `Input manual Admin (${leaveType})`;
 
     const newReq: LeaveRequest = {
       id: `leave-${Date.now()}`,
@@ -180,12 +183,12 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
       startDate: leaveStart,
       endDate: leaveEnd,
       totalDays: resolvedDays,
-      reason: leaveReason.trim() || `Input manual Admin (${leaveType})`,
+      reason: safeReason,
       status: leaveStatus,
       approvedBy: leaveStatus === 'Disetujui' ? 'HRD Admin (Input Manual)' : undefined,
       appliedAt: getJakartaDateString(),
       attachmentUrl: leaveAttachmentUrl || undefined,
-      attachmentName: leaveAttachmentName || undefined,
+      attachmentName: sanitizeSafeText(leaveAttachmentName, 120) || undefined,
       attachmentUploadedAt: leaveAttachmentUrl ? nowTimestamp : undefined,
     };
     onAddLeave(newReq);
@@ -198,9 +201,10 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
   const handleSaveOvertime = (e: React.FormEvent) => {
     e.preventDefault();
     const emp = employees.find((e) => e.id === otEmpId);
-    const validMinutes = Math.max(1, Math.round(Number(otMinutes) || 0));
-    const ratePerMinute = getOvertimeRatePerMinute(emp, 1.5);
-    const calculatedPay = calculateOvertimePayByMinutes(emp, validMinutes, 1.5);
+    const validMinutes = Math.max(1, Math.min(720, Math.round(Number(otMinutes) || 0)));
+    const ratePerMinute = Math.max(0, getOvertimeRatePerMinute(emp, 1.5));
+    const calculatedPay = Math.max(0, calculateOvertimePayByMinutes(emp, validMinutes, 1.5));
+    const safeTask = sanitizeSafeText(otTask, 400) || 'Pekerjaan operasional lembur';
 
     const newOt: OvertimeRequest = {
       id: `ot-${Date.now()}`,
@@ -211,7 +215,7 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
       startTime: otStartTime || undefined,
       endTime: otEndTime || undefined,
       ratePerMinute,
-      taskDescription: otTask || 'Pekerjaan operasional lembur',
+      taskDescription: safeTask,
       calculatedPay,
       status: 'Menunggu Persetujuan',
     };

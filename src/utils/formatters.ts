@@ -1212,11 +1212,27 @@ export function calculateMinutesBetweenTimes(startTime?: string, endTime?: strin
   return Math.max(0, endMins - startMins);
 }
 
+// Helper aman untuk memastikan angka valid, finite, dan tidak pernah negatif (anti NaN / Infinity / nilai minus)
+export function clampNonNegativeNumber(val: unknown, fallback: number = 0): number {
+  const num = Number(val);
+  if (!Number.isFinite(num) || isNaN(num)) {
+    return Math.max(0, Number.isFinite(fallback) ? fallback : 0);
+  }
+  return Math.max(0, num);
+}
+
 // Normalisasi Tipe Karyawan ('Full-Time' | 'Contract' | 'Part-Time') secara case-insensitive & trim
 export function normalizeEmploymentType(val?: string | null): EmploymentType | undefined {
   if (!val || typeof val !== 'string') return undefined;
   const cleaned = val.trim().toLowerCase().replace(/[\s_]+/g, '-');
-  if (cleaned === 'part-time' || cleaned === 'parttime' || cleaned.includes('part-time')) {
+  if (
+    cleaned === 'part-time' ||
+    cleaned === 'parttime' ||
+    cleaned.includes('part-time') ||
+    cleaned.includes('parttime') ||
+    cleaned.includes('mingguan') ||
+    cleaned.includes('harian-lepas')
+  ) {
     return 'Part-Time';
   }
   // Periksa PKWTT / Tetap / Full-Time terlebih dahulu sebelum PKWT (karena string 'pkwtt' mengandung 'pkwt')
@@ -1234,12 +1250,16 @@ export function normalizeEmploymentType(val?: string | null): EmploymentType | u
   return undefined;
 }
 
-// Cek apakah karyawan berstatus Part-Time secara akurat (case-insensitive & trim) dan BUKAN PKWTT (Tetap)
+// Cek apakah karyawan berstatus Part-Time secara akurat (case-insensitive & trim, mendukung "Part-Time", "Part Time", "Part-Time (Mingguan)") dan BUKAN PKWTT (Tetap)
 export function isEmployeePartTime(emp?: Partial<Employee> | null): boolean {
   if (!emp) return false;
   const typeNorm = normalizeEmploymentType(emp.employmentType || emp.employment_type);
   const statusNorm = normalizeEmploymentType(emp.employmentStatus || (emp as any).status);
-  return typeNorm === 'Part-Time' || statusNorm === 'Part-Time';
+  if (typeNorm === 'Full-Time' || statusNorm === 'Full-Time') {
+    return false;
+  }
+  const roleNorm = normalizeEmploymentType(emp.role);
+  return typeNorm === 'Part-Time' || statusNorm === 'Part-Time' || roleNorm === 'Part-Time';
 }
 
 // Hitung durasi kerja REAL dan PRESISI berdasarkan selisih clock_out dikurangi clock_in:
@@ -1250,9 +1270,16 @@ export function calculateActualWorkHoursFromClock(
   clockOut?: string | null
 ): number {
   if (!clockIn || !clockOut) return 0;
-  const cleanIn = clockIn.trim();
-  const cleanOut = clockOut.trim();
-  if (!cleanIn || !cleanOut || cleanIn === '-' || cleanOut === '-' || cleanIn === cleanOut) {
+  const cleanIn = String(clockIn).trim();
+  const cleanOut = String(clockOut).trim();
+  if (
+    !cleanIn ||
+    !cleanOut ||
+    cleanIn === '-' ||
+    cleanOut === '-' ||
+    cleanIn === cleanOut ||
+    cleanOut.toLowerCase().includes('belum')
+  ) {
     return 0;
   }
 
@@ -1261,10 +1288,10 @@ export function calculateActualWorkHoursFromClock(
   if (
     inParts.length < 2 ||
     outParts.length < 2 ||
-    isNaN(inParts[0]) ||
-    isNaN(inParts[1]) ||
-    isNaN(outParts[0]) ||
-    isNaN(outParts[1])
+    !Number.isFinite(inParts[0]) ||
+    !Number.isFinite(inParts[1]) ||
+    !Number.isFinite(outParts[0]) ||
+    !Number.isFinite(outParts[1])
   ) {
     return 0;
   }
@@ -1281,9 +1308,9 @@ export function calculateActualWorkHoursFromClock(
   }
 
   const diffInMinutes = (clockOutTime.getTime() - clockInTime.getTime()) / (1000 * 60);
-  if (diffInMinutes <= 0) return 0;
+  if (!Number.isFinite(diffInMinutes) || diffInMinutes <= 0) return 0;
   const actualHours = Number((diffInMinutes / 60).toFixed(2));
-  return Math.max(0, actualHours);
+  return Number.isFinite(actualHours) ? Math.max(0, actualHours) : 0;
 }
 
 export interface CappedDailyWorkHoursResult {
@@ -1292,7 +1319,7 @@ export interface CappedDailyWorkHoursResult {
   excessHours: number; // Kelebihan jam di atas batas maksimal target jam harian
   overtimeHours: number; // Jam lembur diakui (0 secara default kecuali ada pengajuan lembur 'Disetujui')
   isCappedToMax: boolean; // true jika rawDurationHours > maxNormalHoursPerDay atau lupa clock-out lewat 23:59
-  isMissingClockOut: boolean; // true jika belum Clock-Out pada hari berjalan
+  isMissingClockOut: boolean; // true jika belum Clock-Out
   isCrossMidnightOrForgotClockOut?: boolean; // true jika melewati 23:59 atau lupa clock-out di hari sebelumnya
 }
 
@@ -1300,7 +1327,7 @@ export interface CappedDailyWorkHoursResult {
 // - Jika durasi aktual < target jam harian (misal 4 jam dari target 6 jam) -> dihitung 4 jam aktual, overtimeHours = 0
 // - Jika durasi aktual > target jam harian (misal > 5, 6, atau 9 jam) -> dibatasi maksimal sebesar target jam harian, overtimeHours = 0 secara default
 // - Kelebihan jam kerja HANYA dihitung sebagai overtimeHours jika approvedOvertimeHours > 0 (status 'Disetujui' di overtime_requests)
-// - Penanganan Lupa Clock-Out (lewat pukul 23:59 / pergantian hari): otomatis dibatasi maksimal sebesar target jam harian karyawan (5/6/9 jam)
+// - Penanganan Lupa Clock-Out (lewat pukul 23:59 / pergantian hari): otomatis dibatasi maksimal sebesar target jam harian karyawan (5/6/9 jam) dan ditandai isMissingClockOut = true agar peringatan muncul
 export function calculateCappedDailyWorkHours(
   clockIn?: string | null,
   clockOut?: string | null,
@@ -1309,12 +1336,17 @@ export function calculateCappedDailyWorkHours(
   approvedOvertimeHours: number = 0,
   attendanceDate?: string | null
 ): CappedDailyWorkHoursResult {
-  const maxCap = Math.max(1, Number(maxNormalHoursPerDay) || STANDARD_WORK_HOURS_PER_DAY);
-  const cleanApprovedOt = Math.max(0, Number(approvedOvertimeHours) || 0);
-  const cleanIn = (clockIn || '').trim();
-  const cleanOut = (clockOut || '').trim();
+  const maxCap = Math.max(1, clampNonNegativeNumber(maxNormalHoursPerDay, STANDARD_WORK_HOURS_PER_DAY));
+  const cleanApprovedOt = clampNonNegativeNumber(approvedOvertimeHours, 0);
+  const cleanIn = String(clockIn || '').trim();
+  const cleanOut = String(clockOut || '').trim();
   const hasClockIn = Boolean(cleanIn && cleanIn !== '-' && cleanIn.includes(':'));
-  const hasClockOut = Boolean(cleanOut && cleanOut !== '-' && cleanOut.includes(':'));
+  const hasClockOut = Boolean(
+    cleanOut &&
+      cleanOut !== '-' &&
+      cleanOut.includes(':') &&
+      !cleanOut.toLowerCase().includes('belum')
+  );
 
   // Cek apakah sesi absensi sudah melewati pergantian hari (lewat pukul 23:59 WIB) tanpa Clock-Out
   const todayIso = getJakartaDateString();
@@ -1324,7 +1356,8 @@ export function calculateCappedDailyWorkHours(
 
   if (hasClockIn && (!hasClockOut || cleanIn === cleanOut)) {
     // Penanganan Lupa Clock-Out yang telah melewati pukul 23:59 (hari sebelumnya):
-    // Otomatis batasi jam kerja maksimal sebesar target jam kerja harian karyawan (5, 6, atau 9 jam sesuai profil/shift)
+    // Otomatis batasi jam kerja maksimal sebesar target jam kerja harian karyawan (5, 6, atau 9 jam sesuai profil/shift),
+    // namun tetap beri tanda isMissingClockOut = true agar peringatan "Belum Clock-Out" tampil jelas di UI.
     if (isPastDaySession) {
       return {
         rawDurationHours: maxCap,
@@ -1332,7 +1365,7 @@ export function calculateCappedDailyWorkHours(
         excessHours: 0,
         overtimeHours: 0,
         isCappedToMax: true,
-        isMissingClockOut: false,
+        isMissingClockOut: true,
         isCrossMidnightOrForgotClockOut: true,
       };
     }
@@ -1384,7 +1417,7 @@ export function calculateCappedDailyWorkHours(
     };
   }
 
-  const fallbackRaw = Math.max(0, Number(fallbackWorkHours) || 0);
+  const fallbackRaw = clampNonNegativeNumber(fallbackWorkHours, 0);
   const cappedFallback = Number(Math.min(maxCap, fallbackRaw).toFixed(2));
   const excessFallback = Number(Math.max(0, fallbackRaw - maxCap).toFixed(2));
   const recognizedFallbackOt =

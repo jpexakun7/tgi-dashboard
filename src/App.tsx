@@ -1910,8 +1910,10 @@ export default function App() {
   });
 
   // Determine current active employee in Portal Karyawan
+  // Keamanan Sesi Ketat: Jika bukan Admin resmi yang terverifikasi, kunci ketat hanya pada ID karyawan yang login di sessionStorage
   const currentEmployee = useMemo(() => {
-    if (!isAdminUnlocked) {
+    const isVerifiedAdmin = Boolean(isAdminUnlocked && isAdminSessionVerified());
+    if (!isVerifiedAdmin) {
       try {
         const lockedId = sessionStorage.getItem('tgi_locked_employee_id');
         if (lockedId) {
@@ -5176,6 +5178,12 @@ export default function App() {
         onRegisterNewAdmin={handleRegisterNewAdmin}
         onLoginAsEmployee={(empId) => {
           if (empId) {
+            try {
+              sessionStorage.setItem('tgi_locked_employee_id', empId);
+              localStorage.setItem('tgi_active_employee_id', empId);
+            } catch {
+              // ignore storage error
+            }
             setActiveEmployeeId(empId);
           }
           setDashboardMode('employee');
