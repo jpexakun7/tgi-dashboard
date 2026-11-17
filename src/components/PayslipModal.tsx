@@ -45,6 +45,8 @@ import {
   clampNonNegativeNumber,
   getWeeklyCycleRangeForDate,
   getJakartaDateString,
+  filterOvertimeRequestsForPeriod,
+  isPayrollPeriodPastCutoff,
 } from '../utils/formatters';
 import { getPayslipWhatsAppUrl, getPayslipEmailUrl } from '../utils/notificationHelper';
 import {
@@ -55,6 +57,7 @@ import {
   Mail,
   PenTool,
   Check,
+  Lock,
 } from 'lucide-react';
 import { SignatoryConfigModal } from './SignatoryConfigModal';
 import {
@@ -549,11 +552,18 @@ export function computeOfficialPayslipData(params: {
         );
   const tunjanganKedisiplinanTotal = tunjanganKedisiplinanRate;
 
-  // Kelebihan jam kerja hanya dihitung jika ada Pengajuan Lembur yang berstatus "Disetujui" (Approved)
+  // Kelebihan jam kerja hanya dihitung jika ada Pengajuan Lembur yang berstatus "Disetujui" (Approved) pada rentang cut-off periode ini
   const empOtList = overtimeRequests
     ? overtimeRequests.filter((o) => o && o.employeeId === employee.id)
     : getLocalOvertimeRequestsForEmployee(employee.id);
-  const approvedOtList = empOtList.filter((o) => o.status === 'Disetujui');
+  const approvedOtList = filterOvertimeRequestsForPeriod(
+    empOtList,
+    employee.id,
+    periodStr,
+    companyConfig.cutOffStartDay || 26,
+    companyConfig.cutOffEndDay || 25,
+    true
+  );
 
   const approvedOtMinutesFromRequests = approvedOtList.reduce(
     (sum, o) => sum + getOvertimeMinutes(o),
@@ -2571,11 +2581,24 @@ export const PayslipModal: React.FC<PayslipModalProps> = ({
                     SLIP GAJI PART-TIME (MINGGUAN)
                   </span>
                 )}
+                {(payroll.isLocked ||
+                  (companyConfig.lockedPayrollPeriods || []).includes(payroll.period) ||
+                  isPayrollPeriodPastCutoff(
+                    payroll.period,
+                    new Date(),
+                    companyConfig.cutOffStartDay || 26,
+                    companyConfig.cutOffEndDay || 25
+                  )) && (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                    <Lock className="w-3 h-3 text-amber-700" />
+                    Periode Terkunci (Arsip)
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-500">
                 {computedData.isPartTime
                   ? `${computedData.weeklyPeriodLabel} • ${payroll.referenceNumber}`
-                  : payroll.referenceNumber}
+                  : `${payroll.period} (${computedData.periodCutOffLabel}) • ${payroll.referenceNumber}`}
               </p>
             </div>
           </div>

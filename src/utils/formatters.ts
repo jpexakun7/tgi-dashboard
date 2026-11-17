@@ -71,6 +71,51 @@ const INDO_MONTH_NAMES_SHORT = [
   'Des',
 ];
 
+const INDO_MONTH_NAME_TO_NUM: Record<string, string> = {
+  januari: '01',
+  jan: '01',
+  februari: '02',
+  feb: '02',
+  maret: '03',
+  mar: '03',
+  april: '04',
+  apr: '04',
+  mei: '05',
+  may: '05',
+  juni: '06',
+  jun: '06',
+  juli: '07',
+  jul: '07',
+  agustus: '08',
+  agu: '08',
+  aug: '08',
+  september: '09',
+  sep: '09',
+  oktober: '10',
+  okt: '10',
+  oct: '10',
+  november: '11',
+  nov: '11',
+  desember: '12',
+  des: '12',
+  dec: '12',
+};
+
+const NUM_TO_INDO_MONTH_NAME: Record<string, string> = {
+  '01': 'Januari',
+  '02': 'Februari',
+  '03': 'Maret',
+  '04': 'April',
+  '05': 'Mei',
+  '06': 'Juni',
+  '07': 'Juli',
+  '08': 'Agustus',
+  '09': 'September',
+  '10': 'Oktober',
+  '11': 'November',
+  '12': 'Desember',
+};
+
 export interface JakartaDateParts {
   year: number;
   month: number; // 1-12
@@ -289,26 +334,100 @@ export function getDayOfWeekFromDateString(dateStr: string): number {
 }
 
 /**
- * Mengembalikan nama Periode Gaji real-time saat ini sesuai WIB (contoh: "November 2026").
+ * Deteksi Periode Gaji Aktif Otomatis berbasis zona waktu Asia/Jakarta (WIB) dan aturan Cut-Off:
+ * - Jika tanggal hari ini adalah 1 s/d 25 (<= cutOffEndDay), periode aktif default adalah bulan berjalan
+ *   (rentang: 26 bulan lalu s/d 25 bulan ini).
+ * - Begitu memasuki tanggal 26 (pukul 00:00 WIB, day > cutOffEndDay), periode aktif default otomatis
+ *   berpindah ke siklus bulan berikutnya (rentang: 26 bulan ini s/d 25 bulan depan).
  */
-export function getCurrentRealTimePayrollPeriod(date: Date = new Date()): string {
-  const { year, month } = getJakartaDateParts(date);
-  const monthName = INDO_MONTH_NAMES_FULL[month - 1] || 'Januari';
-  return `${monthName} ${year}`;
+export function getActivePayrollPeriodByDate(
+  date: Date = new Date(),
+  cutOffEndDay: number = 25
+): string {
+  const { year, month, day } = getJakartaDateParts(date);
+  const safeCutOffEnd = Math.max(1, Math.min(31, Number(cutOffEndDay) || 25));
+  let targetYear = year;
+  let targetMonth = month; // 1-12
+  if (day > safeCutOffEnd) {
+    if (month === 12) {
+      targetMonth = 1;
+      targetYear = year + 1;
+    } else {
+      targetMonth = month + 1;
+    }
+  }
+  const monthName = INDO_MONTH_NAMES_FULL[targetMonth - 1] || 'Januari';
+  return `${monthName} ${targetYear}`;
 }
 
 /**
- * Menghasilkan daftar pilihan Periode Gaji secara dinamis di sekitar bulan berjalan (WIB).
+ * Mengembalikan nama Periode Gaji real-time saat ini sesuai WIB & aturan Auto Cut-Off Tgl 25 / Reset Tgl 26.
+ */
+export function getCurrentRealTimePayrollPeriod(
+  date: Date = new Date(),
+  cutOffEndDay: number = 25
+): string {
+  return getActivePayrollPeriodByDate(date, cutOffEndDay);
+}
+
+/**
+ * Mengembalikan nama periode gaji tepat 1 bulan sebelum periode yang diberikan (misal "Desember 2026" -> "November 2026").
+ */
+export function getPreviousPayrollPeriod(periodStr?: string | null): string {
+  const active = periodStr && periodStr.trim() ? periodStr.trim() : getActivePayrollPeriodByDate();
+  const ym = normalizePeriodToYearMonth(active);
+  if (ym) {
+    const [yRaw, mRaw] = ym.split('-').map(Number);
+    if (!isNaN(yRaw) && !isNaN(mRaw) && mRaw >= 1 && mRaw <= 12) {
+      const prevM = mRaw === 1 ? 12 : mRaw - 1;
+      const prevY = mRaw === 1 ? yRaw - 1 : yRaw;
+      return `${INDO_MONTH_NAMES_FULL[prevM - 1]} ${prevY}`;
+    }
+  }
+  const { year, month } = getJakartaDateParts();
+  const prevM = month === 1 ? 12 : month - 1;
+  const prevY = month === 1 ? year - 1 : year;
+  return `${INDO_MONTH_NAMES_FULL[prevM - 1]} ${prevY}`;
+}
+
+/**
+ * Mengecek apakah suatu periode payroll sudah melewati tanggal cut-off akhirnya (endDate, default tgl 25 pukul 23:59 WIB),
+ * sehingga begitu memasuki tanggal 26 (00:00 WIB), periode sebelumnya otomatis berstatus Arsip / Terkunci.
+ */
+export function isPayrollPeriodPastCutoff(
+  periodStr?: string | null,
+  date: Date = new Date(),
+  cutOffStartDay: number = 26,
+  cutOffEndDay: number = 25
+): boolean {
+  if (!periodStr || !periodStr.trim()) return false;
+  const cutoff = getMonthlyCutoffDateRange(periodStr, cutOffStartDay, cutOffEndDay);
+  const todayWibStr = getJakartaDateString(date);
+  return todayWibStr > cutoff.endDate;
+}
+
+/**
+ * Menghasilkan daftar pilihan Periode Gaji secara dinamis di sekitar periode aktif berjalan (WIB).
  */
 export function getDynamicAvailablePayrollPeriods(
   date: Date = new Date(),
-  monthsBack: number = 4,
-  monthsForward: number = 3
+  monthsBackOrCutOffDay: number = 6,
+  monthsForward?: number,
+  cutOffEndDay: number = 25
 ): string[] {
-  const { year, month } = getJakartaDateParts(date);
+  const isTwoArgCutOffCall = monthsForward === undefined && monthsBackOrCutOffDay >= 15;
+  const effectiveCutOffEndDay = isTwoArgCutOffCall ? monthsBackOrCutOffDay : cutOffEndDay;
+  const effectiveMonthsBack = isTwoArgCutOffCall ? 6 : monthsBackOrCutOffDay;
+  const effectiveMonthsForward = monthsForward !== undefined ? monthsForward : 2;
+
+  const activePeriod = getActivePayrollPeriodByDate(date, effectiveCutOffEndDay);
+  const norm = normalizePeriodToYearMonth(activePeriod);
+  const parts = getJakartaDateParts(date);
+  const baseYear = norm ? parseInt(norm.split('-')[0], 10) : parts.year;
+  const baseMonth = norm ? parseInt(norm.split('-')[1], 10) : parts.month;
   const result: string[] = [];
-  for (let offset = -monthsBack; offset <= monthsForward; offset++) {
-    const dt = new Date(Date.UTC(year, month - 1 + offset, 15, 12, 0, 0));
+  for (let offset = effectiveMonthsForward; offset >= -effectiveMonthsBack; offset--) {
+    const dt = new Date(Date.UTC(baseYear, baseMonth - 1 + offset, 15, 12, 0, 0));
     const y = dt.getUTCFullYear();
     const m = dt.getUTCMonth();
     const mName = INDO_MONTH_NAMES_FULL[m] || 'Januari';
@@ -832,15 +951,39 @@ export function calculateEmployeeLiveSalesCommission(
   }
   const allLogs = Array.from(uniqueMap.values()).filter((l) => l.status !== 'Ditolak');
 
-  // Filter by period if logs exist for that period; otherwise if logs don't have period mismatch, include them
-  const strictPeriodLogs = period
-    ? allLogs.filter(
-        (l) =>
-          !l?.period ||
-          String(l.period).trim().toLowerCase() === String(period).trim().toLowerCase()
-      )
+  // Isolasi ketat periode Cut-Off Bulanan (26 bln lalu s/d 25 bln ini):
+  // Pada siklus baru yang dimulai tanggal 26, omset & komisi live mulai terhitung dari 0
+  // berdasarkan sesi live tanggal 26 ke atas atau yang periodenya cocok tanpa mencampur bulan sebelumnya.
+  const matchingLogs = period
+    ? (() => {
+        const targetYm = normalizePeriodToYearMonth(period);
+        const cutoff = getMonthlyCutoffDateRange(period, 26, 25);
+        return allLogs.filter((l) => {
+          if (!l) return false;
+          const logDate = String(l.date || '').trim().slice(0, 10);
+          const logYm = normalizePeriodToYearMonth(l.period);
+          if (logYm && targetYm) {
+            if (logYm === targetYm) return true;
+            // Jika tanggal sesi berada di dalam rentang cut-off 26..25 periode ini dan periode log belum diset spesifik ke bulan lain
+            if (
+              /^\d{4}-\d{2}-\d{2}$/.test(logDate) &&
+              logDate >= cutoff.startDate &&
+              logDate <= cutoff.endDate &&
+              logYm === logDate.slice(0, 7)
+            ) {
+              return true;
+            }
+            return false;
+          }
+          if (/^\d{4}-\d{2}-\d{2}$/.test(logDate)) {
+            return logDate >= cutoff.startDate && logDate <= cutoff.endDate;
+          }
+          return (
+            String(l.period || '').trim().toLowerCase() === String(period).trim().toLowerCase()
+          );
+        });
+      })()
     : allLogs;
-  const matchingLogs = strictPeriodLogs.length > 0 ? strictPeriodLogs : allLogs;
 
   let totalOmset = 0;
   let hostOmset = 0;
@@ -1210,6 +1353,51 @@ export function calculateMinutesBetweenTimes(startTime?: string, endTime?: strin
     endMins += 24 * 60;
   }
   return Math.max(0, endMins - startMins);
+}
+
+/**
+ * Filter pengajuan lembur yang disetujui khusus untuk periode Cut-Off tertentu (26 bulan lalu s/d 25 bulan ini)
+ * agar lembur periode sebelumnya tidak terbawa ke siklus baru yang dimulai tanggal 26.
+ */
+export function filterOvertimeRequestsForPeriod(
+  overtimeRequests: OvertimeRequest[] | null | undefined,
+  employeeId?: string | null,
+  periodStr?: string | null,
+  cutOffStartDay: number = 26,
+  cutOffEndDay: number = 25,
+  onlyApproved: boolean = true
+): OvertimeRequest[] {
+  if (!Array.isArray(overtimeRequests)) return [];
+  const byEmp = overtimeRequests.filter((o) => {
+    if (!o) return false;
+    if (employeeId && o.employeeId !== employeeId) return false;
+    if (onlyApproved && o.status !== 'Disetujui') return false;
+    return true;
+  });
+  if (!periodStr || !periodStr.trim()) return byEmp;
+
+  const trimmed = periodStr.trim();
+  const explicitRangeMatch = trimmed.match(
+    /(\d{4}-\d{2}-\d{2})\s*(?:s\/d|to|__|–|-)\s*(\d{4}-\d{2}-\d{2})/i
+  );
+  if (explicitRangeMatch) {
+    const startD = explicitRangeMatch[1];
+    const endD = explicitRangeMatch[2];
+    return byEmp.filter((o) => {
+      const d = (o.date || '').trim().slice(0, 10);
+      return d >= startD && d <= endD;
+    });
+  }
+
+  const cutoff = getMonthlyCutoffDateRange(trimmed, cutOffStartDay, cutOffEndDay);
+  const targetYm = cutoff.yearMonth;
+  return byEmp.filter((o) => {
+    const d = (o.date || '').trim().slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) {
+      return d >= cutoff.startDate && d <= cutoff.endDate;
+    }
+    return normalizePeriodToYearMonth(o.date) === targetYm;
+  });
 }
 
 // Helper aman untuk memastikan angka valid, finite, dan tidak pernah negatif (anti NaN / Infinity / nilai minus)
@@ -3220,51 +3408,6 @@ export function generateOfficialCompanyStampDataUrl(
   return canvas.toDataURL('image/png');
 }
 
-const INDO_MONTH_NAME_TO_NUM: Record<string, string> = {
-  januari: '01',
-  jan: '01',
-  februari: '02',
-  feb: '02',
-  maret: '03',
-  mar: '03',
-  april: '04',
-  apr: '04',
-  mei: '05',
-  may: '05',
-  juni: '06',
-  jun: '06',
-  juli: '07',
-  jul: '07',
-  agustus: '08',
-  agu: '08',
-  aug: '08',
-  september: '09',
-  sep: '09',
-  oktober: '10',
-  okt: '10',
-  oct: '10',
-  november: '11',
-  nov: '11',
-  desember: '12',
-  des: '12',
-  dec: '12',
-};
-
-const NUM_TO_INDO_MONTH_NAME: Record<string, string> = {
-  '01': 'Januari',
-  '02': 'Februari',
-  '03': 'Maret',
-  '04': 'April',
-  '05': 'Mei',
-  '06': 'Juni',
-  '07': 'Juli',
-  '08': 'Agustus',
-  '09': 'September',
-  '10': 'Oktober',
-  '11': 'November',
-  '12': 'Desember',
-};
-
 export function normalizePeriodToYearMonth(periodStr?: string | null): string {
   if (!periodStr || typeof periodStr !== 'string') return '';
   const trimmed = periodStr.trim();
@@ -3556,16 +3699,22 @@ export function getEmployeeBonusesForPeriod(
   }
 
   const targetYm = normalizePeriodToYearMonth(periodOrDate);
+  const cutoff = periodOrDate ? getMonthlyCutoffDateRange(periodOrDate, 26, 25) : null;
   let matched = targetYm
-    ? empBonuses.filter((b) => normalizePeriodToYearMonth(b.period_month) === targetYm)
+    ? empBonuses.filter((b) => {
+        const bYm = normalizePeriodToYearMonth(b.period_month);
+        if (bYm) return bYm === targetYm;
+        const awardedDate = (b.date_awarded || '').trim().slice(0, 10);
+        if (cutoff && /^\d{4}-\d{2}-\d{2}$/.test(awardedDate)) {
+          return awardedDate >= cutoff.startDate && awardedDate <= cutoff.endDate;
+        }
+        return false;
+      })
     : empBonuses;
 
-  if (matched.length === 0 && allowCurrentMonthFallback) {
-    const currentYm = getJakartaYearMonth();
-    const currentMonthBonuses = empBonuses.filter(
-      (b) => normalizePeriodToYearMonth(b.period_month) === currentYm
-    );
-    matched = currentMonthBonuses.length > 0 ? currentMonthBonuses : empBonuses;
+  if (!targetYm && matched.length === 0 && allowCurrentMonthFallback) {
+    const currentYm = normalizePeriodToYearMonth(getActivePayrollPeriodByDate());
+    matched = empBonuses.filter((b) => normalizePeriodToYearMonth(b.period_month) === currentYm);
   }
 
   const totalAmount = matched.reduce((sum, b) => sum + Math.max(0, Math.round(Number(b.amount) || 0)), 0);
@@ -3606,7 +3755,7 @@ export function getEmployeeAdjustmentForPeriod(
   allAdjustments: EmployeeAdjustment[] | null | undefined,
   employee: Partial<Employee> | null | undefined,
   periodOrDate?: string,
-  allowCurrentMonthFallback: boolean = true
+  allowCurrentMonthFallback: boolean = false
 ): EmployeeAdjustment | null {
   if (!Array.isArray(allAdjustments) || !employee) return null;
 
@@ -3621,16 +3770,15 @@ export function getEmployeeAdjustmentForPeriod(
     const exactMatch = empAdjustments.find(
       (a) => normalizePeriodToYearMonth(a.period_month) === targetYm
     );
-    if (exactMatch) return exactMatch;
+    return exactMatch || null;
   }
 
   if (allowCurrentMonthFallback) {
-    const currentYm = getJakartaYearMonth();
+    const currentYm = normalizePeriodToYearMonth(getActivePayrollPeriodByDate());
     const currentMonthMatch = empAdjustments.find(
       (a) => normalizePeriodToYearMonth(a.period_month) === currentYm
     );
-    if (currentMonthMatch) return currentMonthMatch;
-    return empAdjustments[0];
+    return currentMonthMatch || null;
   }
 
   return null;
@@ -3661,7 +3809,7 @@ export function getEmployeePayrollDeductionForPeriod(
   allDeductions: PayrollDeductionRecord[] | null | undefined,
   employee: Partial<Employee> | null | undefined,
   periodOrDate?: string,
-  allowCurrentMonthFallback: boolean = true
+  allowCurrentMonthFallback: boolean = false
 ): PayrollDeductionRecord | null {
   if (!Array.isArray(allDeductions) || !employee) return null;
 
@@ -3676,16 +3824,15 @@ export function getEmployeePayrollDeductionForPeriod(
     const exactMatch = empDeductions.find(
       (d) => normalizePeriodToYearMonth(d.period_month) === targetYm
     );
-    if (exactMatch) return exactMatch;
+    return exactMatch || null;
   }
 
   if (allowCurrentMonthFallback) {
-    const currentYm = getJakartaYearMonth();
+    const currentYm = normalizePeriodToYearMonth(getActivePayrollPeriodByDate());
     const currentMonthMatch = empDeductions.find(
       (d) => normalizePeriodToYearMonth(d.period_month) === currentYm
     );
-    if (currentMonthMatch) return currentMonthMatch;
-    return empDeductions[0];
+    return currentMonthMatch || null;
   }
 
   return null;
@@ -3729,15 +3876,19 @@ export function getApprovedSickLeaveSummaryForPeriod(
   }
 
   const targetYm = normalizePeriodToYearMonth(periodOrDate);
-  const periodMatched = targetYm
+  const cutoff = periodOrDate ? getMonthlyCutoffDateRange(periodOrDate, 26, 25) : null;
+  const effectiveList = targetYm
     ? empSickLeaves.filter((l) => {
+        const sDate = (l.startDate || '').trim().slice(0, 10);
+        const eDate = (l.endDate || sDate).trim().slice(0, 10);
+        if (cutoff && /^\d{4}-\d{2}-\d{2}$/.test(sDate) && /^\d{4}-\d{2}-\d{2}$/.test(eDate)) {
+          return sDate <= cutoff.endDate && eDate >= cutoff.startDate;
+        }
         const startYm = normalizePeriodToYearMonth(l.startDate);
         const endYm = normalizePeriodToYearMonth(l.endDate);
         return startYm === targetYm || endYm === targetYm;
       })
     : empSickLeaves;
-
-  const effectiveList = periodMatched.length > 0 ? periodMatched : empSickLeaves;
 
   let sickDays = 0;
   let unpaidSickDays = 0;
@@ -3829,8 +3980,14 @@ export function getApprovedUnpaidLeaveSummaryForPeriod(
   }
 
   const targetYm = normalizePeriodToYearMonth(periodOrDate);
+  const cutoff = periodOrDate ? getMonthlyCutoffDateRange(periodOrDate, 26, 25) : null;
   const periodMatched = targetYm
     ? empUnpaidLeaves.filter((l) => {
+        const sDate = (l.startDate || '').trim().slice(0, 10);
+        const eDate = (l.endDate || sDate).trim().slice(0, 10);
+        if (cutoff && /^\d{4}-\d{2}-\d{2}$/.test(sDate) && /^\d{4}-\d{2}-\d{2}$/.test(eDate)) {
+          return sDate <= cutoff.endDate && eDate >= cutoff.startDate;
+        }
         const startYm = normalizePeriodToYearMonth(l.startDate);
         const endYm = normalizePeriodToYearMonth(l.endDate);
         return startYm === targetYm || endYm === targetYm;

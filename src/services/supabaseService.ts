@@ -32,6 +32,7 @@ import {
   getJakartaIsoTimestamp,
   getJakartaDateParts,
   getCurrentRealTimePayrollPeriod,
+  normalizePeriodToYearMonth,
 } from '../utils/formatters';
 import {
   sanitizeEmployeesListForStorage,
@@ -889,6 +890,49 @@ export function dbToAsset(row: any): CompanyAsset {
   };
 }
 
+export const PAYROLL_ARCHIVE_STORAGE_KEY = 'tgi_payrolls_archive_v1';
+
+export function getPayrollArchiveKey(employeeId?: string | null, period?: string | null): string {
+  const empKey = String(employeeId || '').trim();
+  const ymKey = normalizePeriodToYearMonth(period) || String(period || '').trim().toLowerCase();
+  return `${empKey}__${ymKey}`;
+}
+
+export function getSavedPayrollArchivesLocal(): PayrollRecord[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(PAYROLL_ARCHIVE_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function savePayrollArchivesLocal(records: PayrollRecord[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const map = new Map<string, PayrollRecord>();
+    for (const r of getSavedPayrollArchivesLocal()) {
+      if (r?.employeeId && r?.period) {
+        map.set(getPayrollArchiveKey(r.employeeId, r.period), r);
+      }
+    }
+    for (const r of records) {
+      if (r?.employeeId && r?.period) {
+        const key = getPayrollArchiveKey(r.employeeId, r.period);
+        const prev = map.get(key);
+        map.set(key, prev ? { ...prev, ...r } : r);
+      }
+    }
+    const mergedList = Array.from(map.values()).slice(-600);
+    localStorage.setItem(PAYROLL_ARCHIVE_STORAGE_KEY, JSON.stringify(mergedList));
+  } catch {
+    // ignore storage errors
+  }
+}
+
 export function payrollToDb(p: PayrollRecord) {
   return {
     id: p.id,
@@ -922,11 +966,23 @@ export function payrollToDb(p: PayrollRecord) {
 }
 
 export function dbToPayroll(row: any): PayrollRecord {
+  const archiveList = getSavedPayrollArchivesLocal();
+  const archiveMatch = archiveList.find(
+    (a) =>
+      a.id === row.id ||
+      getPayrollArchiveKey(a.employeeId, a.period) ===
+        getPayrollArchiveKey(row.employee_id, row.period)
+  );
+  const bpjsKesEmp = Number(row.bpjs_kesehatan_employee ?? archiveMatch?.bpjsKesehatanEmployee) || 0;
+  const bpjsJhtEmp = Number(row.bpjs_jht_employee ?? archiveMatch?.bpjsJhtEmployee) || 0;
+  const pphVal = Number(row.pph21_ter ?? archiveMatch?.pph21TER) || 0;
+
   return {
+    ...(archiveMatch || {}),
     id: row.id,
     employeeId: row.employee_id,
     period: row.period,
-    createdAt: row.created_at || new Date().toISOString(),
+    createdAt: row.created_at || archiveMatch?.createdAt || new Date().toISOString(),
     baseSalary: Number(row.base_salary) || 0,
     allowancePosition: Number(row.allowance_position) || 0,
     allowanceTransport: Number(row.allowance_transport) || 0,
@@ -936,22 +992,25 @@ export function dbToPayroll(row: any): PayrollRecord {
     bonus: Number(row.bonus) || 0,
     totalGrossSalary: Number(row.total_gross_salary) || 0,
     lateDeduction: Number(row.late_deduction) || 0,
-    bpjsKesehatanEmployee: 0,
-    bpjsKesehatanEmployer: 0,
-    bpjsJhtEmployee: 0,
-    bpjsJhtEmployer: 0,
-    bpjsJpEmployee: 0,
-    bpjsJpEmployer: 0,
-    bpjsJkkEmployer: 0,
-    bpjsJkmEmployer: 0,
-    pph21TER: 0,
-    otherDeductions: 0,
+    bpjsKesehatanEmployee: bpjsKesEmp,
+    bpjsKesehatanEmployer: Number(row.bpjs_kesehatan_employer) || 0,
+    bpjsJhtEmployee: bpjsJhtEmp,
+    bpjsJhtEmployer: Number(row.bpjs_jht_employer) || 0,
+    bpjsJpEmployee: Number(row.bpjs_jp_employee) || 0,
+    bpjsJpEmployer: Number(row.bpjs_jp_employer) || 0,
+    bpjsJkkEmployer: Number(row.bpjs_jkk_employer) || 0,
+    bpjsJkmEmployer: Number(row.bpjs_jkm_employer) || 0,
+    pph21TER: pphVal,
+    bpjs_tk_manual: archiveMatch?.bpjs_tk_manual ?? bpjsJhtEmp,
+    bpjs_kesehatan_manual: archiveMatch?.bpjs_kesehatan_manual ?? bpjsKesEmp,
+    pph21_manual: archiveMatch?.pph21_manual ?? pphVal,
+    otherDeductions: archiveMatch?.otherDeductions ?? 0,
     cashAdvanceDeduction: Number(row.cash_advance_deduction) || 0,
     totalDeductions: Number(row.total_deductions) || 0,
     takeHomePay: Number(row.take_home_pay) || 0,
-    paymentStatus: row.payment_status || 'Draft',
-    paymentDate: row.payment_date || undefined,
-    referenceNumber: row.reference_number || `PAY-${row.id}`,
+    paymentStatus: row.payment_status || archiveMatch?.paymentStatus || 'Draft',
+    paymentDate: row.payment_date || archiveMatch?.paymentDate || undefined,
+    referenceNumber: row.reference_number || archiveMatch?.referenceNumber || `PAY-${row.id}`,
   };
 }
 
@@ -1689,16 +1748,108 @@ export async function deleteAssetFromSupabase(id: string): Promise<boolean> {
   }
 }
 
-export async function fetchPayrollsFromSupabase(): Promise<PayrollRecord[] | null> {
+export async function fetchPayrollArchivesFromSupabase(): Promise<PayrollRecord[]> {
   try {
     const { data, error } = await supabase
-      .from('payrolls')
-      .select('*')
-      .order('created_at', { ascending: false });
+      .from('company_settings')
+      .select('config_json')
+      .eq('id', 'tgi-payroll-archives-v1')
+      .maybeSingle();
+    if (error || !data || !data.config_json) {
+      return getSavedPayrollArchivesLocal();
+    }
+    const cfg = data.config_json as any;
+    const records: PayrollRecord[] = Array.isArray(cfg?.records) ? cfg.records : [];
+    if (records.length > 0) {
+      savePayrollArchivesLocal(records);
+    }
+    return getSavedPayrollArchivesLocal();
+  } catch {
+    return getSavedPayrollArchivesLocal();
+  }
+}
 
-    if (error || !data) return null;
+export async function upsertPayrollPeriodArchiveSnapshotToSupabase(
+  period: string,
+  periodRecords: PayrollRecord[]
+): Promise<boolean> {
+  if (!period || !Array.isArray(periodRecords) || periodRecords.length === 0) return false;
+  const nowIso = getJakartaIsoTimestamp();
+  const normalizedRecords = periodRecords.map((r) => ({
+    ...r,
+    period: r.period || period,
+    isLocked: r.isLocked ?? true,
+    lockedAt: r.lockedAt || nowIso,
+  }));
+  savePayrollArchivesLocal(normalizedRecords);
+
+  try {
+    // 1. Upsert individual rows to `payrolls` table
+    const rows = normalizedRecords.map(payrollToDb);
+    await supabase.from('payrolls').upsert(rows, { onConflict: 'id' });
+
+    // 2. Also store full snapshot (including dailyWorkBreakdown, hourlyRate, lockedAt, etc.) in company_settings JSONB
+    const allArchived = getSavedPayrollArchivesLocal();
+    const { error } = await supabase.from('company_settings').upsert(
+      {
+        id: 'tgi-payroll-archives-v1',
+        company_name: 'TGI Payroll Archives Snapshot',
+        current_payroll_period: period,
+        config_json: {
+          updatedAt: nowIso,
+          latestArchivedPeriod: period,
+          records: allArchived,
+        },
+        updated_at: nowIso,
+      },
+      { onConflict: 'id' }
+    );
+    return !error;
+  } catch {
+    return false;
+  }
+}
+
+export async function fetchPayrollsFromSupabase(): Promise<PayrollRecord[] | null> {
+  try {
+    const [payrollsRes, archivesList] = await Promise.all([
+      supabase.from('payrolls').select('*').order('created_at', { ascending: false }),
+      fetchPayrollArchivesFromSupabase(),
+    ]);
+
     const deletedIds = new Set(getDeletedEmployeeIds());
-    return data.map(dbToPayroll).filter((p) => !deletedIds.has(p.employeeId));
+    const dbRows =
+      !payrollsRes.error && Array.isArray(payrollsRes.data)
+        ? payrollsRes.data.map(dbToPayroll)
+        : [];
+
+    const mergedMap = new Map<string, PayrollRecord>();
+    for (const arch of archivesList) {
+      if (arch?.employeeId && arch?.period && !deletedIds.has(arch.employeeId)) {
+        mergedMap.set(getPayrollArchiveKey(arch.employeeId, arch.period), arch);
+      }
+    }
+    for (const row of dbRows) {
+      if (row?.employeeId && row?.period && !deletedIds.has(row.employeeId)) {
+        const key = getPayrollArchiveKey(row.employeeId, row.period);
+        const existingArch = mergedMap.get(key);
+        // Jika arsip sudah terkunci (isLocked), pertahankan snapshot lengkap dari arsip
+        if (existingArch?.isLocked) {
+          mergedMap.set(key, {
+            ...row,
+            ...existingArch,
+            id: existingArch.id || row.id,
+          });
+        } else {
+          mergedMap.set(key, existingArch ? { ...existingArch, ...row } : row);
+        }
+      }
+    }
+
+    const result = Array.from(mergedMap.values());
+    if (result.length === 0 && payrollsRes.error) return null;
+    savePayrollArchivesLocal(result);
+    return result;
   } catch {
     return null;
   }
@@ -1706,8 +1857,26 @@ export async function fetchPayrollsFromSupabase(): Promise<PayrollRecord[] | nul
 
 export async function upsertPayrollToSupabase(record: PayrollRecord): Promise<boolean> {
   try {
+    savePayrollArchivesLocal([record]);
     const row = payrollToDb(record);
     const { error } = await supabase.from('payrolls').upsert(row, { onConflict: 'id' });
+    if (record.isLocked) {
+      const allArchived = getSavedPayrollArchivesLocal();
+      void supabase.from('company_settings').upsert(
+        {
+          id: 'tgi-payroll-archives-v1',
+          company_name: 'TGI Payroll Archives Snapshot',
+          current_payroll_period: record.period,
+          config_json: {
+            updatedAt: getJakartaIsoTimestamp(),
+            latestArchivedPeriod: record.period,
+            records: allArchived,
+          },
+          updated_at: getJakartaIsoTimestamp(),
+        },
+        { onConflict: 'id' }
+      );
+    }
     if (error) {
       console.warn('Supabase upsert payroll error:', error.message);
       return false;

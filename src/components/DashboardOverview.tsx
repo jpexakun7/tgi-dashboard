@@ -442,7 +442,10 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
         emp,
         attendances,
         companyConfig.workShifts,
-        companyConfig.attendancePenaltyPolicy
+        companyConfig.attendancePenaltyPolicy,
+        companyConfig.currentPayrollPeriod,
+        companyConfig.cutOffStartDay || 26,
+        companyConfig.cutOffEndDay || 25
       );
 
       const computed = calculatePayroll(
@@ -486,6 +489,8 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
     overtimeRequests,
     attendances,
     companyConfig.currentPayrollPeriod,
+    companyConfig.cutOffStartDay,
+    companyConfig.cutOffEndDay,
     companyConfig.workShifts,
     companyConfig.attendancePenaltyPolicy,
   ]);

@@ -23,8 +23,10 @@ import {
   SlidersHorizontal,
   FileMinus2,
   Gift,
+  Lock,
 } from 'lucide-react';
-import { GoogleAdminUser, DashboardModule } from '../types';
+import { GoogleAdminUser, DashboardModule, CompanyConfig } from '../types';
+import { isPayrollPeriodPastCutoff } from '../utils/formatters';
 
 export type ActiveTab =
   | 'overview'
@@ -63,6 +65,7 @@ interface SidebarProps {
   onLogout?: () => void;
   allowedModules?: DashboardModule[];
   onOpenEmployeePortal?: () => void;
+  companyConfig?: CompanyConfig;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -78,7 +81,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onLogout,
   allowedModules,
   onOpenEmployeePortal,
+  companyConfig,
 }) => {
+  const activePeriodLabel = companyConfig?.currentPayrollPeriod || 'November 2026';
+  const cutOffEndDay = companyConfig?.cutOffEndDay || 25;
+  const isPeriodArchivedOrLocked = Boolean(
+    (companyConfig?.lockedPayrollPeriods || []).includes(activePeriodLabel) ||
+      isPayrollPeriodPastCutoff(
+        activePeriodLabel,
+        new Date(),
+        companyConfig?.cutOffStartDay || 26,
+        cutOffEndDay
+      )
+  );
   const menuItems = [
     {
       id: 'overview' as ActiveTab,
@@ -267,10 +282,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         {/* Company Quick Badge */}
         <div className="px-4 py-3 mx-3 my-3 rounded-xl bg-slate-800/60 border border-slate-700/60 flex items-center gap-2.5">
-          <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></div>
-          <div className="overflow-hidden">
-            <p className="text-xs font-medium text-slate-200 truncate">Tas Grosir Import</p>
-            <p className="text-[10px] text-slate-400">Periode: Okt 2026 (Cut-off 25)</p>
+          <div
+            className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+              isPeriodArchivedOrLocked ? 'bg-amber-400' : 'bg-emerald-400 animate-pulse'
+            }`}
+          />
+          <div className="overflow-hidden min-w-0 flex-1">
+            <div className="flex items-center justify-between gap-1">
+              <p className="text-xs font-medium text-slate-200 truncate">
+                {companyConfig?.companyName || 'Tas Grosir Import'}
+              </p>
+              {isPeriodArchivedOrLocked && (
+                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-400/30 text-[9px] font-bold shrink-0">
+                  <Lock className="w-2.5 h-2.5" />
+                  Arsip
+                </span>
+              )}
+            </div>
+            <p className="text-[10px] text-slate-400 truncate">
+              Periode: {activePeriodLabel} (Cut-off {cutOffEndDay})
+            </p>
           </div>
         </div>
 

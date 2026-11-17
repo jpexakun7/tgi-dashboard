@@ -11,6 +11,8 @@ import {
   Layers,
   Activity,
   ArrowUpRight,
+  Lock,
+  Unlock,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -39,6 +41,8 @@ import {
   getJakartaDateString,
   formatIndoDate,
   AVAILABLE_PAYROLL_PERIODS,
+  getDynamicAvailablePayrollPeriods,
+  isPayrollPeriodPastCutoff,
   formatCutOffPeriodRange,
   getMonthlyCutoffDateRange,
   getWeeklyCycleRangeForDate,
@@ -77,7 +81,11 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     useState<string>('ALL_IN_PERIOD');
 
   const availablePeriods = React.useMemo(() => {
-    const list = [...AVAILABLE_PAYROLL_PERIODS];
+    const dynamicList = getDynamicAvailablePayrollPeriods(
+      new Date(),
+      companyConfig.cutOffEndDay || 25
+    );
+    const list = Array.from(new Set([...dynamicList, ...AVAILABLE_PAYROLL_PERIODS]));
     if (
       companyConfig.currentPayrollPeriod &&
       !list.includes(companyConfig.currentPayrollPeriod)
@@ -85,7 +93,28 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       list.unshift(companyConfig.currentPayrollPeriod);
     }
     return list;
-  }, [companyConfig.currentPayrollPeriod]);
+  }, [companyConfig.currentPayrollPeriod, companyConfig.cutOffEndDay]);
+
+  const isSelectedPeriodLocked = React.useMemo(
+    () =>
+      Boolean(
+        (companyConfig.lockedPayrollPeriods || []).includes(companyConfig.currentPayrollPeriod) ||
+          payrolls.some((p) => p.period === companyConfig.currentPayrollPeriod && p.isLocked) ||
+          isPayrollPeriodPastCutoff(
+            companyConfig.currentPayrollPeriod,
+            new Date(),
+            companyConfig.cutOffStartDay || 26,
+            companyConfig.cutOffEndDay || 25
+          )
+      ),
+    [
+      companyConfig.lockedPayrollPeriods,
+      companyConfig.currentPayrollPeriod,
+      companyConfig.cutOffStartDay,
+      companyConfig.cutOffEndDay,
+      payrolls,
+    ]
+  );
 
   const selectableWeeklyCycles = React.useMemo(
     () => getSelectableWeeklyCycles(undefined, partTimeLogs, partTimePayouts, 10, 2),
@@ -733,15 +762,62 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
-            <BarChart3 className="w-6 h-6 text-emerald-600" />
-            Laporan & Rekapitulasi Penggajian
-          </h1>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <h1 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
+              <BarChart3 className="w-6 h-6 text-emerald-600" />
+              Laporan &amp; Rekapitulasi Penggajian
+            </h1>
+            {isSelectedPeriodLocked ? (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-100 text-amber-900 border border-amber-300 text-[11px] font-bold shadow-2xs">
+                <Lock className="w-3.5 h-3.5 text-amber-700" />
+                Periode Terkunci (Arsip)
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-[11px] font-semibold">
+                <Unlock className="w-3.5 h-3.5 text-emerald-600" />
+                Periode Aktif Berjalan
+              </span>
+            )}
+          </div>
           <p className="text-xs text-slate-500 mt-0.5">
-            Analitik komprehensif biaya gaji tahun berjalan, rekonsiliasi iuran BPJS, dan formulir pajak.
+            Analitik komprehensif biaya gaji tahun berjalan, arsip riwayat payroll bulanan, rekonsiliasi iuran BPJS, dan formulir pajak.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-xl px-3 py-1.5 shadow-2xs">
+            <Calendar className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span className="text-[11px] font-semibold text-slate-500 hidden sm:inline">
+              Periode &amp; Arsip:
+            </span>
+            <select
+              value={companyConfig.currentPayrollPeriod}
+              onChange={(e) => onChangePayrollPeriod?.(e.target.value)}
+              aria-label="Pilih Periode Laporan Payroll"
+              className="text-xs font-bold text-slate-900 bg-transparent focus:outline-hidden cursor-pointer pr-1"
+            >
+              {availablePeriods.map((p) => {
+                const isOptLocked =
+                  (companyConfig.lockedPayrollPeriods || []).includes(p) ||
+                  isPayrollPeriodPastCutoff(
+                    p,
+                    new Date(),
+                    companyConfig.cutOffStartDay || 26,
+                    companyConfig.cutOffEndDay || 25
+                  );
+                return (
+                  <option key={p} value={p}>
+                    {p} (
+                    {formatCutOffPeriodRange(
+                      p,
+                      companyConfig.cutOffStartDay || 26,
+                      companyConfig.cutOffEndDay || 25
+                    )}
+                    ){isOptLocked ? ' 🔒 Arsip' : ' • Aktif'}
+                  </option>
+                );
+              })}
+            </select>
+          </div>
           <button
             onClick={handleExportSummaryCSV}
             className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-md shadow-emerald-600/30"

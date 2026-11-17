@@ -56,6 +56,7 @@ import {
   RefreshCw,
   Image as ImageIcon,
   Video,
+  History,
 } from 'lucide-react';
 import {
   Employee,
@@ -117,6 +118,12 @@ import {
   calculatePayroll,
   getEmployeeAdjustmentForPeriod,
   getActiveEmployeeThrForPayslip,
+  AVAILABLE_PAYROLL_PERIODS,
+  getDynamicAvailablePayrollPeriods,
+  formatCutOffPeriodRange,
+  getMonthlyCutoffDateRange,
+  isPayrollPeriodPastCutoff,
+  filterOvertimeRequestsForPeriod,
 } from '../utils/formatters';
 import { OfficialPayslipDocument, computeOfficialPayslipData } from './PayslipModal';
 import { formatWhatsAppPhone } from '../utils/notificationHelper';
@@ -251,6 +258,14 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
   onMarkBonusAsRead,
 }) => {
   const [activePortalTab, setActivePortalTab] = useState<'home' | 'payroll' | 'attendance' | 'leave' | 'claims' | 'cash_advance' | 'assets' | 'performance' | 'profile' | 'live_commission' | 'my_bonuses'>('home');
+  const [selectedPortalPayrollPeriod, setSelectedPortalPayrollPeriod] = useState<string>(
+    () => companyConfig.currentPayrollPeriod || 'November 2026'
+  );
+  React.useEffect(() => {
+    if (companyConfig.currentPayrollPeriod) {
+      setSelectedPortalPayrollPeriod(companyConfig.currentPayrollPeriod);
+    }
+  }, [companyConfig.currentPayrollPeriod]);
   const [isMobileMenuSheetOpen, setIsMobileMenuSheetOpen] = useState(false);
   const [isSwitchProfileModalOpen, setIsSwitchProfileModalOpen] = useState(false);
   const [profileSearchQuery, setProfileSearchQuery] = useState('');
@@ -701,6 +716,44 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     penaltyPolicy,
   ]);
 
+  const effectiveSelectedPeriod =
+    selectedPortalPayrollPeriod || companyConfig.currentPayrollPeriod || 'November 2026';
+
+  const availablePortalPeriods = useMemo(() => {
+    const dynamicPeriods = getDynamicAvailablePayrollPeriods(
+      new Date(),
+      companyConfig.cutOffEndDay || 25
+    );
+    const fromRecords = allPayrolls
+      .filter((p) => p && p.employeeId === currentEmployee.id && p.period)
+      .map((p) => p.period);
+    return Array.from(
+      new Set([
+        companyConfig.currentPayrollPeriod,
+        ...dynamicPeriods,
+        ...fromRecords,
+        ...AVAILABLE_PAYROLL_PERIODS,
+      ].filter(Boolean))
+    );
+  }, [allPayrolls, currentEmployee.id, companyConfig.currentPayrollPeriod, companyConfig.cutOffEndDay]);
+
+  const selectedPeriodCutoffRange = useMemo(
+    () =>
+      getMonthlyCutoffDateRange(
+        effectiveSelectedPeriod,
+        companyConfig.cutOffStartDay || 26,
+        companyConfig.cutOffEndDay || 25
+      ),
+    [effectiveSelectedPeriod, companyConfig.cutOffStartDay, companyConfig.cutOffEndDay]
+  );
+
+  const myPeriodFilteredAttendances = useMemo(() => {
+    return myAttendances.filter((a) => {
+      const d = (a.date || '').slice(0, 10);
+      return d >= selectedPeriodCutoffRange.startDate && d <= selectedPeriodCutoffRange.endDate;
+    });
+  }, [myAttendances, selectedPeriodCutoffRange]);
+
   const myPenaltySummary = useMemo(
     () =>
       calculateEmployeeAttendancePenalty(
@@ -708,7 +761,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
         myAttendances,
         companyConfig.workShifts,
         penaltyPolicy,
-        companyConfig.currentPayrollPeriod,
+        effectiveSelectedPeriod,
         companyConfig.cutOffStartDay || 26,
         companyConfig.cutOffEndDay || 25
       ),
@@ -717,7 +770,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       myAttendances,
       companyConfig.workShifts,
       penaltyPolicy,
-      companyConfig.currentPayrollPeriod,
+      effectiveSelectedPeriod,
       companyConfig.cutOffStartDay,
       companyConfig.cutOffEndDay,
     ]
@@ -1596,7 +1649,45 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
 
   // Calculate current employee hourly rate, daily salary (standard_daily_hours || 9), and real-time monthly gross/THP
   // Jam Kerja Normal dibatasi maksimal sesuai employee.standard_daily_hours || 9 jam/hari dan 0 jam jika belum Clock-Out / Clock-In === Clock-Out
-  const currentPay = payrollRecord || allPayrolls.find((p) => p.employeeId === currentEmployee.id);
+  const currentPay = useMemo(() => {
+    const targetYm = normalizePeriodToYearMonth(effectiveSelectedPeriod);
+    const matchedInAll = allPayrolls.find(
+      (p) =>
+        p.employeeId === currentEmployee.id &&
+        normalizePeriodToYearMonth(p.period) === targetYm
+    );
+    if (matchedInAll) return matchedInAll;
+    if (
+      payrollRecord &&
+      payrollRecord.employeeId === currentEmployee.id &&
+      normalizePeriodToYearMonth(payrollRecord.period) === targetYm
+    ) {
+      return payrollRecord;
+    }
+    return undefined;
+  }, [allPayrolls, payrollRecord, currentEmployee.id, effectiveSelectedPeriod]);
+
+  const isSelectedPortalPeriodLocked = useMemo(
+    () =>
+      Boolean(
+        currentPay?.isLocked ||
+          (companyConfig.lockedPayrollPeriods || []).includes(effectiveSelectedPeriod) ||
+          isPayrollPeriodPastCutoff(
+            effectiveSelectedPeriod,
+            new Date(),
+            companyConfig.cutOffStartDay || 26,
+            companyConfig.cutOffEndDay || 25
+          )
+      ),
+    [
+      currentPay?.isLocked,
+      companyConfig.lockedPayrollPeriods,
+      effectiveSelectedPeriod,
+      companyConfig.cutOffStartDay,
+      companyConfig.cutOffEndDay,
+    ]
+  );
+
   const myHourlyRate = isPartTimeEmployee
     ? myPartTimeHourlyRate
     : currentPay?.hourlyRate ||
@@ -1605,7 +1696,11 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
 
   const myDailyWorkBreakdown = useMemo(() => {
     const rawList =
-      myPenaltySummary.dailyWorkBreakdown && myPenaltySummary.dailyWorkBreakdown.length > 0
+      currentPay?.isLocked &&
+      Array.isArray(currentPay.dailyWorkBreakdown) &&
+      currentPay.dailyWorkBreakdown.length > 0
+        ? currentPay.dailyWorkBreakdown
+        : myPenaltySummary.dailyWorkBreakdown && myPenaltySummary.dailyWorkBreakdown.length > 0
         ? myPenaltySummary.dailyWorkBreakdown
         : currentPay?.dailyWorkBreakdown || [];
 
@@ -1655,6 +1750,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       };
     });
   }, [
+    currentPay?.isLocked,
     myPenaltySummary.dailyWorkBreakdown,
     currentPay?.dailyWorkBreakdown,
     myHourlyRate,
@@ -1711,9 +1807,9 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     () =>
       calculateEmployeeLiveSalesCommission(
         effectivePortalEmployee,
-        companyConfig.currentPayrollPeriod
+        effectiveSelectedPeriod
       ),
-    [effectivePortalEmployee, companyConfig.currentPayrollPeriod]
+    [effectivePortalEmployee, effectiveSelectedPeriod]
   );
 
   const allCombinedBonuses = useMemo(() => {
@@ -1741,9 +1837,9 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       getEmployeeBonusesForPeriod(
         allCombinedBonuses,
         currentEmployee,
-        currentPay?.period || companyConfig.currentPayrollPeriod
+        effectiveSelectedPeriod
       ),
-    [allCombinedBonuses, currentEmployee, currentPay?.period, companyConfig.currentPayrollPeriod]
+    [allCombinedBonuses, currentEmployee, effectiveSelectedPeriod]
   );
 
   const handleMarkBonusRead = async (bonusId: string) => {
@@ -1752,10 +1848,24 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     onMarkBonusAsRead?.(bonusId);
   };
 
-  // Kelebihan jam kerja di atas 9 jam/hari HANYA dihitung sebagai Lembur jika ada Pengajuan Lembur berstatus "Disetujui"
+  // Kelebihan jam kerja di atas 9 jam/hari HANYA dihitung sebagai Lembur jika ada Pengajuan Lembur berstatus "Disetujui" pada rentang periode terpilih
   const myApprovedOvertimeRequests = useMemo(
-    () => myOvertimeRequests.filter((o) => o.status === 'Disetujui'),
-    [myOvertimeRequests]
+    () =>
+      filterOvertimeRequestsForPeriod(
+        myOvertimeRequests,
+        currentEmployee.id,
+        effectiveSelectedPeriod,
+        companyConfig.cutOffStartDay || 26,
+        companyConfig.cutOffEndDay || 25,
+        true
+      ),
+    [
+      myOvertimeRequests,
+      currentEmployee.id,
+      effectiveSelectedPeriod,
+      companyConfig.cutOffStartDay,
+      companyConfig.cutOffEndDay,
+    ]
   );
   const approvedOvertimeMinutes = useMemo(
     () => myApprovedOvertimeRequests.reduce((sum, o) => sum + getOvertimeMinutes(o), 0),
@@ -1810,7 +1920,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
 
   const myPeriodDeduction = useMemo(() => {
     const targetPeriodYm =
-      normalizePeriodToYearMonth(currentPay?.period || companyConfig.currentPayrollPeriod) ||
+      normalizePeriodToYearMonth(effectiveSelectedPeriod) ||
       getJakartaYearMonth();
     return (
       allCombinedDeductions.find(
@@ -1821,8 +1931,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     );
   }, [
     allCombinedDeductions,
-    currentPay?.period,
-    companyConfig.currentPayrollPeriod,
+    effectiveSelectedPeriod,
     effectivePortalEmployee,
   ]);
 
@@ -1836,7 +1945,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     ? Math.max(0, Math.round(Number(myPeriodDeduction.pph21_manual) || 0))
     : Math.max(0, Math.round(Number(currentPay?.pph21_manual) || 0));
 
-  const targetPortalPeriod = currentPay?.period || companyConfig.currentPayrollPeriod;
+  const targetPortalPeriod = effectiveSelectedPeriod;
 
   const myPeriodAdjustment = useMemo(
     () =>
@@ -2976,6 +3085,155 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       {/* TAB 1: GAJI & SLIP GAJI */}
       {activePortalTab === 'payroll' && (
         <div className="space-y-6">
+          {/* Bar Pemilihan Periode & Arsip Riwayat Slip Gaji & Absensi */}
+          <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-xs space-y-4">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-sm sm:text-base font-bold text-slate-900 flex items-center gap-2">
+                    <History className="w-4 h-4 text-emerald-600" />
+                    <span>Riwayat Slip Gaji &amp; Absensi per Periode Cut-Off</span>
+                  </h3>
+                  {isSelectedPortalPeriodLocked ? (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                      <Lock className="w-3 h-3 text-amber-700" />
+                      Periode Terkunci (Arsip)
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                      <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                      Periode Aktif Berjalan (Cut-off Tgl {companyConfig.cutOffEndDay || 25})
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Pilih periode bulan aktif atau arsip bulan sebelumnya (Okt 2026, Sep 2026, Agu 2026, dst.) untuk melihat dan mencetak Slip Gaji PDF serta rekap absensi pada rentang cut-off tanggal 26 s/d 25.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-300 rounded-xl px-3 py-2">
+                  <Calendar className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span className="text-xs font-semibold text-slate-600">Pilih Periode:</span>
+                  <select
+                    value={effectiveSelectedPeriod}
+                    onChange={(e) => setSelectedPortalPayrollPeriod(e.target.value)}
+                    aria-label="Pilih Periode Riwayat Slip Gaji & Absensi"
+                    className="text-xs font-extrabold text-slate-900 bg-transparent focus:outline-hidden cursor-pointer pr-1"
+                  >
+                    {availablePortalPeriods.map((periodOpt) => {
+                      const rangeTxt = formatCutOffPeriodRange(
+                        periodOpt,
+                        companyConfig.cutOffStartDay || 26,
+                        companyConfig.cutOffEndDay || 25
+                      );
+                      const isOptLocked =
+                        (companyConfig.lockedPayrollPeriods || []).includes(periodOpt) ||
+                        isPayrollPeriodPastCutoff(
+                          periodOpt,
+                          new Date(),
+                          companyConfig.cutOffStartDay || 26,
+                          companyConfig.cutOffEndDay || 25
+                        );
+                      return (
+                        <option key={periodOpt} value={periodOpt}>
+                          {periodOpt} ({rangeTxt}){isOptLocked ? ' 🔒 Arsip' : ' • Aktif'}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+                {effectiveSelectedPeriod !== companyConfig.currentPayrollPeriod && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedPortalPayrollPeriod(companyConfig.currentPayrollPeriod)}
+                    className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold cursor-pointer transition-colors"
+                  >
+                    Kembali ke Periode Aktif ({companyConfig.currentPayrollPeriod})
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Daftar Cepat Arsip Slip Gaji Bulan Sebelumnya & Periode Berjalan */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 pt-2 border-t border-slate-100">
+              {availablePortalPeriods.slice(0, 4).map((periodOpt) => {
+                const optYm = normalizePeriodToYearMonth(periodOpt);
+                const recForOpt = allPayrolls.find(
+                  (p) =>
+                    p.employeeId === currentEmployee.id &&
+                    normalizePeriodToYearMonth(p.period) === optYm
+                );
+                const isSelected = effectiveSelectedPeriod === periodOpt;
+                const isArchivedOpt =
+                  Boolean(recForOpt?.isLocked) ||
+                  (companyConfig.lockedPayrollPeriods || []).includes(periodOpt) ||
+                  isPayrollPeriodPastCutoff(
+                    periodOpt,
+                    new Date(),
+                    companyConfig.cutOffStartDay || 26,
+                    companyConfig.cutOffEndDay || 25
+                  );
+                const cutOffStr = formatCutOffPeriodRange(
+                  periodOpt,
+                  companyConfig.cutOffStartDay || 26,
+                  companyConfig.cutOffEndDay || 25
+                );
+                return (
+                  <div
+                    key={periodOpt}
+                    onClick={() => setSelectedPortalPayrollPeriod(periodOpt)}
+                    className={`p-3 rounded-xl border transition-all cursor-pointer flex flex-col justify-between gap-2 ${
+                      isSelected
+                        ? 'bg-emerald-50/80 border-emerald-500 ring-2 ring-emerald-500/20'
+                        : 'bg-slate-50/70 hover:bg-slate-100/80 border-slate-200'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center justify-between gap-1.5">
+                        <span className="text-xs font-extrabold text-slate-900 truncate">
+                          {periodOpt}
+                        </span>
+                        {isArchivedOpt ? (
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300 text-[9px] font-bold shrink-0">
+                            <Lock className="w-2.5 h-2.5" />
+                            Arsip
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-300 text-[9px] font-bold shrink-0">
+                            Aktif
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[10px] text-slate-500 block mt-0.5">
+                        Cut-off: {cutOffStr}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between pt-1.5 border-t border-slate-200/70">
+                      <span className="text-xs font-extrabold text-emerald-700 font-mono">
+                        {recForOpt ? formatRupiah(recForOpt.takeHomePay) : '-'}
+                      </span>
+                      {recForOpt && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedPortalPayrollPeriod(periodOpt);
+                            onOpenPayslip(recForOpt);
+                          }}
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-white hover:bg-emerald-600 hover:text-white text-slate-700 border border-slate-300 text-[10px] font-bold transition-colors cursor-pointer"
+                        >
+                          <Printer className="w-3 h-3" />
+                          <span>Cetak PDF</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
           {/* Highlight Cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* Take Home Pay */}
@@ -2996,7 +3254,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-white/20 text-white">
                     {isPartTimeEmployee
                       ? 'SLIP GAJI PART-TIME (MINGGUAN)'
-                      : companyConfig.currentPayrollPeriod}
+                      : effectiveSelectedPeriod}
                   </span>
                 </div>
                 <h2 className="text-2xl sm:text-3xl font-extrabold mt-2 tracking-tight">
@@ -3091,7 +3349,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 >
                   {isPartTimeEmployee
                     ? 'Setiap Hari Minggu (Weekly Payout)'
-                    : `Tgl ${companyConfig.payrollDisbursementDay} ${companyConfig.currentPayrollPeriod.split(' ')[0]}`}
+                    : `Tgl ${companyConfig.payrollDisbursementDay} ${effectiveSelectedPeriod.split(' ')[0]}`}
                 </span>
               </div>
             </div>
@@ -3610,26 +3868,81 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
 
           {/* Personal Attendance History Table (Mobile Cards + Desktop Table) */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-            <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between">
+            <div className="p-4 sm:p-5 border-b border-slate-100 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
               <div>
-                <h3 className="text-sm font-bold text-slate-900">
-                  Riwayat Presensi, Foto Wajah & Titik Lokasi GPS Saya
-                </h3>
-                <p className="text-xs text-slate-500">
-                  Total {myAttendances.length} catatan kehadiran tercatat beserta bukti foto wajah real-time & koordinat GPS HP
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-sm font-bold text-slate-900">
+                    Riwayat Presensi, Foto Wajah &amp; Titik Lokasi GPS Saya ({effectiveSelectedPeriod})
+                  </h3>
+                  {isSelectedPortalPeriodLocked ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                      <Lock className="w-3 h-3 text-amber-700" />
+                      Periode Terkunci (Arsip)
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                      Periode Aktif Berjalan
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Menampilkan <strong>{myPeriodFilteredAttendances.length} hari presensi</strong> pada rentang cut-off{' '}
+                  <strong>{selectedPeriodCutoffRange.label}</strong> (Total akumulasi: {myTotalActualWorkHours} Jam)
                 </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-300 rounded-xl px-3 py-1.5">
+                  <Calendar className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  <span className="text-[11px] font-semibold text-slate-600">Periode Absensi:</span>
+                  <select
+                    value={effectiveSelectedPeriod}
+                    onChange={(e) => setSelectedPortalPayrollPeriod(e.target.value)}
+                    aria-label="Pilih Periode Riwayat Absensi"
+                    className="text-xs font-extrabold text-slate-900 bg-transparent focus:outline-hidden cursor-pointer pr-1"
+                  >
+                    {availablePortalPeriods.map((periodOpt) => {
+                      const rangeTxt = formatCutOffPeriodRange(
+                        periodOpt,
+                        companyConfig.cutOffStartDay || 26,
+                        companyConfig.cutOffEndDay || 25
+                      );
+                      const isOptLocked =
+                        (companyConfig.lockedPayrollPeriods || []).includes(periodOpt) ||
+                        isPayrollPeriodPastCutoff(
+                          periodOpt,
+                          new Date(),
+                          companyConfig.cutOffStartDay || 26,
+                          companyConfig.cutOffEndDay || 25
+                        );
+                      return (
+                        <option key={periodOpt} value={periodOpt}>
+                          {periodOpt} ({rangeTxt}){isOptLocked ? ' 🔒 Arsip' : ' • Aktif'}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActivePortalTab('payroll')}
+                  className="px-3 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs font-bold cursor-pointer inline-flex items-center gap-1.5"
+                >
+                  <WalletCards className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Buka Slip Gaji ({effectiveSelectedPeriod})</span>
+                </button>
               </div>
             </div>
 
-            {myAttendances.length === 0 ? (
+            {myPeriodFilteredAttendances.length === 0 ? (
               <div className="p-8 text-center text-xs text-slate-400">
-                Belum ada riwayat presensi untuk akun Anda. Silakan klik tombol <strong>Jepret Foto Wajah & Absen Masuk</strong> pada kamera di atas.
+                Belum ada riwayat presensi pada rentang periode <strong>{effectiveSelectedPeriod} ({selectedPeriodCutoffRange.label})</strong>. Silakan pilih periode bulan lain di atas atau lakukan absensi hari ini.
               </div>
             ) : (
               <>
                 {/* Mobile Card View (<768px) — Zero Horizontal Scroll */}
                 <div className="md:hidden divide-y divide-slate-100">
-                  {myAttendances.map((att) => {
+                  {myPeriodFilteredAttendances.map((att) => {
                     const schedIn = att.scheduledCheckIn || myShift.checkInTime;
                     const schedOut = att.scheduledCheckOut || myShift.checkOutTime;
                     const shiftLabel = att.shiftName || myShift.name;
@@ -3747,7 +4060,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {myAttendances.map((att) => {
+                      {myPeriodFilteredAttendances.map((att) => {
                         const schedIn = att.scheduledCheckIn || myShift.checkInTime;
                         const schedOut = att.scheduledCheckOut || myShift.checkOutTime;
                         const shiftLabel = att.shiftName || myShift.name;

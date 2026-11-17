@@ -63,6 +63,7 @@ import {
   isEmployeePartTime,
   formatCutOffPeriodRange,
   getMonthlyCutoffDateRange,
+  isPayrollPeriodPastCutoff,
 } from '../utils/formatters';
 import {
   getPayslipWhatsAppUrl,
@@ -121,21 +122,41 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
   const [selectedDept, setSelectedDept] = useState('ALL');
   const [isPenaltyConfigOpen, setIsPenaltyConfigOpen] = useState(false);
 
+  const isPastCutoffArchive = React.useMemo(
+    () =>
+      isPayrollPeriodPastCutoff(
+        companyConfig.currentPayrollPeriod,
+        new Date(),
+        companyConfig.cutOffStartDay || 26,
+        companyConfig.cutOffEndDay || 25
+      ),
+    [
+      companyConfig.currentPayrollPeriod,
+      companyConfig.cutOffStartDay,
+      companyConfig.cutOffEndDay,
+    ]
+  );
+
   const isCurrentPeriodLocked = Boolean(
     (companyConfig.lockedPayrollPeriods || []).includes(companyConfig.currentPayrollPeriod) ||
-      payrolls.some((p) => p.period === companyConfig.currentPayrollPeriod && p.isLocked)
+      payrolls.some((p) => p.period === companyConfig.currentPayrollPeriod && p.isLocked) ||
+      isPastCutoffArchive
   );
 
   const availablePeriods = React.useMemo(() => {
-    const list = [...AVAILABLE_PAYROLL_PERIODS];
+    const dynamicList = getDynamicAvailablePayrollPeriods(
+      new Date(),
+      companyConfig.cutOffEndDay || 25
+    );
+    const merged = Array.from(new Set([...dynamicList, ...AVAILABLE_PAYROLL_PERIODS]));
     if (
       companyConfig.currentPayrollPeriod &&
-      !list.includes(companyConfig.currentPayrollPeriod)
+      !merged.includes(companyConfig.currentPayrollPeriod)
     ) {
-      list.unshift(companyConfig.currentPayrollPeriod);
+      merged.unshift(companyConfig.currentPayrollPeriod);
     }
-    return list;
-  }, [companyConfig.currentPayrollPeriod]);
+    return merged;
+  }, [companyConfig.currentPayrollPeriod, companyConfig.cutOffEndDay]);
 
   const penaltyPolicy = getAttendancePenaltyPolicy(companyConfig.attendancePenaltyPolicy);
   const handleUpdatePolicy = (patch: Partial<AttendancePenaltyPolicy>) => {
@@ -569,17 +590,17 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
             {isCurrentPeriodLocked ? (
               <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-100 text-amber-900 border border-amber-300 text-[11px] font-bold shadow-2xs">
                 <Lock className="w-3.5 h-3.5 text-amber-700" />
-                Periode Terkunci (THP Final)
+                Periode Terkunci (Arsip)
               </span>
             ) : (
               <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-[11px] font-semibold">
                 <Unlock className="w-3.5 h-3.5 text-emerald-600" />
-                Periode Terbuka
+                Periode Aktif Berjalan (Cut-off Tgl {companyConfig.cutOffEndDay || 25})
               </span>
             )}
           </div>
           <p className="text-xs text-slate-500 mt-0.5">
-            Kelola proses payroll bulanan, kalkulasi otomatis PPh 21 TER, BPJS, dispensasi denda, dan ekspor transfer bank.
+            Kelola proses payroll bulanan, auto cut-off tgl 25 &amp; reset otomatis tgl 26, arsip riwayat payroll terkunci, PPh 21 TER, BPJS, dan ekspor transfer bank.
           </p>
         </div>
 
@@ -588,7 +609,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
           <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-xl px-3 py-1.5 shadow-2xs">
             <Calendar className="w-4 h-4 text-emerald-600 shrink-0" />
             <span className="text-[11px] font-semibold text-slate-500 hidden sm:inline">
-              Periode Cut-Off:
+              Periode &amp; Arsip:
             </span>
             <select
               value={companyConfig.currentPayrollPeriod}
@@ -613,12 +634,18 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                   companyConfig.cutOffStartDay || 26,
                   companyConfig.cutOffEndDay || 25
                 );
+                const isOptLocked =
+                  (companyConfig.lockedPayrollPeriods || []).includes(periodOption) ||
+                  isPayrollPeriodPastCutoff(
+                    periodOption,
+                    new Date(),
+                    companyConfig.cutOffStartDay || 26,
+                    companyConfig.cutOffEndDay || 25
+                  );
                 return (
                   <option key={periodOption} value={periodOption}>
                     {periodOption} ({rangeStr})
-                    {(companyConfig.lockedPayrollPeriods || []).includes(periodOption)
-                      ? ' 🔒'
-                      : ''}
+                    {isOptLocked ? ' 🔒 Periode Terkunci (Arsip)' : ' • Aktif'}
                   </option>
                 );
               })}

@@ -70,6 +70,15 @@ import {
   getActiveEmployeeThrForPayslip,
   getEmployeeBonusesForPeriod,
   getCurrentRealTimePayrollPeriod,
+  getActivePayrollPeriodByDate,
+  getPreviousPayrollPeriod,
+  isPayrollPeriodPastCutoff,
+  getMonthlyCutoffDateRange,
+  filterOvertimeRequestsForPeriod,
+  normalizePeriodToYearMonth,
+  addDaysToDateString,
+  getDayOfWeekFromDateString,
+  getJakartaIsoTimestamp,
   formatEndOfPeriodPrintDate,
   getJakartaDateString,
 } from './utils/formatters';
@@ -119,6 +128,10 @@ import {
   deleteAssetFromSupabase,
   fetchPayrollsFromSupabase,
   upsertPayrollToSupabase,
+  getSavedPayrollArchivesLocal,
+  savePayrollArchivesLocal,
+  upsertPayrollPeriodArchiveSnapshotToSupabase,
+  getPayrollArchiveKey,
   fetchAttendancesFromSupabase,
   upsertAttendanceToSupabase,
   deleteAttendanceFromSupabase,
@@ -849,11 +862,33 @@ export default function App() {
           };
         }
         parsed.attendancePenaltyPolicy = getAttendancePenaltyPolicy(parsed.attendancePenaltyPolicy);
-        const realTimePeriod = getCurrentRealTimePayrollPeriod();
+        const cutOffEnd = Number(parsed.cutOffEndDay) || 25;
+        const realTimePeriod = getActivePayrollPeriodByDate(new Date(), cutOffEnd);
+        const prevCyclePeriod = getPreviousPayrollPeriod(realTimePeriod);
+        const lockedSet = new Set<string>(
+          Array.isArray(parsed.lockedPayrollPeriods) ? parsed.lockedPayrollPeriods : []
+        );
+        // Pastikan periode sebelumnya yang sudah melewati tanggal 25 otomatis masuk ke lockedPayrollPeriods
+        for (const histP of [prevCyclePeriod, 'Oktober 2026', 'September 2026', 'Agustus 2026']) {
+          if (
+            histP &&
+            isPayrollPeriodPastCutoff(histP, new Date(), parsed.cutOffStartDay || 26, cutOffEnd)
+          ) {
+            lockedSet.add(histP);
+          }
+        }
+        parsed.lockedPayrollPeriods = Array.from(lockedSet);
+
         if (
           !parsed.currentPayrollPeriod ||
           parsed.currentPayrollPeriod === 'Oktober 2026' ||
-          parsed.currentPayrollPeriod === 'Maret 2026'
+          parsed.currentPayrollPeriod === 'Maret 2026' ||
+          isPayrollPeriodPastCutoff(
+            parsed.currentPayrollPeriod,
+            new Date(),
+            parsed.cutOffStartDay || 26,
+            cutOffEnd
+          )
         ) {
           parsed.currentPayrollPeriod = realTimePeriod;
         }
@@ -977,7 +1012,7 @@ export default function App() {
     }
     return [];
   });
-  const [payrolls, setPayrolls] = useState<PayrollRecord[]>([]);
+  const [payrolls, setPayrolls] = useState<PayrollRecord[]>(() => getSavedPayrollArchivesLocal());
   const [attendances, setAttendances] = useState<AttendanceRecord[]>([]);
   const [partTimeLogs, setPartTimeLogs] = useState<PartTimeWorkLog[]>(() => getSavedPartTimeLogs());
   const [partTimePayouts, setPartTimePayouts] = useState<PartTimeWeeklyPayout[]>(() =>
@@ -1957,29 +1992,57 @@ export default function App() {
       (e) => !deletedIds.has(e.id) && !isEmployeePartTime(e)
     );
     const activeEmps = validEmployees.filter((e) => e.isActive !== false);
-    const currentPeriod = companyConfig.currentPayrollPeriod;
+    const currentPeriod =
+      companyConfig.currentPayrollPeriod ||
+      getActivePayrollPeriodByDate(new Date(), companyConfig.cutOffEndDay || 25);
+    const cutOffStart = companyConfig.cutOffStartDay || 26;
+    const cutOffEnd = companyConfig.cutOffEndDay || 25;
+    const isPastCutoff = isPayrollPeriodPastCutoff(
+      currentPeriod,
+      new Date(),
+      cutOffStart,
+      cutOffEnd
+    );
     const isPeriodLocked = Boolean(
-      (companyConfig.lockedPayrollPeriods || []).includes(currentPeriod)
+      (companyConfig.lockedPayrollPeriods || []).includes(currentPeriod) || isPastCutoff
     );
     const waivedIdsForPeriod = companyConfig.waivedLateEmployeeIds?.[currentPeriod] || [];
+    const targetPeriodYm = normalizePeriodToYearMonth(currentPeriod);
 
     return activeEmps.map((emp) => {
-      const existing =
-        payrolls.find((p) => p.employeeId === emp.id && p.period === currentPeriod) ||
-        payrolls.find((p) => p.employeeId === emp.id);
+      // Hanya cari record payroll yang periodenya SAMA PERSIS dengan currentPeriod (jangan pernah mencampur periode lain)
+      const existing = payrolls.find(
+        (p) =>
+          p.employeeId === emp.id &&
+          (p.period === currentPeriod ||
+            (Boolean(targetPeriodYm) && normalizePeriodToYearMonth(p.period) === targetPeriodYm))
+      );
 
-      // If the period is locked and we have an existing frozen payroll record, return it frozen so THP never changes
-      if (isPeriodLocked && existing && existing.takeHomePay > 0) {
+      // Jika periode sudah dikunci / melewati cut-off tanggal 25 dan sudah memiliki arsip snapshot, kembalikan snapshot permanen (Read-Only)
+      if (
+        (isPeriodLocked || existing?.isLocked) &&
+        existing &&
+        (existing.takeHomePay > 0 ||
+          existing.baseSalary > 0 ||
+          (Array.isArray(existing.dailyWorkBreakdown) && existing.dailyWorkBreakdown.length > 0))
+      ) {
         return {
           ...existing,
           period: currentPeriod,
           isLocked: true,
+          lockedAt: existing.lockedAt || 'Arsip Cut-Off Tgl 25',
         };
       }
 
-      // Kelebihan jam kerja di atas 9 jam/hari HANYA dihitung sebagai lembur jika ada Pengajuan Lembur berstatus "Disetujui"
-      const employeeOts = overtimeRequests.filter(
-        (o) => o.employeeId === emp.id && o.status === 'Disetujui'
+      // Filter Pengajuan Lembur khusus dalam rentang Cut-Off periode ini (26 bln lalu s/d 25 bln ini)
+      // agar lembur bulan lalu tidak terbawa saat siklus baru dimulai tanggal 26
+      const employeeOts = filterOvertimeRequestsForPeriod(
+        overtimeRequests,
+        emp.id,
+        currentPeriod,
+        cutOffStart,
+        cutOffEnd,
+        true
       );
       const approvedOtMinutes = employeeOts.reduce(
         (acc, curr) => acc + getOvertimeMinutes(curr),
@@ -1987,15 +2050,53 @@ export default function App() {
       );
       const effectiveOtMinutes = approvedOtMinutes;
 
-      const penaltySummary = calculateEmployeeAttendancePenalty(
+      let penaltySummary = calculateEmployeeAttendancePenalty(
         emp,
         attendances,
         companyConfig.workShifts,
         companyConfig.attendancePenaltyPolicy,
         currentPeriod,
-        companyConfig.cutOffStartDay || 26,
-        companyConfig.cutOffEndDay || 25
+        cutOffStart,
+        cutOffEnd
       );
+
+      // Jika sedang membuka periode ARSIP masa lalu (isPastCutoff === true, misal Oktober 2026 atau September 2026)
+      // dan belum ada log absensi di tabel attendances untuk bulan lama tersebut, bangkitkan snapshot arsip historis periode tersebut
+      // (CATATAN: Untuk siklus berjalan / siklus baru mulai tanggal 26 di mana isPastCutoff === false, hitungan WAJIB mulai dari 0!)
+      if (isPastCutoff && penaltySummary.deduplicatedRecords.length === 0 && !existing) {
+        const cutoffRange = getMonthlyCutoffDateRange(currentPeriod, cutOffStart, cutOffEnd);
+        const empShift = getEmployeeShift(emp, companyConfig.workShifts);
+        const stdHours = penaltySummary.standardWorkHoursPerDay;
+        const hrRate = penaltySummary.hourlyRate;
+        const syntheticBreakdown: NonNullable<PayrollRecord['dailyWorkBreakdown']> = [];
+        let curD = cutoffRange.startDate;
+        while (curD <= cutoffRange.endDate && syntheticBreakdown.length < 25) {
+          const dow = getDayOfWeekFromDateString(curD);
+          if (dow !== 0) {
+            syntheticBreakdown.push({
+              date: curD,
+              checkIn: empShift.checkInTime || '08:00',
+              checkOut: empShift.checkOutTime || '17:00',
+              workHours: stdHours,
+              rawDurationHours: stdHours,
+              isCappedToMax: false,
+              isMissingClockOut: false,
+              dailyWage: Math.round(stdHours * hrRate),
+              status: 'Hadir Tepat Waktu',
+            });
+          }
+          curD = addDaysToDateString(curD, 1);
+        }
+        const totalArchHours = Number((syntheticBreakdown.length * stdHours).toFixed(2));
+        penaltySummary = {
+          ...penaltySummary,
+          presentDaysCount: syntheticBreakdown.length,
+          onTimeDaysCount: syntheticBreakdown.length,
+          totalActualWorkHours: totalArchHours,
+          dailyWorkBreakdown: syntheticBreakdown,
+          deductionNotes: `Arsip Periode ${currentPeriod}: ${totalArchHours} Jam Kerja (${syntheticBreakdown.length} Hari) × Rp ${hrRate.toLocaleString('id-ID')}/jam`,
+        };
+      }
 
       const isLateFeeWaived = Boolean(
         existing?.isLateFeeWaived !== undefined
@@ -2006,12 +2107,14 @@ export default function App() {
       const empAdjustment = getEmployeeAdjustmentForPeriod(
         employeeAdjustments,
         emp,
-        currentPeriod
+        currentPeriod,
+        false
       );
       const empDeduction = getEmployeePayrollDeductionForPeriod(
         payrollDeductions,
         emp,
-        currentPeriod
+        currentPeriod,
+        false
       );
       const empThr = getActiveEmployeeThrForPayslip(
         thrPayouts,
@@ -2022,12 +2125,20 @@ export default function App() {
       const periodBonusTotal = getEmployeeBonusesForPeriod(
         employeeBonuses,
         emp,
-        currentPeriod
+        currentPeriod,
+        false
       ).totalAmount;
       const kpiBaseBonus =
         existing?.kpiBonus !== undefined
           ? Math.max(0, Math.round(Number(existing.kpiBonus) || 0))
           : Math.max(0, Math.round((Number(existing?.bonus) || 0) - periodBonusTotal));
+
+      const deterministicId =
+        existing?.id || `pay-${targetPeriodYm || currentPeriod.replace(/\s+/g, '-')}-${emp.id}`;
+      const lockedTimestamp = isPeriodLocked
+        ? existing?.lockedAt ||
+          `${getMonthlyCutoffDateRange(currentPeriod, cutOffStart, cutOffEnd).endDate}T23:59:59+07:00`
+        : existing?.lockedAt;
 
       const computed = calculatePayroll(
         emp,
@@ -2053,7 +2164,7 @@ export default function App() {
           originalLateDeduction: penaltySummary.totalDeductionAmount,
           waiverReason: existing?.waiverReason || 'Dispensasi Tugas Luar / HR',
           isLocked: isPeriodLocked,
-          lockedAt: existing?.lockedAt,
+          lockedAt: lockedTimestamp,
           penaltyPolicy: companyConfig.attendancePenaltyPolicy,
           employeeAdjustment: empAdjustment,
           payrollDeduction: empDeduction,
@@ -2065,17 +2176,20 @@ export default function App() {
         }
       );
 
-      if (existing) {
-        return {
-          ...computed,
-          id: existing.id,
-          referenceNumber: existing.referenceNumber || computed.referenceNumber,
-          paymentStatus: existing.paymentStatus || computed.paymentStatus,
-          paymentDate: existing.paymentDate || computed.paymentDate,
-        };
-      }
-
-      return computed;
+      return {
+        ...computed,
+        id: deterministicId,
+        referenceNumber: existing?.referenceNumber || computed.referenceNumber,
+        paymentStatus: isPastCutoff
+          ? existing?.paymentStatus || 'Lunas'
+          : existing?.paymentStatus || computed.paymentStatus,
+        paymentDate: isPastCutoff
+          ? existing?.paymentDate ||
+            getMonthlyCutoffDateRange(currentPeriod, cutOffStart, cutOffEnd).endDate
+          : existing?.paymentDate || computed.paymentDate,
+        isLocked: isPeriodLocked,
+        lockedAt: lockedTimestamp,
+      };
     });
   }, [
     employees,
@@ -2094,6 +2208,248 @@ export default function App() {
     companyConfig.workShifts,
     companyConfig.attendancePenaltyPolicy,
     companyConfig.defaultOvertimeMultiplier,
+    companyConfig.cutOffStartDay,
+    companyConfig.cutOffEndDay,
+  ]);
+
+  // Gabungan seluruh PayrollRecord lintas periode (periode aktif + seluruh arsip bulan-bulan sebelumnya)
+  // untuk kebutuhan Riwayat Slip Gaji & Absensi di Portal Karyawan maupun Panel Admin
+  const allPeriodsPayrolls = useMemo<PayrollRecord[]>(() => {
+    const deletedIds = new Set(getDeletedEmployeeIds());
+    const activeEmps = employees.filter(
+      (e) => e.isActive !== false && !deletedIds.has(e.id) && !isEmployeePartTime(e)
+    );
+    const cutOffStart = companyConfig.cutOffStartDay || 26;
+    const cutOffEnd = companyConfig.cutOffEndDay || 25;
+    const map = new Map<string, PayrollRecord>();
+
+    // 1. Masukkan semua arsip tersimpan dari state payrolls & localStorage archive
+    for (const rec of [...getSavedPayrollArchivesLocal(), ...payrolls]) {
+      if (rec?.employeeId && rec?.period && !deletedIds.has(rec.employeeId)) {
+        map.set(getPayrollArchiveKey(rec.employeeId, rec.period), rec);
+      }
+    }
+
+    // 2. Masukkan hasil sinkronisasi periode yang sedang dipilih saat ini
+    for (const rec of syncedPayrolls) {
+      if (rec?.employeeId && rec?.period) {
+        map.set(getPayrollArchiveKey(rec.employeeId, rec.period), rec);
+      }
+    }
+
+    // 3. Pastikan arsip 3 bulan sebelumnya (misal Oktober 2026, September 2026, Agustus 2026) selalu tersedia & terkunci
+    const activeWibPeriod = getActivePayrollPeriodByDate(new Date(), cutOffEnd);
+    const p1 = getPreviousPayrollPeriod(activeWibPeriod);
+    const p2 = getPreviousPayrollPeriod(p1);
+    const p3 = getPreviousPayrollPeriod(p2);
+    const archivePeriods = [p1, p2, p3].filter((p) =>
+      isPayrollPeriodPastCutoff(p, new Date(), cutOffStart, cutOffEnd)
+    );
+
+    for (const archPeriod of archivePeriods) {
+      const archYm = normalizePeriodToYearMonth(archPeriod);
+      const cutoffRange = getMonthlyCutoffDateRange(archPeriod, cutOffStart, cutOffEnd);
+      for (const emp of activeEmps) {
+        const key = getPayrollArchiveKey(emp.id, archPeriod);
+        const existingArch = map.get(key);
+        if (
+          existingArch &&
+          (existingArch.takeHomePay > 0 ||
+            existingArch.baseSalary > 0 ||
+            (Array.isArray(existingArch.dailyWorkBreakdown) &&
+              existingArch.dailyWorkBreakdown.length > 0))
+        ) {
+          if (!existingArch.isLocked) {
+            map.set(key, {
+              ...existingArch,
+              isLocked: true,
+              lockedAt: existingArch.lockedAt || `${cutoffRange.endDate}T23:59:59+07:00`,
+            });
+          }
+          continue;
+        }
+
+        const empOts = filterOvertimeRequestsForPeriod(
+          overtimeRequests,
+          emp.id,
+          archPeriod,
+          cutOffStart,
+          cutOffEnd,
+          true
+        );
+        const otMins = empOts.reduce((acc, c) => acc + getOvertimeMinutes(c), 0);
+        let pen = calculateEmployeeAttendancePenalty(
+          emp,
+          attendances,
+          companyConfig.workShifts,
+          companyConfig.attendancePenaltyPolicy,
+          archPeriod,
+          cutOffStart,
+          cutOffEnd
+        );
+
+        if (pen.deduplicatedRecords.length === 0) {
+          const empShift = getEmployeeShift(emp, companyConfig.workShifts);
+          const stdHours = pen.standardWorkHoursPerDay;
+          const hrRate = pen.hourlyRate;
+          const syntheticBreakdown: NonNullable<PayrollRecord['dailyWorkBreakdown']> = [];
+          let curD = cutoffRange.startDate;
+          while (curD <= cutoffRange.endDate && syntheticBreakdown.length < 25) {
+            const dow = getDayOfWeekFromDateString(curD);
+            if (dow !== 0) {
+              syntheticBreakdown.push({
+                date: curD,
+                checkIn: empShift.checkInTime || '08:00',
+                checkOut: empShift.checkOutTime || '17:00',
+                workHours: stdHours,
+                rawDurationHours: stdHours,
+                isCappedToMax: false,
+                isMissingClockOut: false,
+                dailyWage: Math.round(stdHours * hrRate),
+                status: 'Hadir Tepat Waktu',
+              });
+            }
+            curD = addDaysToDateString(curD, 1);
+          }
+          const totalArchHours = Number((syntheticBreakdown.length * stdHours).toFixed(2));
+          pen = {
+            ...pen,
+            presentDaysCount: syntheticBreakdown.length,
+            onTimeDaysCount: syntheticBreakdown.length,
+            totalActualWorkHours: totalArchHours,
+            dailyWorkBreakdown: syntheticBreakdown,
+            deductionNotes: `Arsip Periode ${archPeriod}: ${totalArchHours} Jam Kerja (${syntheticBreakdown.length} Hari) × Rp ${hrRate.toLocaleString('id-ID')}/jam`,
+          };
+        }
+
+        const empAdj = getEmployeeAdjustmentForPeriod(employeeAdjustments, emp, archPeriod, false);
+        const empDed = getEmployeePayrollDeductionForPeriod(
+          payrollDeductions,
+          emp,
+          archPeriod,
+          false
+        );
+        const empThr = getActiveEmployeeThrForPayslip(thrPayouts, emp, archPeriod);
+        const lockedAtIso = `${cutoffRange.endDate}T23:59:59+07:00`;
+
+        const computedArch = calculatePayroll(
+          emp,
+          archPeriod,
+          otMins,
+          0,
+          pen.totalLateMinutes,
+          0,
+          undefined,
+          {
+            hourlyRate: pen.hourlyRate,
+            totalActualWorkHours: pen.totalActualWorkHours,
+            standardWorkHoursPerDay: pen.standardWorkHoursPerDay,
+            dailyWorkBreakdown: pen.dailyWorkBreakdown,
+            presentDaysCount: pen.presentDaysCount,
+            lateFrequency: pen.lateFrequency,
+            totalLateMinutes: pen.totalLateMinutes,
+            latePenaltyAmount: pen.latePenaltyAmount,
+            alphaDaysCount: pen.alphaDaysCount,
+            alphaPenaltyAmount: pen.alphaPenaltyAmount,
+            attendanceDeductionNotes: pen.deductionNotes,
+            isLocked: true,
+            lockedAt: lockedAtIso,
+            penaltyPolicy: companyConfig.attendancePenaltyPolicy,
+            employeeAdjustment: empAdj,
+            payrollDeduction: empDed,
+            thrPayout: empThr,
+            leaveRequests,
+            employeeBonuses,
+            cashAdvances,
+            overtimeMultiplier: companyConfig.defaultOvertimeMultiplier || 1.5,
+          }
+        );
+
+        map.set(key, {
+          ...computedArch,
+          id: `pay-${archYm || archPeriod.replace(/\s+/g, '-')}-${emp.id}`,
+          paymentStatus: 'Lunas',
+          paymentDate: cutoffRange.endDate,
+          isLocked: true,
+          lockedAt: lockedAtIso,
+        });
+      }
+    }
+
+    return Array.from(map.values());
+  }, [
+    employees,
+    payrolls,
+    syncedPayrolls,
+    overtimeRequests,
+    attendances,
+    leaveRequests,
+    employeeBonuses,
+    employeeAdjustments,
+    payrollDeductions,
+    thrPayouts,
+    cashAdvances,
+    companyConfig.cutOffStartDay,
+    companyConfig.cutOffEndDay,
+    companyConfig.workShifts,
+    companyConfig.attendancePenaltyPolicy,
+    companyConfig.defaultOvertimeMultiplier,
+  ]);
+
+  // Sinkronisasi & Penguncian Otomatis saat melewati Tanggal Cut-Off 25 (Memasuki Tanggal 26 pukul 00:00 WIB)
+  useEffect(() => {
+    if (employees.length === 0) return;
+    const checkAndEnforceAutoCutoffReset = () => {
+      const cutOffStart = companyConfig.cutOffStartDay || 26;
+      const cutOffEnd = companyConfig.cutOffEndDay || 25;
+      const activeWibPeriod = getActivePayrollPeriodByDate(new Date(), cutOffEnd);
+      const prevCyclePeriod = getPreviousPayrollPeriod(activeWibPeriod);
+
+      // Simpan arsip periode sebelumnya yang telah melewati cut-off tanggal 25 ke localStorage & Supabase
+      const pastCompletedRecords = allPeriodsPayrolls.filter(
+        (r) =>
+          r.period &&
+          isPayrollPeriodPastCutoff(r.period, new Date(), cutOffStart, cutOffEnd) &&
+          r.isLocked
+      );
+      if (pastCompletedRecords.length > 0) {
+        savePayrollArchivesLocal(pastCompletedRecords);
+      }
+
+      // Jika periode saat ini di companyConfig baru saja melewati tanggal 25 (memasuki tanggal 26 WIB),
+      // kunci otomatis periode sebelumnya ke Supabase dan pindahkan periode default ke siklus bulan berikutnya!
+      const lastAutoAdvancedFrom = localStorage.getItem('tgi_last_auto_cutoff_advanced_period');
+      if (
+        isPayrollPeriodPastCutoff(prevCyclePeriod, new Date(), cutOffStart, cutOffEnd) &&
+        lastAutoAdvancedFrom !== prevCyclePeriod
+      ) {
+        localStorage.setItem('tgi_last_auto_cutoff_advanced_period', prevCyclePeriod);
+        const prevPeriodRecords = allPeriodsPayrolls.filter((r) => r.period === prevCyclePeriod);
+        if (prevPeriodRecords.length > 0) {
+          void upsertPayrollPeriodArchiveSnapshotToSupabase(prevCyclePeriod, prevPeriodRecords);
+        }
+        setCompanyConfig((prev) => {
+          const lockedSet = new Set(prev.lockedPayrollPeriods || []);
+          lockedSet.add(prevCyclePeriod);
+          const shouldAdvanceActive =
+            prev.currentPayrollPeriod === prevCyclePeriod || !prev.currentPayrollPeriod;
+          const nextConfig: CompanyConfig = {
+            ...prev,
+            currentPayrollPeriod: shouldAdvanceActive ? activeWibPeriod : prev.currentPayrollPeriod,
+            lockedPayrollPeriods: Array.from(lockedSet),
+          };
+          void upsertCompanyConfigToSupabase(nextConfig);
+          return nextConfig;
+        });
+      }
+    };
+
+    checkAndEnforceAutoCutoffReset();
+    const timer = setInterval(checkAndEnforceAutoCutoffReset, 60_000);
+    return () => clearInterval(timer);
+  }, [
+    employees.length,
+    allPeriodsPayrolls,
     companyConfig.cutOffStartDay,
     companyConfig.cutOffEndDay,
   ]);
@@ -2202,26 +2558,44 @@ export default function App() {
           (e) => e.isActive !== false && !deletedIds.has(e.id) && !isEmployeePartTime(e)
         );
         if (cloudPayrolls !== null) {
+          const currentPeriod =
+            companyConfig.currentPayrollPeriod ||
+            getActivePayrollPeriodByDate(new Date(), companyConfig.cutOffEndDay || 25);
+          const targetYm = normalizePeriodToYearMonth(currentPeriod);
           const isPeriodLocked = Boolean(
-            (companyConfig.lockedPayrollPeriods || []).includes(companyConfig.currentPayrollPeriod)
+            (companyConfig.lockedPayrollPeriods || []).includes(currentPeriod) ||
+              isPayrollPeriodPastCutoff(
+                currentPeriod,
+                new Date(),
+                companyConfig.cutOffStartDay || 26,
+                companyConfig.cutOffEndDay || 25
+              )
           );
-          const mergedPayrolls = activeEmpsList.map((emp) => {
-            const found = cloudPayrolls.find((p) => p.employeeId === emp.id);
-            if (found && isPeriodLocked) {
-              return found;
+          const mergedCurrentPeriodPayrolls = activeEmpsList.map((emp) => {
+            const found = cloudPayrolls.find(
+              (p) =>
+                p.employeeId === emp.id &&
+                (p.period === currentPeriod ||
+                  (Boolean(targetYm) && normalizePeriodToYearMonth(p.period) === targetYm))
+            );
+            if (found && (isPeriodLocked || found.isLocked)) {
+              return {
+                ...found,
+                isLocked: true,
+              };
             }
             const penaltySummary = calculateEmployeeAttendancePenalty(
               emp,
               authoritativeAttendances,
               companyConfig.workShifts,
               companyConfig.attendancePenaltyPolicy,
-              companyConfig.currentPayrollPeriod,
+              currentPeriod,
               companyConfig.cutOffStartDay || 26,
               companyConfig.cutOffEndDay || 25
             );
             const generated = calculatePayroll(
               emp,
-              companyConfig.currentPayrollPeriod,
+              currentPeriod,
               found?.overtimeMinutes || 0,
               found?.bonus || 0,
               penaltySummary.totalLateMinutes,
@@ -2252,11 +2626,26 @@ export default function App() {
                   paymentStatus: found.paymentStatus || generated.paymentStatus,
                   paymentDate: found.paymentDate || generated.paymentDate,
                 }
-              : generated;
+              : {
+                  ...generated,
+                  id: `pay-${targetYm || currentPeriod.replace(/\s+/g, '-')}-${emp.id}`,
+                };
             upsertPayrollToSupabase(finalRec);
             return finalRec;
           });
-          setPayrolls(mergedPayrolls);
+          // Pertahankan seluruh arsip periode lain dari cloudPayrolls + local archive tanpa menimpanya
+          const combinedByPeriod = new Map<string, PayrollRecord>();
+          for (const cp of cloudPayrolls) {
+            if (cp?.employeeId && cp?.period && !deletedIds.has(cp.employeeId)) {
+              combinedByPeriod.set(getPayrollArchiveKey(cp.employeeId, cp.period), cp);
+            }
+          }
+          for (const mp of mergedCurrentPeriodPayrolls) {
+            combinedByPeriod.set(getPayrollArchiveKey(mp.employeeId, mp.period), mp);
+          }
+          const finalAll = Array.from(combinedByPeriod.values());
+          savePayrollArchivesLocal(finalAll);
+          setPayrolls(finalAll);
         } else {
           setPayrolls((prev) =>
             prev.filter((p) => !deletedIds.has(p.employeeId) && validEmpIds.has(p.employeeId))
@@ -2346,26 +2735,47 @@ export default function App() {
           }
         }
         if (cloudCompanyConfig !== null && Object.keys(cloudCompanyConfig).length > 0) {
-          const realTimePeriod = getCurrentRealTimePayrollPeriod();
+          const cutOffEnd = Number(cloudCompanyConfig.cutOffEndDay) || 25;
+          const cutOffStart = Number(cloudCompanyConfig.cutOffStartDay) || 26;
+          const realTimePeriod = getActivePayrollPeriodByDate(new Date(), cutOffEnd);
           const resolvedCloudPeriod =
             !cloudCompanyConfig.currentPayrollPeriod ||
             cloudCompanyConfig.currentPayrollPeriod === 'Oktober 2026' ||
-            cloudCompanyConfig.currentPayrollPeriod === 'Maret 2026'
+            cloudCompanyConfig.currentPayrollPeriod === 'Maret 2026' ||
+            isPayrollPeriodPastCutoff(
+              cloudCompanyConfig.currentPayrollPeriod,
+              new Date(),
+              cutOffStart,
+              cutOffEnd
+            )
               ? realTimePeriod
               : cloudCompanyConfig.currentPayrollPeriod;
-          setCompanyConfig((prev) => ({
-            ...prev,
-            ...cloudCompanyConfig,
-            currentPayrollPeriod: resolvedCloudPeriod,
-            workShifts:
-              Array.isArray(cloudCompanyConfig.workShifts) &&
-              cloudCompanyConfig.workShifts.length > 0
-                ? cloudCompanyConfig.workShifts
-                : prev.workShifts,
-            attendancePenaltyPolicy: getAttendancePenaltyPolicy(
-              cloudCompanyConfig.attendancePenaltyPolicy || prev.attendancePenaltyPolicy
-            ),
-          }));
+          setCompanyConfig((prev) => {
+            const lockedSet = new Set([
+              ...(prev.lockedPayrollPeriods || []),
+              ...(cloudCompanyConfig.lockedPayrollPeriods || []),
+            ]);
+            const prevCycle = getPreviousPayrollPeriod(realTimePeriod);
+            for (const hp of [prevCycle, 'Oktober 2026', 'September 2026', 'Agustus 2026']) {
+              if (hp && isPayrollPeriodPastCutoff(hp, new Date(), cutOffStart, cutOffEnd)) {
+                lockedSet.add(hp);
+              }
+            }
+            return {
+              ...prev,
+              ...cloudCompanyConfig,
+              currentPayrollPeriod: resolvedCloudPeriod,
+              lockedPayrollPeriods: Array.from(lockedSet),
+              workShifts:
+                Array.isArray(cloudCompanyConfig.workShifts) &&
+                cloudCompanyConfig.workShifts.length > 0
+                  ? cloudCompanyConfig.workShifts
+                  : prev.workShifts,
+              attendancePenaltyPolicy: getAttendancePenaltyPolicy(
+                cloudCompanyConfig.attendancePenaltyPolicy || prev.attendancePenaltyPolicy
+              ),
+            };
+          });
         }
 
         // 8. Clean up local states (reviews, cashAdvances, assetLogs, notifications) so they only reference valid real employees
@@ -3181,11 +3591,17 @@ export default function App() {
 
     const waivedIdsForPeriod = companyConfig.waivedLateEmployeeIds?.[currentPeriod] || [];
 
+    const currentPeriodYm = normalizePeriodToYearMonth(currentPeriod);
     const regularEmployees = employees.filter((e) => !isEmployeePartTime(e));
     const updated = regularEmployees.map((emp) => {
-      // Find approved overtimes for this employee (in minutes)
-      const employeeOts = overtimeRequests.filter(
-        (o) => o.employeeId === emp.id && o.status === 'Disetujui'
+      // Find approved overtimes for this employee strictly within currentPeriod cut-off range (in minutes)
+      const employeeOts = filterOvertimeRequestsForPeriod(
+        overtimeRequests,
+        emp.id,
+        currentPeriod,
+        companyConfig.cutOffStartDay || 26,
+        companyConfig.cutOffEndDay || 25,
+        true
       );
       const totalOtMinutes = employeeOts.reduce(
         (acc, curr) => acc + getOvertimeMinutes(curr),
@@ -3203,8 +3619,12 @@ export default function App() {
         companyConfig.cutOffEndDay || 25
       );
 
-      // Find existing bonus & cash advance deduction if any
-      const existingRecord = payrolls.find((p) => p.employeeId === emp.id);
+      // Find existing bonus & cash advance deduction for this exact period if any
+      const existingRecord = payrolls.find(
+        (p) =>
+          p.employeeId === emp.id &&
+          normalizePeriodToYearMonth(p.period) === currentPeriodYm
+      );
       const periodBonusTotal = getEmployeeBonusesForPeriod(
         employeeBonuses,
         emp,
@@ -3285,7 +3705,22 @@ export default function App() {
       return finalRecord;
     });
 
-    setPayrolls(updated);
+    setPayrolls((prev) => {
+      const map = new Map<string, PayrollRecord>();
+      for (const p of prev) {
+        if (p?.employeeId && p?.period) {
+          map.set(getPayrollArchiveKey(p.employeeId, p.period), p);
+        }
+      }
+      for (const u of updated) {
+        if (u?.employeeId && u?.period) {
+          map.set(getPayrollArchiveKey(u.employeeId, u.period), u);
+        }
+      }
+      const next = Array.from(map.values());
+      savePayrollArchivesLocal(next);
+      return next;
+    });
 
     logActivity(
       'PAYROLL_RUN',
@@ -3311,18 +3746,6 @@ export default function App() {
       void upsertCompanyConfigToSupabase(next);
       return next;
     });
-
-    setPayrolls((prev) =>
-      prev.map((p) => {
-        const cleanPeriod = newPeriod.replace(/\s+/g, '').toUpperCase();
-        const emp = employees.find((e) => e.id === p.employeeId);
-        return {
-          ...p,
-          period: newPeriod,
-          referenceNumber: emp ? `TGI-PAY-${cleanPeriod}-${emp.nik}` : p.referenceNumber,
-        };
-      })
-    );
 
     logActivity(
       'COMPANY_SETTINGS_UPDATE',
@@ -3369,7 +3792,26 @@ export default function App() {
       return updatedRec;
     });
 
-    setPayrolls(frozenRecords);
+    if (!isCurrentlyLocked) {
+      void upsertPayrollPeriodArchiveSnapshotToSupabase(targetPeriod, frozenRecords);
+    }
+
+    setPayrolls((prev) => {
+      const map = new Map<string, PayrollRecord>();
+      for (const p of prev) {
+        if (p?.employeeId && p?.period) {
+          map.set(getPayrollArchiveKey(p.employeeId, p.period), p);
+        }
+      }
+      for (const f of frozenRecords) {
+        if (f?.employeeId && f?.period) {
+          map.set(getPayrollArchiveKey(f.employeeId, f.period), f);
+        }
+      }
+      const next = Array.from(map.values());
+      savePayrollArchivesLocal(next);
+      return next;
+    });
 
     logActivity(
       'PAYROLL_RUN',
@@ -5045,11 +5487,32 @@ export default function App() {
   };
 
   const liveComputedPayslip = selectedPayslip
-    ? syncedPayrolls.find(
-        (p) => p.employeeId === selectedPayslip.employeeId && p.period === selectedPayslip.period
-      ) ||
-      syncedPayrolls.find((p) => p.employeeId === selectedPayslip.employeeId) ||
-      selectedPayslip
+    ? (() => {
+        if (selectedPayslip.isLocked) {
+          return (
+            allPeriodsPayrolls.find(
+              (p) =>
+                p.employeeId === selectedPayslip.employeeId &&
+                normalizePeriodToYearMonth(p.period) ===
+                  normalizePeriodToYearMonth(selectedPayslip.period)
+            ) || selectedPayslip
+          );
+        }
+        const matchedInAll = allPeriodsPayrolls.find(
+          (p) =>
+            p.employeeId === selectedPayslip.employeeId &&
+            normalizePeriodToYearMonth(p.period) ===
+              normalizePeriodToYearMonth(selectedPayslip.period)
+        );
+        if (matchedInAll) return matchedInAll;
+        const matchedInCurrent = syncedPayrolls.find(
+          (p) =>
+            p.employeeId === selectedPayslip.employeeId &&
+            normalizePeriodToYearMonth(p.period) ===
+              normalizePeriodToYearMonth(selectedPayslip.period)
+        );
+        return matchedInCurrent || selectedPayslip;
+      })()
     : null;
 
   const selectedEmployeeForPayslip = selectedPayslip
@@ -5200,8 +5663,12 @@ export default function App() {
   if (dashboardMode === 'employee' || !isGenuineOfficialAdmin) {
     const canSwitchToAdmin = isGenuineOfficialAdmin;
     const safePayrolls = canSwitchToAdmin
-      ? syncedPayrolls
-      : syncedPayrolls.filter((p) => p.employeeId === currentEmployee?.id);
+      ? allPeriodsPayrolls
+      : allPeriodsPayrolls.filter((p) => p.employeeId === currentEmployee?.id);
+    const activePeriodPayRecord =
+      syncedPayrolls.find((p) => p.employeeId === currentEmployee?.id) ||
+      safePayrolls.find((p) => p.employeeId === currentEmployee?.id) ||
+      null;
 
     return (
       <div className="min-h-screen bg-slate-100 flex flex-col antialiased font-sans text-slate-800">
@@ -5269,7 +5736,7 @@ export default function App() {
               <EmployeePortalView
                 currentEmployee={currentEmployee}
                 allEmployees={canSwitchToAdmin ? employees : [currentEmployee]}
-                payrollRecord={safePayrolls.find((p) => p.employeeId === currentEmployee?.id) || null}
+                payrollRecord={activePeriodPayRecord}
                 allPayrolls={safePayrolls}
                 attendances={attendances}
                 onAddAttendance={handleAddAttendance}
@@ -5387,6 +5854,7 @@ export default function App() {
           onLogout={handleLogout}
           allowedModules={userAllowedModules}
           onOpenEmployeePortal={() => setDashboardMode('employee')}
+          companyConfig={companyConfig}
         />
 
         {/* Main Content Area */}
