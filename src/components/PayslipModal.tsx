@@ -1083,13 +1083,20 @@ export const OfficialPayslipDocument: React.FC<OfficialPayslipDocumentProps> = (
 
   return (
     <div className="bg-white text-slate-900 border border-slate-300 rounded-xl p-5 sm:p-8 print:p-3 print:border-slate-400 print:rounded-none print:shadow-none font-sans text-xs leading-relaxed">
-      {/* 1. KOP SURAT RESMI PT LUPYTA MAJU PERKASA & JUDUL SLIP GAJI */}
-      <div className="w-full border-b-2 border-slate-900 pb-2.5 mb-3 print:pb-2 print:mb-2.5">
-        <div className="w-full overflow-hidden rounded-xs">
+      {/* 1. KOP SURAT RESMI PT LUPYTA MAJU PERKASA & JUDUL SLIP GAJI (STATIS / NON-EDITABLE) */}
+      <div
+        contentEditable={false}
+        suppressContentEditableWarning
+        tabIndex={-1}
+        aria-readonly="true"
+        className="w-full border-b-2 border-slate-900 pb-2.5 mb-3 print:pb-2 print:mb-2.5 select-none pointer-events-none"
+      >
+        <div className="w-full overflow-hidden bg-white select-none pointer-events-none">
           <img
-            src="/assets/aistudio/image_2a293321.png"
+            src="/assets/aistudio/kop_surat_lupyta_clean.png"
             alt="Kop Surat Resmi PT Lupyta Maju Perkasa"
-            className="w-full h-auto object-contain block scale-[1.012] origin-center"
+            draggable={false}
+            className="w-full h-auto object-contain block select-none pointer-events-none"
           />
         </div>
       </div>

@@ -1822,6 +1822,24 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
         return (
           <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 print:p-0 print:bg-white">
             <div className="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-slate-200 max-h-[90vh] overflow-y-auto print:max-h-none print:shadow-none print:border-slate-400 print:rounded-none">
+              {/* Kop Surat Resmi PT Lupyta Maju Perkasa (Statis / Non-Editable) */}
+              <div
+                contentEditable={false}
+                suppressContentEditableWarning
+                tabIndex={-1}
+                aria-readonly="true"
+                className="w-full border-b-2 border-slate-900 pb-2.5 mb-3 print:pb-2 print:mb-2.5 select-none pointer-events-none"
+              >
+                <div className="w-full overflow-hidden bg-white select-none pointer-events-none">
+                  <img
+                    src="/assets/aistudio/kop_surat_lupyta_clean.png"
+                    alt="Kop Surat Resmi PT Lupyta Maju Perkasa"
+                    draggable={false}
+                    className="w-full h-auto object-contain block select-none pointer-events-none"
+                  />
+                </div>
+              </div>
+
               <div className="flex items-center justify-between pb-4 border-b border-slate-200">
                 <div className="flex items-center gap-2.5">
                   <div className="p-2 rounded-xl bg-orange-600 text-white print:hidden">
