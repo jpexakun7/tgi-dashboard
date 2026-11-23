@@ -34,7 +34,7 @@ export default defineConfig(() => {
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
     },
     build: {
-      chunkSizeWarningLimit: 900,
+      chunkSizeWarningLimit: 5000,
       rollupOptions: {
         output: {
           manualChunks(id: string) {
@@ -42,6 +42,8 @@ export default defineConfig(() => {
               if (id.includes('@supabase/supabase-js')) return 'vendor-supabase';
               if (id.includes('recharts')) return 'vendor-charts';
               if (id.includes('jspdf')) return 'vendor-pdf';
+              if (id.includes('xlsx')) return 'vendor-xlsx';
+              if (id.includes('motion')) return 'vendor-motion';
               if (id.includes('lucide-react')) return 'vendor-icons';
               if (id.includes('react')) return 'vendor-react';
             }
