@@ -612,7 +612,7 @@ export const AuditLogsView: React.FC<AuditLogsViewProps> = ({
                     </td>
                   </tr>
                 ) : (
-                  filteredLogs.map((log) => {
+                  filteredLogs.map((log, idx) => {
                     const catStyle = CATEGORY_COLORS[log.actionCategory] || {
                       bg: 'bg-slate-100',
                       text: 'text-slate-700',
@@ -622,7 +622,7 @@ export const AuditLogsView: React.FC<AuditLogsViewProps> = ({
                     const ActionIcon = ACTION_ICONS[log.actionType] || History;
 
                     return (
-                      <tr key={log.id} className="hover:bg-slate-50/80 transition-colors group">
+                      <tr key={`${log.id}-${idx}`} className="hover:bg-slate-50/80 transition-colors group">
                         {/* Waktu */}
                         <td className="py-3.5 px-4 whitespace-nowrap text-xs">
                           <div className="font-semibold text-slate-800">
@@ -736,7 +736,7 @@ export const AuditLogsView: React.FC<AuditLogsViewProps> = ({
         /* Timeline View */
         <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-xs">
           <div className="relative pl-6 sm:pl-8 border-l-2 border-indigo-100 space-y-8">
-            {filteredLogs.map((log) => {
+            {filteredLogs.map((log, idx) => {
               const ActionIcon = ACTION_ICONS[log.actionType] || History;
               const catStyle = CATEGORY_COLORS[log.actionCategory] || {
                 bg: 'bg-slate-100',
@@ -746,7 +746,7 @@ export const AuditLogsView: React.FC<AuditLogsViewProps> = ({
               const sevStyle = SEVERITY_CONFIG[log.severity] || SEVERITY_CONFIG.info;
 
               return (
-                <div key={log.id} className="relative group">
+                <div key={`${log.id}-${idx}`} className="relative group">
                   {/* Timeline Node Dot */}
                   <div
                     className={`absolute -left-[31px] sm:-left-[39px] top-1 w-8 h-8 rounded-full border-2 border-white shadow-xs flex items-center justify-center ${

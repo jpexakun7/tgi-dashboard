@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, Suspense, lazy } from 'react';
+import React, { useState, useEffect, useMemo, useRef, Suspense, lazy } from 'react';
 import {
   initialEmployees,
   initialPayrollRecords,
@@ -408,6 +408,35 @@ export default function App() {
     return false;
   };
 
+  // Monotonic sequence & collision-proof ID helper to prevent duplicate React keys when multiple logs fire in the same millisecond
+  const uniqueIdSeqRef = useRef<number>(0);
+  const makeCollisionProofId = (prefix: string): string => {
+    uniqueIdSeqRef.current += 1;
+    const tsPart = Date.now().toString().slice(-6);
+    const seqPart = uniqueIdSeqRef.current.toString(36);
+    const randPart = Math.random().toString(36).substring(2, 5);
+    return `${prefix}-${tsPart}-${seqPart}${randPart}`;
+  };
+
+  const ensureUniqueRecordIds = <T extends { id: string }>(items: T[], prefix = 'log'): T[] => {
+    const seen = new Set<string>();
+    return items.map((item, idx) => {
+      const rawId = item?.id ? String(item.id).trim() : `${prefix}-${idx}`;
+      if (!seen.has(rawId)) {
+        seen.add(rawId);
+        return item.id === rawId ? item : { ...item, id: rawId };
+      }
+      let uniqueId = `${rawId}-${idx + 1}`;
+      let attempt = 1;
+      while (seen.has(uniqueId)) {
+        attempt += 1;
+        uniqueId = `${rawId}-${idx + 1}-${attempt}`;
+      }
+      seen.add(uniqueId);
+      return { ...item, id: uniqueId };
+    });
+  };
+
   // System Audit Logs State (History of critical admin actions: salary, employee deletion, role permissions)
   const [systemAuditLogs, setSystemAuditLogs] = useState<SystemAuditLog[]>(() => {
     try {
@@ -415,13 +444,16 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) {
-          return parsed.filter((l) => !isLegacyDummyRecord(l));
+          return ensureUniqueRecordIds(
+            parsed.filter((l) => !isLegacyDummyRecord(l)),
+            'log'
+          );
         }
       }
     } catch (e) {
       console.error('Failed to parse audit logs', e);
     }
-    return initialSystemAuditLogs;
+    return ensureUniqueRecordIds(initialSystemAuditLogs, 'log');
   });
 
   useEffect(() => {
@@ -450,7 +482,7 @@ export default function App() {
     })}, ${now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} WIB`;
 
     const newLog: SystemAuditLog = {
-      id: `log-${Date.now().toString().slice(-6)}`,
+      id: makeCollisionProofId('log'),
       timestamp: now.toISOString(),
       formattedTime: formatted,
       adminEmail: adminUser?.email || 'admin@tasgrosirimport.co.id',
@@ -469,7 +501,7 @@ export default function App() {
       notes: meta?.notes,
     };
 
-    setSystemAuditLogs((prev) => [newLog, ...prev]);
+    setSystemAuditLogs((prev) => ensureUniqueRecordIds([newLog, ...prev], 'log'));
   };
 
   // System Notifications & Reminder State
@@ -2799,7 +2831,12 @@ export default function App() {
               (!n.recipientEmployeeId || validEmpIds.has(n.recipientEmployeeId))
           )
         );
-        setSystemAuditLogs((prev) => prev.filter((l) => !isLegacyDummyRecord(l)));
+        setSystemAuditLogs((prev) =>
+          ensureUniqueRecordIds(
+            prev.filter((l) => !isLegacyDummyRecord(l)),
+            'log'
+          )
+        );
       }
     } catch (err) {
       console.warn('Supabase status check failed:', err);
@@ -4779,7 +4816,7 @@ export default function App() {
       'id' | 'createdAt' | 'status' | 'totalPaid' | 'remainingBalance' | 'installments'
     >
   ) => {
-    const newId = `ca-${Date.now().toString().slice(-6)}`;
+    const newId = makeCollisionProofId('ca');
     const installments = generateInstallmentSchedule(
       advanceData.amount,
       advanceData.tenorMonths,
@@ -5048,7 +5085,7 @@ export default function App() {
     setAssets((prev) => [asset, ...prev]);
 
     const newLog: AssetHistoryLog = {
-      id: `ast-log-${Date.now().toString().slice(-6)}`,
+      id: makeCollisionProofId('ast-log'),
       assetId: asset.id,
       assetCode: asset.assetCode,
       assetName: asset.name,
@@ -5058,7 +5095,7 @@ export default function App() {
       notes: `Pengadaan inventaris baru senilai Rp ${asset.purchaseCost.toLocaleString('id-ID')}. Lokasi: ${asset.location || 'Kantor Pusat'}.`,
       adminName: adminUser?.name || 'Administrator Utama (TGI)',
     };
-    setAssetLogs((prev) => [newLog, ...prev]);
+    setAssetLogs((prev) => ensureUniqueRecordIds([newLog, ...prev], 'ast-log'));
 
     logActivity(
       'ASSET_CREATE',
@@ -5098,7 +5135,7 @@ export default function App() {
 
     if (asset) {
       const newLog: AssetHistoryLog = {
-        id: `ast-log-${Date.now().toString().slice(-6)}`,
+        id: makeCollisionProofId('ast-log'),
         assetId: asset.id,
         assetCode: asset.assetCode,
         assetName: asset.name,
@@ -5108,7 +5145,7 @@ export default function App() {
         notes: `Aset dihapuskan dari inventaris aktif oleh admin.`,
         adminName: adminUser?.name || 'Administrator Utama (TGI)',
       };
-      setAssetLogs((prev) => [newLog, ...prev]);
+      setAssetLogs((prev) => ensureUniqueRecordIds([newLog, ...prev], 'ast-log'));
     }
 
     logActivity(
@@ -5150,7 +5187,7 @@ export default function App() {
     setAssets((prev) => prev.map((a) => (a.id === assetId ? updatedAsset : a)));
 
     const newLog: AssetHistoryLog = {
-      id: `ast-log-${Date.now().toString().slice(-6)}`,
+      id: makeCollisionProofId('ast-log'),
       assetId,
       assetCode: targetAsset.assetCode,
       assetName: targetAsset.name,
@@ -5164,7 +5201,7 @@ export default function App() {
       notes,
       adminName: adminUser?.name || 'Administrator Utama (TGI)',
     };
-    setAssetLogs((prev) => [newLog, ...prev]);
+    setAssetLogs((prev) => ensureUniqueRecordIds([newLog, ...prev], 'ast-log'));
 
     logActivity(
       'ASSET_ASSIGN',
@@ -5213,7 +5250,7 @@ export default function App() {
     setAssets((prev) => prev.map((a) => (a.id === assetId ? updatedAsset : a)));
 
     const newLog: AssetHistoryLog = {
-      id: `ast-log-${Date.now().toString().slice(-6)}`,
+      id: makeCollisionProofId('ast-log'),
       assetId,
       assetCode: targetAsset.assetCode,
       assetName: targetAsset.name,

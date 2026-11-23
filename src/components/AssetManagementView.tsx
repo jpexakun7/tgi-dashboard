@@ -823,8 +823,8 @@ export const AssetManagementView: React.FC<AssetManagementViewProps> = ({
                     </td>
                   </tr>
                 ) : (
-                  assetLogs.map((log) => (
-                    <tr key={log.id} className="hover:bg-slate-50/70 transition-colors">
+                  assetLogs.map((log, idx) => (
+                    <tr key={`${log.id}-${idx}`} className="hover:bg-slate-50/70 transition-colors">
                       <td className="py-3 px-3.5 whitespace-nowrap text-slate-600 font-medium">
                         {log.date}
                       </td>
