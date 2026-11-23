@@ -9,12 +9,13 @@ import {
   KeyRound,
   Mail,
   Clock,
+  Loader2,
 } from 'lucide-react';
 import { CompanyConfig, GoogleAdminAccount, GoogleAdminUser } from '../types';
 import {
   verifyAdminLoginSecure,
   updateAdminPinSecure,
-  hasConfiguredAdminCredentialHash,
+  syncAdminPinStatusFromSupabase,
   checkPinRateLimit,
   OFFICIAL_ADMIN_EMAILS,
   isOfficialAdminEmail,
@@ -52,12 +53,14 @@ export const AdminPinAuthModal: React.FC<AdminPinAuthModalProps> = ({
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isCheckingPinStatus, setIsCheckingPinStatus] = useState(true);
   const [isInitialSetup, setIsInitialSetup] = useState(false);
   const [lockoutSeconds, setLockoutSeconds] = useState<number>(0);
 
   const rateScope = `admin_pin::${selectedEmail.trim().toLowerCase()}`;
 
   useEffect(() => {
+    let isMounted = true;
     if (isOpen) {
       const targetEmail =
         currentAdminUser?.email && isOfficialAdminEmail(currentAdminUser.email)
@@ -67,10 +70,28 @@ export const AdminPinAuthModal: React.FC<AdminPinAuthModalProps> = ({
       setPassword('');
       setConfirmPassword('');
       setError(null);
-      setIsInitialSetup(!hasConfiguredAdminCredentialHash(targetEmail));
+      setIsCheckingPinStatus(true);
       const rate = checkPinRateLimit(`admin_pin::${targetEmail.trim().toLowerCase()}`);
       setLockoutSeconds(rate.isLocked ? rate.remainingSeconds : 0);
+
+      void syncAdminPinStatusFromSupabase(targetEmail)
+        .then((res) => {
+          if (!isMounted) return;
+          setIsInitialSetup(!res.isConfigured);
+        })
+        .catch(() => {
+          if (!isMounted) return;
+          setIsInitialSetup(false);
+        })
+        .finally(() => {
+          if (isMounted) {
+            setIsCheckingPinStatus(false);
+          }
+        });
     }
+    return () => {
+      isMounted = false;
+    };
   }, [isOpen, currentAdminUser]);
 
   useEffect(() => {
@@ -200,6 +221,19 @@ export const AdminPinAuthModal: React.FC<AdminPinAuthModalProps> = ({
           </button>
         </div>
 
+        {isCheckingPinStatus ? (
+          <div className="p-8 flex flex-col items-center justify-center text-center space-y-3">
+            <div className="w-11 h-11 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center justify-center">
+              <Loader2 className="w-5 h-5 text-emerald-600 animate-spin" />
+            </div>
+            <div className="text-xs sm:text-sm font-bold text-slate-800">
+              Memeriksa Status PIN Admin...
+            </div>
+            <p className="text-[11px] text-slate-500 max-w-xs">
+              Menghubungkan ke database Cloud Supabase untuk memastikan status PIN Admin terbaru.
+            </p>
+          </div>
+        ) : (
         <form onSubmit={handleSubmit} className="p-4 sm:p-6 space-y-4">
           {lockoutSeconds > 0 && (
             <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 flex items-start gap-2.5 text-xs text-rose-800">
@@ -226,10 +260,17 @@ export const AdminPinAuthModal: React.FC<AdminPinAuthModalProps> = ({
                 onChange={(e) => {
                   const val = e.target.value;
                   setSelectedEmail(val);
-                  setIsInitialSetup(!hasConfiguredAdminCredentialHash(val));
                   setError(null);
                   const rate = checkPinRateLimit(`admin_pin::${val.trim().toLowerCase()}`);
                   setLockoutSeconds(rate.isLocked ? rate.remainingSeconds : 0);
+                  setIsCheckingPinStatus(true);
+                  void syncAdminPinStatusFromSupabase(val)
+                    .then((res) => {
+                      setIsInitialSetup(!res.isConfigured);
+                    })
+                    .finally(() => {
+                      setIsCheckingPinStatus(false);
+                    });
                 }}
                 className="w-full pl-10 pr-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50"
               >
@@ -329,6 +370,7 @@ export const AdminPinAuthModal: React.FC<AdminPinAuthModalProps> = ({
             </button>
           </div>
         </form>
+        )}
       </div>
     </div>
   );

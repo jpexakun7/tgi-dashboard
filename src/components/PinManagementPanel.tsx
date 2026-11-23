@@ -27,6 +27,11 @@ import { getEmployeeEffectivePin } from '../services/supabaseService';
 import {
   updateAdminPinSecure,
   updateEmployeePinSecure,
+  hashSecretSha256,
+  obfuscateSensitiveField,
+  getCloudAdminPinHashMap,
+  getCloudAdminPinObfuscated,
+  syncAdminPinStatusFromSupabase,
 } from '../services/authSecurityService';
 
 interface PinManagementPanelProps {
@@ -80,6 +85,10 @@ export const PinManagementPanel: React.FC<PinManagementPanelProps> = ({
     });
     setAdminPins(initAdminPins);
   }, [companyConfig]);
+
+  useEffect(() => {
+    void syncAdminPinStatusFromSupabase();
+  }, []);
 
   useEffect(() => {
     const initEmpPins: Record<string, string> = {};
@@ -136,19 +145,27 @@ export const PinManagementPanel: React.FC<PinManagementPanelProps> = ({
       }
     );
 
+    const cloudHashMap = getCloudAdminPinHashMap();
+    const cloudObfuscated = getCloudAdminPinObfuscated();
+
     const newConfig: CompanyConfig = {
       ...companyConfig,
       allowedGoogleAdmins: updatedAdmins,
       securitySettings: {
+        ...companyConfig.securitySettings,
         requirePinForWebAccess,
         requirePinForAdminMode,
+        adminPinConfigured: Object.keys(cloudHashMap).length > 0,
+        adminPinHashMap: cloudHashMap,
+        adminPinObfuscated: cloudObfuscated || companyConfig.securitySettings?.adminPinObfuscated,
+        adminPinUpdatedAt: new Date().toISOString(),
       },
     };
 
     onUpdateConfig(newConfig);
     setMasterAdminPin('');
     showToast(
-      'Kredensial PIN Admin berhasil di-hash (SHA-256 / Bcrypt RPC) & kebijakan keamanan disimpan!'
+      'Kredensial PIN Admin berhasil di-hash (SHA-256) & disimpan terpusat ke Cloud Supabase!'
     );
 
     if (onLogAudit) {
@@ -174,18 +191,26 @@ export const PinManagementPanel: React.FC<PinManagementPanelProps> = ({
     }
 
     await updateEmployeePinSecure(emp.id, newPin);
+    const [scopedDigest, universalDigest] = await Promise.all([
+      hashSecretSha256(newPin, `emp::${emp.id}`),
+      hashSecretSha256(newPin, 'emp::universal'),
+    ]);
+    const obfuscatedPin = obfuscateSensitiveField(newPin);
 
     if (onUpdateEmployee) {
       onUpdateEmployee({
         ...emp,
         accessPin: '••••',
+        accessPinHash: scopedDigest,
+        accessPinUniversalHash: universalDigest,
+        accessPinObfuscated: obfuscatedPin,
       });
     }
 
     setEmployeePins((prev) => ({ ...prev, [emp.id]: '' }));
 
     showToast(
-      `PIN Portal Karyawan untuk ${emp.fullName} (${emp.nik}) berhasil dienkripsi & disinkronkan ke Supabase!`
+      `PIN Portal Karyawan untuk ${emp.fullName} (${emp.nik}) berhasil dienkripsi & disinkronkan ke tabel employees Supabase!`
     );
 
     if (onLogAudit) {
@@ -196,7 +221,7 @@ export const PinManagementPanel: React.FC<PinManagementPanelProps> = ({
         {
           targetId: emp.id,
           targetName: `${emp.fullName} (${emp.nik})`,
-          newValue: 'PIN Terenkripsi (Bcrypt / SHA-256)',
+          newValue: 'PIN Terenkripsi (Supabase employees)',
           severity: 'info',
         }
       );
@@ -212,11 +237,19 @@ export const PinManagementPanel: React.FC<PinManagementPanelProps> = ({
       const uniquePin = digits.length >= 3 ? `1${digits.slice(-3)}` : `${1001 + idx}`;
       const safePin = uniquePin === masterAdminPin ? `9${uniquePin.slice(1)}` : uniquePin;
       await updateEmployeePinSecure(emp.id, safePin);
+      const [scopedDigest, universalDigest] = await Promise.all([
+        hashSecretSha256(safePin, `emp::${emp.id}`),
+        hashSecretSha256(safePin, 'emp::universal'),
+      ]);
+      const obfuscatedPin = obfuscateSensitiveField(safePin);
       nextMap[emp.id] = '';
       if (onUpdateEmployee) {
         onUpdateEmployee({
           ...emp,
           accessPin: '••••',
+          accessPinHash: scopedDigest,
+          accessPinUniversalHash: universalDigest,
+          accessPinObfuscated: obfuscatedPin,
         });
       }
     }
@@ -233,10 +266,18 @@ export const PinManagementPanel: React.FC<PinManagementPanelProps> = ({
       const targetPin = (employeePins[emp.id] || '').trim();
       if (targetPin && targetPin !== '••••' && targetPin.length >= 4) {
         await updateEmployeePinSecure(emp.id, targetPin);
+        const [scopedDigest, universalDigest] = await Promise.all([
+          hashSecretSha256(targetPin, `emp::${emp.id}`),
+          hashSecretSha256(targetPin, 'emp::universal'),
+        ]);
+        const obfuscatedPin = obfuscateSensitiveField(targetPin);
         if (onUpdateEmployee) {
           onUpdateEmployee({
             ...emp,
             accessPin: '••••',
+            accessPinHash: scopedDigest,
+            accessPinUniversalHash: universalDigest,
+            accessPinObfuscated: obfuscatedPin,
           });
         }
         updatedCount++;

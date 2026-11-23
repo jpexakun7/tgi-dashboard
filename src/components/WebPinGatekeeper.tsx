@@ -13,13 +13,14 @@ import {
   Mail,
   CheckCircle2,
   Clock,
+  Loader2,
 } from 'lucide-react';
 import { CompanyConfig, Employee } from '../types';
 import {
   verifyAdminLoginSecure,
   verifyEmployeeLoginSecure,
   updateAdminPinSecure,
-  hasConfiguredAdminCredentialHash,
+  syncAdminPinStatusFromSupabase,
   checkPinRateLimit,
   OFFICIAL_ADMIN_EMAILS,
   sanitizeSafeText,
@@ -73,6 +74,7 @@ export const WebPinGatekeeper: React.FC<WebPinGatekeeperProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
+  const [isCheckingPinStatus, setIsCheckingPinStatus] = useState(true);
   const [isInitialAdminSetup, setIsInitialAdminSetup] = useState(false);
   const [confirmNewPin, setConfirmNewPin] = useState('');
   const [lockoutSeconds, setLockoutSeconds] = useState<number>(0);
@@ -104,12 +106,30 @@ export const WebPinGatekeeper: React.FC<WebPinGatekeeperProps> = ({
   }, [lockoutSeconds, activeRateScope]);
 
   useEffect(() => {
-    if (loginRole === 'admin') {
-      const configured = hasConfiguredAdminCredentialHash(adminEmail);
-      setIsInitialAdminSetup(!configured);
-    } else {
-      setIsInitialAdminSetup(false);
-    }
+    let isMounted = true;
+    const checkCloudPin = async () => {
+      setIsCheckingPinStatus(true);
+      try {
+        const res = await syncAdminPinStatusFromSupabase(adminEmail);
+        if (!isMounted) return;
+        if (loginRole === 'admin') {
+          setIsInitialAdminSetup(!res.isConfigured);
+        } else {
+          setIsInitialAdminSetup(false);
+        }
+      } catch {
+        if (!isMounted) return;
+        setIsInitialAdminSetup(false);
+      } finally {
+        if (isMounted) {
+          setIsCheckingPinStatus(false);
+        }
+      }
+    };
+    void checkCloudPin();
+    return () => {
+      isMounted = false;
+    };
   }, [loginRole, adminEmail]);
 
   const handleDigitClick = (digit: string) => {
@@ -313,6 +333,19 @@ export const WebPinGatekeeper: React.FC<WebPinGatekeeperProps> = ({
         </div>
 
         {/* Form Body */}
+        {isCheckingPinStatus ? (
+          <div className="p-8 sm:p-10 flex flex-col items-center justify-center text-center space-y-3">
+            <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center">
+              <Loader2 className="w-6 h-6 text-emerald-400 animate-spin" />
+            </div>
+            <div className="text-xs sm:text-sm font-bold text-white">
+              Memeriksa Status PIN Keamanan...
+            </div>
+            <p className="text-[11px] text-slate-400 max-w-xs leading-relaxed">
+              Menghubungkan ke database Cloud Supabase untuk memverifikasi konfigurasi PIN perangkat.
+            </p>
+          </div>
+        ) : (
         <form onSubmit={handleVerify} className="p-4 sm:p-6 space-y-4">
           {lockoutSeconds > 0 && (
             <div className="p-3.5 rounded-xl bg-rose-950/90 border border-rose-500/50 flex items-start gap-3 text-rose-200 text-xs">
@@ -532,6 +565,7 @@ export const WebPinGatekeeper: React.FC<WebPinGatekeeperProps> = ({
             <ArrowRight className="w-4 h-4 shrink-0" />
           </button>
         </form>
+        )}
       </div>
     </div>
   );

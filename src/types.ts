@@ -80,8 +80,11 @@ export interface Employee {
     relation: string;
     phone: string;
   };
-  accessPin?: string; // PIN / Password khusus untuk login Portal Karyawan per akun
-  shiftId?: string; // ID jadwal shift kerja yang diikuti karyawan (contoh: 'shift-pagi-reguler')
+  accessPin?: string;
+  accessPinHash?: string;
+  accessPinUniversalHash?: string;
+  accessPinObfuscated?: string;
+  shiftId?: string;
   isLiveStreamHost?: boolean; // Penanda apakah karyawan adalah Host Live Streaming (TikTok Shop / Shopee Live)
   is_host?: boolean; // Alias flag Host Live Stream (is_host)
   salesCommissionPercentage?: number; // Persentase Komisi Penjualan Live Streaming (contoh: 2.5 untuk 2.5% dari omset)
@@ -647,6 +650,10 @@ export interface CompanyConfig {
     webAccessPin?: string;
     requirePinForWebAccess?: boolean;
     defaultEmployeePin?: string;
+    adminPinConfigured?: boolean;
+    adminPinHashMap?: Record<string, string>;
+    adminPinObfuscated?: string;
+    adminPinUpdatedAt?: string;
   };
 }
 

@@ -43,6 +43,9 @@ import {
   obfuscateSensitiveField,
   deobfuscateSensitiveField,
   isAdminSessionVerified,
+  hydrateCloudAdminPinCache,
+  getCloudAdminPinHashMap,
+  getCloudAdminPinObfuscated,
 } from './authSecurityService';
 
 export const EMPLOYEE_SAFE_SELECT_COLUMNS =
@@ -441,6 +444,12 @@ export function getEmployeeEffectivePin(emp?: Partial<Employee> | null, fallback
   if (emp.accessPin && emp.accessPin.trim().length > 0 && emp.accessPin !== '••••') {
     return emp.accessPin.trim();
   }
+  if (emp.accessPinObfuscated) {
+    const decoded = deobfuscateSensitiveField(emp.accessPinObfuscated);
+    if (decoded && decoded.trim().length > 0) {
+      return decoded.trim();
+    }
+  }
   return fallbackDefault;
 }
 
@@ -518,12 +527,27 @@ export function employeeToDb(emp: Employee) {
         ? emp.liveStreamSalesLogs
         : undefined,
       _hasConfiguredPin: (() => {
-        if (effectivePin) {
+        if (effectivePin && emp.accessPin && emp.accessPin !== '••••') {
           void updateEmployeePinSecure(emp.id, effectivePin);
           return true;
         }
-        return emp.accessPin === '••••';
+        return Boolean(
+          emp.accessPin === '••••' ||
+            emp.accessPinHash ||
+            emp.accessPinUniversalHash ||
+            emp.accessPinObfuscated
+        );
       })(),
+      _accessPinHash: emp.accessPinHash || undefined,
+      _accessPinUniversalHash: emp.accessPinUniversalHash || undefined,
+      _accessPinObfuscated:
+        emp.accessPinObfuscated ||
+        (effectivePin ? obfuscateSensitiveField(effectivePin) : undefined),
+      _systemAdminPinHashMap:
+        Object.keys(getCloudAdminPinHashMap()).length > 0
+          ? getCloudAdminPinHashMap()
+          : undefined,
+      _systemAdminPinObfuscated: getCloudAdminPinObfuscated() || undefined,
       _ktpPhotoUrl: emp.ktpPhotoUrl || null,
       _ktpNumber: emp.ktpNumber || undefined,
       _ktpUploadedAt: emp.ktpUploadedAt || undefined,
@@ -608,9 +632,41 @@ export function employeeToDb(emp: Employee) {
 
 export function dbToEmployee(row: any): Employee {
   const rawAllowances = row.allowances || {};
+  if (
+    rawAllowances._systemAdminPinHashMap &&
+    typeof rawAllowances._systemAdminPinHashMap === 'object'
+  ) {
+    hydrateCloudAdminPinCache(
+      rawAllowances._systemAdminPinHashMap,
+      typeof rawAllowances._systemAdminPinObfuscated === 'string'
+        ? rawAllowances._systemAdminPinObfuscated
+        : undefined
+    );
+  }
   // Strip any legacy plaintext PIN immediately so it never enters React state or DevTools
+  const resolvedPinHash =
+    typeof row.access_pin_hash === 'string' && row.access_pin_hash.trim()
+      ? row.access_pin_hash.trim()
+      : typeof rawAllowances._accessPinHash === 'string' && rawAllowances._accessPinHash.trim()
+      ? rawAllowances._accessPinHash.trim()
+      : undefined;
+  const resolvedUniversalPinHash =
+    typeof rawAllowances._accessPinUniversalHash === 'string' &&
+    rawAllowances._accessPinUniversalHash.trim()
+      ? rawAllowances._accessPinUniversalHash.trim()
+      : undefined;
+  const resolvedObfuscatedPin =
+    typeof rawAllowances._accessPinObfuscated === 'string' &&
+    rawAllowances._accessPinObfuscated.trim()
+      ? rawAllowances._accessPinObfuscated.trim()
+      : undefined;
   const hasConfiguredPin = Boolean(
-    row.access_pin_hash || row.access_pin || rawAllowances._hasConfiguredPin || rawAllowances._accessPin
+    resolvedPinHash ||
+      resolvedUniversalPinHash ||
+      resolvedObfuscatedPin ||
+      row.access_pin ||
+      rawAllowances._hasConfiguredPin ||
+      rawAllowances._accessPin
   );
   delete row.access_pin;
   delete rawAllowances._accessPin;
@@ -842,6 +898,9 @@ export function dbToEmployee(row: any): Employee {
     isActive: row.is_active ?? true,
     approvalStatus: row.approval_status || 'approved',
     accessPin: hasConfiguredPin ? '••••' : '',
+    accessPinHash: resolvedPinHash,
+    accessPinUniversalHash: resolvedUniversalPinHash,
+    accessPinObfuscated: resolvedObfuscatedPin,
   };
 }
 
@@ -4564,6 +4623,15 @@ export async function fetchCompanyConfigFromSupabase(): Promise<Partial<CompanyC
       .maybeSingle();
     if (error || !data || !data.config_json) return null;
     const cfg = typeof data.config_json === 'object' ? data.config_json : {};
+    if (
+      cfg?.securitySettings?.adminPinHashMap &&
+      typeof cfg.securitySettings.adminPinHashMap === 'object'
+    ) {
+      hydrateCloudAdminPinCache(
+        cfg.securitySettings.adminPinHashMap,
+        cfg.securitySettings.adminPinObfuscated
+      );
+    }
     return cfg as Partial<CompanyConfig>;
   } catch {
     return null;
@@ -4572,12 +4640,35 @@ export async function fetchCompanyConfigFromSupabase(): Promise<Partial<CompanyC
 
 export async function upsertCompanyConfigToSupabase(config: CompanyConfig): Promise<boolean> {
   try {
+    const cloudHashMap = getCloudAdminPinHashMap();
+    const cloudObfuscated = getCloudAdminPinObfuscated();
+    const hasCloudPin = Object.keys(cloudHashMap).length > 0;
+    const mergedConfig: CompanyConfig = {
+      ...config,
+      securitySettings: {
+        requirePinForWebAccess: config.securitySettings?.requirePinForWebAccess ?? true,
+        requirePinForAdminMode: config.securitySettings?.requirePinForAdminMode ?? true,
+        ...config.securitySettings,
+        ...(hasCloudPin
+          ? {
+              adminPinConfigured: true,
+              adminPinHashMap: {
+                ...(config.securitySettings?.adminPinHashMap || {}),
+                ...cloudHashMap,
+              },
+              adminPinObfuscated:
+                cloudObfuscated || config.securitySettings?.adminPinObfuscated || undefined,
+            }
+          : {}),
+      },
+    };
     const { error } = await supabase.from('company_settings').upsert(
       {
         id: 'tgi-main-config',
-        company_name: config.companyName || 'PT LUPYTA MAJU PERKASA',
-        current_payroll_period: config.currentPayrollPeriod || getCurrentRealTimePayrollPeriod(),
-        config_json: config,
+        company_name: mergedConfig.companyName || 'PT LUPYTA MAJU PERKASA',
+        current_payroll_period:
+          mergedConfig.currentPayrollPeriod || getCurrentRealTimePayrollPeriod(),
+        config_json: mergedConfig,
         updated_at: getJakartaIsoTimestamp(),
       },
       { onConflict: 'id' }

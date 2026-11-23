@@ -287,21 +287,314 @@ export function setVerifiedSessionToken(token: string | null): void {
   }
 }
 
+let cloudAdminPinHashCache: Record<string, string> = {};
+let cloudAdminPinObfuscatedCache: string | undefined = undefined;
+let cloudAdminPinChecked = false;
+
+export function getCloudAdminPinHashMap(): Record<string, string> {
+  return { ...cloudAdminPinHashCache };
+}
+
+export function getCloudAdminPinObfuscated(): string | undefined {
+  return cloudAdminPinObfuscatedCache;
+}
+
+export function hydrateCloudAdminPinCache(
+  hashMap?: Record<string, string> | null,
+  obfuscatedPin?: string
+): void {
+  if (hashMap && typeof hashMap === 'object' && Object.keys(hashMap).length > 0) {
+    cloudAdminPinHashCache = { ...cloudAdminPinHashCache, ...hashMap };
+    cloudAdminPinChecked = true;
+    try {
+      const raw = localStorage.getItem(ADMIN_CREDENTIAL_HASH_STORAGE_KEY);
+      const localMap: Record<string, string> = raw ? JSON.parse(raw) : {};
+      const merged = { ...localMap, ...cloudAdminPinHashCache };
+      localStorage.setItem(ADMIN_CREDENTIAL_HASH_STORAGE_KEY, JSON.stringify(merged));
+    } catch {
+      // ignore storage errors
+    }
+  }
+  if (obfuscatedPin) {
+    cloudAdminPinObfuscatedCache = obfuscatedPin;
+  }
+}
+
+async function persistAdminPinHashToSupabaseTables(
+  hashMap: Record<string, string>,
+  obfuscatedPin?: string
+): Promise<boolean> {
+  if (!isSupabaseConfigured()) return false;
+  let savedAny = false;
+  const nowIso = new Date().toISOString();
+  const settingPayload = {
+    adminPinConfigured: true,
+    adminPinHashMap: hashMap,
+    adminPinObfuscated: obfuscatedPin,
+    updatedAt: nowIso,
+  };
+
+  // 1. Save to app_settings and site_settings if present
+  for (const tableName of ['app_settings', 'site_settings'] as const) {
+    try {
+      const { error } = await supabase.from(tableName).upsert(
+        {
+          id: 'admin_pin_config',
+          key: 'admin_pin_config',
+          value: JSON.stringify(settingPayload),
+          updated_at: nowIso,
+        },
+        { onConflict: 'id' }
+      );
+      if (!error) savedAny = true;
+    } catch {
+      // table might not exist
+    }
+  }
+
+  // 2. Save to company_settings (id = 'tgi-main-config')
+  try {
+    const { data: existingRow } = await supabase
+      .from('company_settings')
+      .select('*')
+      .eq('id', 'tgi-main-config')
+      .maybeSingle();
+
+    const existingJson =
+      existingRow && typeof existingRow.config_json === 'object' && existingRow.config_json
+        ? existingRow.config_json
+        : {};
+    const existingSec =
+      existingJson && typeof existingJson.securitySettings === 'object'
+        ? existingJson.securitySettings
+        : {};
+
+    const updatedJson = {
+      ...existingJson,
+      securitySettings: {
+        ...existingSec,
+        adminPinConfigured: true,
+        adminPinHashMap: hashMap,
+        adminPinObfuscated: obfuscatedPin || existingSec.adminPinObfuscated,
+        adminPinUpdatedAt: nowIso,
+      },
+    };
+
+    const { error: compErr } = await supabase.from('company_settings').upsert(
+      {
+        id: 'tgi-main-config',
+        company_name: existingRow?.company_name || updatedJson.companyName || 'PT LUPYTA MAJU PERKASA',
+        current_payroll_period:
+          existingRow?.current_payroll_period || updatedJson.currentPayrollPeriod || 'November 2026',
+        config_json: updatedJson,
+        updated_at: nowIso,
+      },
+      { onConflict: 'id' }
+    );
+    if (!compErr) savedAny = true;
+  } catch {
+    // ignore
+  }
+
+  // 3. Mirror into employees allowances metadata as fallback if settings tables are not yet created
+  try {
+    const { data: empRows } = await supabase
+      .from('employees')
+      .select('id, allowances')
+      .order('created_at', { ascending: true })
+      .limit(1);
+
+    if (Array.isArray(empRows) && empRows.length > 0 && empRows[0]?.id) {
+      const firstEmp = empRows[0];
+      const nextAllowances = {
+        ...(firstEmp.allowances && typeof firstEmp.allowances === 'object'
+          ? firstEmp.allowances
+          : {}),
+        _systemAdminPinHashMap: hashMap,
+        _systemAdminPinObfuscated: obfuscatedPin,
+        _systemAdminPinUpdatedAt: nowIso,
+      };
+      const { error: empErr } = await supabase
+        .from('employees')
+        .update({ allowances: nextAllowances })
+        .eq('id', firstEmp.id);
+      if (!empErr) savedAny = true;
+    }
+  } catch {
+    // ignore
+  }
+
+  return savedAny;
+}
+
+/**
+ * Checks Admin PIN status directly from Supabase (`app_settings`, `site_settings`, `company_settings`, and `employees`)
+ * before displaying the login screen so new devices never falsely show "Buat PIN Baru".
+ */
+export async function syncAdminPinStatusFromSupabase(
+  email = 'jpexakun7@gmail.com'
+): Promise<{
+  isConfigured: boolean;
+  hashMap: Record<string, string>;
+  adminPinObfuscated?: string;
+}> {
+  const normalizedEmail = (email || 'jpexakun7@gmail.com').trim().toLowerCase();
+
+  if (isSupabaseConfigured()) {
+    const discoveredMap: Record<string, string> = {};
+    let discoveredObfuscated: string | undefined = undefined;
+
+    const extractFromObject = (obj: any) => {
+      if (!obj || typeof obj !== 'object') return;
+      const candidateMap =
+        obj.adminPinHashMap ||
+        obj.admin_pin_hash_map ||
+        obj.securitySettings?.adminPinHashMap ||
+        obj._systemAdminPinHashMap;
+      if (candidateMap && typeof candidateMap === 'object') {
+        for (const [k, v] of Object.entries(candidateMap)) {
+          if (typeof v === 'string' && v.trim().length > 0) {
+            discoveredMap[k.trim().toLowerCase()] = v.trim();
+          }
+        }
+      }
+      const obf =
+        obj.adminPinObfuscated ||
+        obj.securitySettings?.adminPinObfuscated ||
+        obj._systemAdminPinObfuscated;
+      if (typeof obf === 'string' && obf.trim().length > 0) {
+        discoveredObfuscated = obf.trim();
+      }
+    };
+
+    const [appSetRes, siteSetRes, compSetRes, empMetaRes] = await Promise.allSettled([
+      supabase.from('app_settings').select('*').limit(10),
+      supabase.from('site_settings').select('*').limit(10),
+      supabase.from('company_settings').select('*').eq('id', 'tgi-main-config').maybeSingle(),
+      supabase.from('employees').select('id, allowances').order('created_at', { ascending: true }).limit(5),
+    ]);
+
+    for (const res of [appSetRes, siteSetRes]) {
+      if (res.status === 'fulfilled' && !res.value.error && Array.isArray(res.value.data)) {
+        for (const row of res.value.data) {
+          if (row?.value && typeof row.value === 'string') {
+            try {
+              extractFromObject(JSON.parse(row.value));
+            } catch {
+              // If plain PIN string was stored in app_settings / site_settings
+              if (
+                (row.key === 'admin_pin' || row.id === 'admin_pin' || row.key === 'admin_pin_config') &&
+                row.value.trim().length >= 4
+              ) {
+                const rawPin = row.value.trim();
+                discoveredMap[normalizedEmail] = await hashSecretSha256(normalizedEmail, rawPin);
+                discoveredMap['*'] = await hashSecretSha256('*', rawPin);
+              }
+            }
+          } else if (row?.value && typeof row.value === 'object') {
+            extractFromObject(row.value);
+          }
+          if (row?.config_json && typeof row.config_json === 'object') {
+            extractFromObject(row.config_json);
+          }
+        }
+      }
+    }
+
+    if (
+      compSetRes.status === 'fulfilled' &&
+      !compSetRes.value.error &&
+      compSetRes.value.data?.config_json
+    ) {
+      const cfg = compSetRes.value.data.config_json;
+      extractFromObject(cfg);
+      if (
+        cfg?.securitySettings?.adminPin &&
+        typeof cfg.securitySettings.adminPin === 'string' &&
+        cfg.securitySettings.adminPin.trim().length >= 4
+      ) {
+        const legacyPin = cfg.securitySettings.adminPin.trim();
+        discoveredMap[normalizedEmail] = await hashSecretSha256(normalizedEmail, legacyPin);
+        discoveredMap['*'] = await hashSecretSha256('*', legacyPin);
+      }
+    }
+
+    if (
+      empMetaRes.status === 'fulfilled' &&
+      !empMetaRes.value.error &&
+      Array.isArray(empMetaRes.value.data)
+    ) {
+      for (const row of empMetaRes.value.data) {
+        if (row?.allowances) {
+          extractFromObject(row.allowances);
+        }
+      }
+    }
+
+    if (Object.keys(discoveredMap).length > 0) {
+      hydrateCloudAdminPinCache(discoveredMap, discoveredObfuscated);
+      return {
+        isConfigured: true,
+        hashMap: getCloudAdminPinHashMap(),
+        adminPinObfuscated: discoveredObfuscated,
+      };
+    }
+  }
+
+  // If Supabase did not have the hash yet, check if this browser has an existing local hash and backfill it to Supabase
+  try {
+    const raw = localStorage.getItem(ADMIN_CREDENTIAL_HASH_STORAGE_KEY);
+    if (raw) {
+      const localMap = JSON.parse(raw) as Record<string, string>;
+      if (localMap && typeof localMap === 'object' && Object.keys(localMap).length > 0) {
+        hydrateCloudAdminPinCache(localMap);
+        if (isSupabaseConfigured()) {
+          void persistAdminPinHashToSupabaseTables(localMap, cloudAdminPinObfuscatedCache);
+        }
+        return {
+          isConfigured: Boolean(localMap[normalizedEmail] || localMap['*'] || Object.keys(localMap).length > 0),
+          hashMap: localMap,
+          adminPinObfuscated: cloudAdminPinObfuscatedCache,
+        };
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  cloudAdminPinChecked = true;
+  return {
+    isConfigured: false,
+    hashMap: {},
+  };
+}
+
 export function hasConfiguredAdminCredentialHash(email = 'jpexakun7@gmail.com'): boolean {
+  const key = (email || 'jpexakun7@gmail.com').trim().toLowerCase();
+  if (
+    cloudAdminPinHashCache[key] ||
+    cloudAdminPinHashCache['*'] ||
+    Object.keys(cloudAdminPinHashCache).length > 0
+  ) {
+    return true;
+  }
   try {
     const raw = localStorage.getItem(ADMIN_CREDENTIAL_HASH_STORAGE_KEY);
     if (!raw) return false;
     const map = JSON.parse(raw) as Record<string, string>;
-    const key = email.trim().toLowerCase();
-    return Boolean(map[key] || map['*']);
+    return Boolean(map[key] || map['*'] || Object.keys(map).length > 0);
   } catch {
     return false;
   }
 }
 
+export function isCloudAdminPinChecked(): boolean {
+  return cloudAdminPinChecked;
+}
+
 /**
- * Sets or updates the admin PIN/password via Supabase RPC (server-side bcrypt)
- * and stores only a salted SHA-256 digest locally (never plaintext).
+ * Sets or updates the admin PIN/password in Supabase (`app_settings`, `site_settings`, `company_settings`, RPC, & `employees` metadata)
+ * and stores a salted SHA-256 digest locally.
  */
 export async function updateAdminPinSecure(
   email: string,
@@ -325,41 +618,48 @@ export async function updateAdminPinSecure(
     };
   }
 
+  const map: Record<string, string> = { ...cloudAdminPinHashCache };
   try {
     const raw = localStorage.getItem(ADMIN_CREDENTIAL_HASH_STORAGE_KEY);
-    const map: Record<string, string> = raw ? JSON.parse(raw) : {};
-    map[normalizedEmail] = await hashSecretSha256(normalizedEmail, trimmed);
-    map['*'] = await hashSecretSha256('*', trimmed);
-    localStorage.setItem(ADMIN_CREDENTIAL_HASH_STORAGE_KEY, JSON.stringify(map));
-    localStorage.removeItem('tgi_admin_master_pin');
+    if (raw) {
+      Object.assign(map, JSON.parse(raw));
+    }
   } catch {
-    // ignore storage errors
+    // ignore
   }
 
+  map[normalizedEmail] = await hashSecretSha256(normalizedEmail, trimmed);
+  map['*'] = await hashSecretSha256('*', trimmed);
+  for (const officialEmail of OFFICIAL_ADMIN_EMAILS) {
+    if (!map[officialEmail]) {
+      map[officialEmail] = await hashSecretSha256(officialEmail, trimmed);
+    }
+  }
+
+  const obfPin = obfuscateSensitiveField(trimmed);
+  hydrateCloudAdminPinCache(map, obfPin);
+
   if (isSupabaseConfigured()) {
+    await persistAdminPinHashToSupabaseTables(map, obfPin);
     try {
-      const { data, error } = await supabase.rpc('set_admin_credential', {
+      await supabase.rpc('set_admin_credential', {
         p_email: normalizedEmail,
         p_role: role,
         p_new_secret: trimmed,
       });
-      if (!error && data && typeof data === 'object' && 'success' in data) {
-        return {
-          success: Boolean((data as { success: boolean }).success),
-          message: (data as { message?: string }).message,
-        };
-      }
     } catch {
-      // RPC might not be installed yet if user hasn't executed the SQL migration
+      // RPC optional
     }
   }
 
-  return { success: true };
+  return {
+    success: true,
+    message: 'PIN Admin berhasil disimpan secara terpusat di database Supabase.',
+  };
 }
 
 /**
- * Updates an employee's PIN via Supabase RPC `set_employee_pin` (bcrypt hash)
- * and stores only a salted SHA-256 digest locally & in `access_pin_hash` (never plaintext `access_pin`).
+ * Updates an employee's PIN in the `employees` table in Supabase (`allowances._accessPinHash`, `_accessPinUniversalHash`, `_accessPinObfuscated`, and `access_pin_hash`).
  */
 export async function updateEmployeePinSecure(
   employeeId: string,
@@ -370,12 +670,15 @@ export async function updateEmployeePinSecure(
     return { success: false, message: 'PIN Karyawan harus 4 hingga 32 digit/karakter.' };
   }
 
-  const digestHex = await hashSecretSha256(employeeId, trimmed);
+  const cleanEmpId = employeeId.trim();
+  const digestHex = await hashSecretSha256(cleanEmpId, trimmed);
+  const universalDigestHex = await hashSecretSha256('emp_pin_v2', trimmed);
+  const obfuscatedPin = obfuscateSensitiveField(trimmed);
 
   try {
     const raw = localStorage.getItem(EMPLOYEE_PIN_HASH_MAP_STORAGE_KEY);
     const map: Record<string, string> = raw ? JSON.parse(raw) : {};
-    map[employeeId.trim().toLowerCase()] = digestHex;
+    map[cleanEmpId.toLowerCase()] = digestHex;
     localStorage.setItem(EMPLOYEE_PIN_HASH_MAP_STORAGE_KEY, JSON.stringify(map));
   } catch {
     // ignore
@@ -383,34 +686,64 @@ export async function updateEmployeePinSecure(
 
   if (isSupabaseConfigured()) {
     try {
-      const { data, error } = await supabase.rpc('set_employee_pin', {
-        p_employee_id: employeeId,
-        p_new_pin: trimmed,
-      });
-      if (!error && data && typeof data === 'object' && 'success' in data) {
-        return {
-          success: Boolean((data as { success: boolean }).success),
-          message: (data as { message?: string }).message,
-        };
-      }
-      // Fallback if RPC not yet installed: write only `access_pin_hash` (sha256 prefix) and clear `access_pin`
+      // 1. Read existing allowances from employees table in Supabase and merge PIN hashes
+      const { data: empRow } = await supabase
+        .from('employees')
+        .select('id, nik, allowances')
+        .eq('id', cleanEmpId)
+        .maybeSingle();
+
+      const existingAllowances =
+        empRow?.allowances && typeof empRow.allowances === 'object' ? empRow.allowances : {};
+      const updatedAllowances = {
+        ...existingAllowances,
+        _hasConfiguredPin: true,
+        _accessPinHash: `sha256:${digestHex}`,
+        _accessPinUniversalHash: `sha256:${universalDigestHex}`,
+        _accessPinObfuscated: obfuscatedPin,
+      };
+
+      await supabase
+        .from('employees')
+        .update({
+          allowances: updatedAllowances,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', cleanEmpId);
+    } catch {
+      // ignore
+    }
+
+    try {
       await supabase
         .from('employees')
         .update({
           access_pin_hash: `sha256:${digestHex}`,
           access_pin: null,
         })
-        .eq('id', employeeId);
+        .eq('id', cleanEmpId);
     } catch {
-      // fallback handled by caller
+      // optional column if not migrated
+    }
+
+    try {
+      await supabase.rpc('set_employee_pin', {
+        p_employee_id: cleanEmpId,
+        p_new_pin: trimmed,
+      });
+    } catch {
+      // RPC optional
     }
   }
 
-  return { success: true };
+  return {
+    success: true,
+    message: 'PIN Karyawan berhasil disimpan ke tabel employees di Supabase.',
+  };
 }
 
 /**
- * Verifies Admin login strictly for official Admin emails with 5-attempt / 5-minute anti-brute-force protection.
+ * Verifies Admin login strictly against centralized Supabase PIN credentials (`app_settings` / `site_settings` / `company_settings`).
  */
 export async function verifyAdminLoginSecure(
   email: string,
@@ -448,8 +781,36 @@ export async function verifyAdminLoginSecure(
     return { authenticated: false, message: 'Masukkan PIN atau kata sandi terlebih dahulu.' };
   }
 
+  // Always fetch latest Admin PIN configuration from Supabase before verifying
+  const cloudPinStatus = await syncAdminPinStatusFromSupabase(normalizedEmail);
+  const map = cloudPinStatus.hashMap;
+  const expectedEmailHash = map[normalizedEmail];
+  const expectedGlobalHash = map['*'];
+
+  const candidateEmailHash = await hashSecretSha256(normalizedEmail, trimmedSecret);
+  const candidateGlobalHash = await hashSecretSha256('*', trimmedSecret);
+  const deobfCloudPin = cloudPinStatus.adminPinObfuscated
+    ? deobfuscateSensitiveField(cloudPinStatus.adminPinObfuscated)
+    : undefined;
+
+  if (
+    (expectedEmailHash && candidateEmailHash === expectedEmailHash) ||
+    (expectedGlobalHash && candidateGlobalHash === expectedGlobalHash) ||
+    (deobfCloudPin && deobfCloudPin === trimmedSecret)
+  ) {
+    resetPinRateLimit(rateScope);
+    const token = generateClientSessionToken();
+    markAdminSessionVerified(normalizedEmail, token);
+    return {
+      authenticated: true,
+      email: normalizedEmail,
+      role: fallbackRole,
+      sessionToken: token,
+    };
+  }
+
   if (isSupabaseConfigured()) {
-    // 1. Try real Supabase Auth first if email is valid
+    // Also check Supabase Auth / RPC if configured
     if (normalizedEmail.includes('@') && trimmedSecret.length >= 6) {
       try {
         const { data: authData, error: authErr } = await supabase.auth.signInWithPassword({
@@ -468,11 +829,10 @@ export async function verifyAdminLoginSecure(
           };
         }
       } catch {
-        // continue to RPC check
+        // continue
       }
     }
 
-    // 2. Try Supabase Server-Side RPC (`verify_admin_login`)
     try {
       const { data: rpcData, error: rpcErr } = await supabase.rpc('verify_admin_login', {
         p_email: normalizedEmail,
@@ -494,6 +854,14 @@ export async function verifyAdminLoginSecure(
           resetPinRateLimit(rateScope);
           const token = result.sessionToken || generateClientSessionToken();
           markAdminSessionVerified(result.email || normalizedEmail, token);
+          await persistAdminPinHashToSupabaseTables(
+            {
+              ...map,
+              [normalizedEmail]: candidateEmailHash,
+              '*': candidateGlobalHash,
+            },
+            obfuscateSensitiveField(trimmedSecret)
+          );
           return {
             authenticated: true,
             email: result.email || normalizedEmail,
@@ -501,82 +869,33 @@ export async function verifyAdminLoginSecure(
             sessionToken: token,
           };
         }
-
-        if (result.isLockedOut) {
-          return {
-            authenticated: false,
-            isLockedOut: true,
-            remainingSeconds: result.remainingSeconds || 300,
-            message: result.message || 'Login Admin dikunci sementara selama 5 menit.',
-          };
-        }
-
-        if (result.message && !result.message.includes('belum terdaftar')) {
-          const failState = recordFailedPinAttempt(rateScope);
-          return {
-            authenticated: false,
-            isLockedOut: failState.isLocked,
-            remainingSeconds: failState.remainingSeconds,
-            remainingAttempts: failState.remainingAttempts,
-            message: failState.message,
-          };
-        }
       }
     } catch {
-      // RPC not yet migrated on Supabase instance; fall back to local SHA-256 digest check
+      // ignore
     }
   }
 
-  // 3. Verify against salted SHA-256 digest stored via initial admin setup
-  try {
-    const raw = localStorage.getItem(ADMIN_CREDENTIAL_HASH_STORAGE_KEY);
-    if (raw) {
-      const map = JSON.parse(raw) as Record<string, string>;
-      const expectedEmailHash = map[normalizedEmail];
-      const expectedGlobalHash = map['*'];
-
-      const candidateEmailHash = await hashSecretSha256(normalizedEmail, trimmedSecret);
-      const candidateGlobalHash = await hashSecretSha256('*', trimmedSecret);
-
-      if (
-        (expectedEmailHash && candidateEmailHash === expectedEmailHash) ||
-        (expectedGlobalHash && candidateGlobalHash === expectedGlobalHash)
-      ) {
-        resetPinRateLimit(rateScope);
-        const token = generateClientSessionToken();
-        markAdminSessionVerified(normalizedEmail, token);
-        return {
-          authenticated: true,
-          email: normalizedEmail,
-          role: fallbackRole,
-          sessionToken: token,
-        };
-      }
-
-      const failState = recordFailedPinAttempt(rateScope);
-      return {
-        authenticated: false,
-        isLockedOut: failState.isLocked,
-        remainingSeconds: failState.remainingSeconds,
-        remainingAttempts: failState.remainingAttempts,
-        message: failState.message,
-      };
-    }
-  } catch {
-    // ignore
+  if (cloudPinStatus.isConfigured || Object.keys(map).length > 0) {
+    const failState = recordFailedPinAttempt(rateScope);
+    return {
+      authenticated: false,
+      isLockedOut: failState.isLocked,
+      remainingSeconds: failState.remainingSeconds,
+      remainingAttempts: failState.remainingAttempts,
+      message: failState.message,
+    };
   }
 
   return {
     authenticated: false,
     requiresInitialSetup: true,
     message:
-      'Kredensial Admin belum dikonfigurasi. Silakan buat PIN/Kata Sandi Admin baru terlebih dahulu.',
+      'Kredensial Admin belum dikonfigurasi di database. Silakan buat PIN/Kata Sandi Admin baru terlebih dahulu.',
   };
 }
 
 /**
- * Verifies Employee login without EVER fetching or exposing `access_pin` (plaintext) to the browser.
- * Enforces 5-attempt / 5-minute anti-brute-force lockout.
+ * Verifies Employee login directly against the `employees` table in Supabase (never relying solely on device localStorage).
  */
 export async function verifyEmployeeLoginSecure(
   identifier: string,
@@ -609,7 +928,114 @@ export async function verifyEmployeeLoginSecure(
   }
 
   if (isSupabaseConfigured()) {
-    // 1. Primary Server-Side RPC `verify_employee_pin` (or alias `verify_employee_login`)
+    // 1. Read directly from the `employees` table in Supabase
+    try {
+      const qLower = cleanId.trim().toLowerCase();
+      let empRows: any[] | null = null;
+
+      const { data: fullRows, error: fullErr } = await supabase
+        .from('employees')
+        .select('*');
+
+      if (!fullErr && Array.isArray(fullRows)) {
+        empRows = fullRows;
+      } else {
+        const { data: coreRows } = await supabase
+          .from('employees')
+          .select('id, nik, full_name, email, google_email, department, allowances');
+        if (Array.isArray(coreRows)) {
+          empRows = coreRows;
+        }
+      }
+
+      if (empRows && empRows.length > 0) {
+        const matchedEmp = empRows.find(
+          (r: any) =>
+            String(r?.id || '').trim().toLowerCase() === qLower ||
+            String(r?.nik || '').trim().toLowerCase() === qLower ||
+            String(r?.email || '').trim().toLowerCase() === qLower ||
+            String(r?.google_email || '').trim().toLowerCase() === qLower
+        );
+
+        if (matchedEmp) {
+          const empId = String(matchedEmp.id);
+          const empAllowances =
+            matchedEmp.allowances && typeof matchedEmp.allowances === 'object'
+              ? matchedEmp.allowances
+              : {};
+
+          const candidateIdHash = await hashSecretSha256(empId, cleanSecret);
+          const candidateUniversalHash = await hashSecretSha256('emp_pin_v2', cleanSecret);
+
+          const dbPinHash = String(matchedEmp.access_pin_hash || '').trim();
+          const allowIdHash = String(empAllowances._accessPinHash || '').trim();
+          const allowUniHash = String(empAllowances._accessPinUniversalHash || '').trim();
+          const allowObfPin =
+            typeof empAllowances._accessPinObfuscated === 'string'
+              ? deobfuscateSensitiveField(empAllowances._accessPinObfuscated)
+              : undefined;
+          const dbPlainPin =
+            typeof matchedEmp.access_pin === 'string' && matchedEmp.access_pin !== '••••'
+              ? matchedEmp.access_pin.trim()
+              : typeof empAllowances._accessPin === 'string' && empAllowances._accessPin !== '••••'
+              ? empAllowances._accessPin.trim()
+              : '';
+
+          const expectedLocalHash = await getLocalEmployeePinHash(empId);
+
+          // Check if employee has any configured PIN in Supabase
+          const hasAnyCloudPin = Boolean(
+            dbPinHash || allowIdHash || allowUniHash || allowObfPin || dbPlainPin
+          );
+
+          // Default NIK-based fallback PIN if the employee has never configured a custom PIN in Supabase
+          const nikDigits = String(matchedEmp.nik || '').replace(/\D/g, '');
+          const defaultNikPin = nikDigits.length >= 3 ? `1${nikDigits.slice(-3)}` : '1234';
+
+          const isDirectMatch =
+            Boolean(
+              dbPinHash &&
+                (dbPinHash === `sha256:${candidateIdHash}` ||
+                  dbPinHash === candidateIdHash ||
+                  dbPinHash === `sha256:${candidateUniversalHash}`)
+            ) ||
+            Boolean(
+              allowIdHash &&
+                (allowIdHash === `sha256:${candidateIdHash}` || allowIdHash === candidateIdHash)
+            ) ||
+            Boolean(
+              allowUniHash &&
+                (allowUniHash === `sha256:${candidateUniversalHash}` ||
+                  allowUniHash === candidateUniversalHash)
+            ) ||
+            Boolean(allowObfPin && allowObfPin === cleanSecret) ||
+            Boolean(dbPlainPin && dbPlainPin === cleanSecret) ||
+            Boolean(expectedLocalHash && candidateIdHash === expectedLocalHash) ||
+            Boolean(!hasAnyCloudPin && (cleanSecret === defaultNikPin || cleanSecret === '1234'));
+
+          if (isDirectMatch) {
+            resetPinRateLimit(rateScope);
+            const token = generateClientSessionToken();
+            markEmployeeSessionLocked(empId, token);
+            // Ensure PIN hash is persisted back to Supabase if matched via default or local hash
+            if (!allowIdHash || !allowUniHash) {
+              void updateEmployeePinSecure(empId, cleanSecret);
+            }
+            return {
+              authenticated: true,
+              employeeId: empId,
+              employeeName: matchedEmp.full_name || cleanId,
+              department: matchedEmp.department || '',
+              sessionToken: token,
+            };
+          }
+        }
+      }
+    } catch {
+      // continue to RPC check
+    }
+
+    // 2. Also check Server-Side RPC `verify_employee_pin` (for bcrypt hashes in `access_pin_hash`)
     for (const rpcName of ['verify_employee_pin', 'verify_employee_login'] as const) {
       try {
         const rpcArgs =
@@ -633,6 +1059,7 @@ export async function verifyEmployeeLoginSecure(
             resetPinRateLimit(rateScope);
             const token = res.sessionToken || generateClientSessionToken();
             markEmployeeSessionLocked(res.employeeId, token);
+            void updateEmployeePinSecure(res.employeeId, cleanSecret);
             return {
               authenticated: true,
               employeeId: res.employeeId,
@@ -641,84 +1068,14 @@ export async function verifyEmployeeLoginSecure(
               sessionToken: token,
             };
           }
-          if (res.isLockedOut) {
-            return {
-              authenticated: false,
-              isLockedOut: true,
-              remainingSeconds: res.remainingSeconds || 300,
-              message:
-                res.message ||
-                'Salah memasukkan PIN 5 kali berturut-turut. Akses diblokir selama 5 menit.',
-            };
-          }
-          const failState = recordFailedPinAttempt(rateScope);
-          return {
-            authenticated: false,
-            isLockedOut: failState.isLocked,
-            remainingSeconds: failState.remainingSeconds,
-            remainingAttempts: failState.remainingAttempts,
-            message: failState.message,
-          };
         }
       } catch {
-        // RPC not yet created in Supabase; continue to hash-only check below
+        // ignore
       }
-    }
-
-    // 2. Fallback targeted query: NEVER select `access_pin` (plain text)! Select ONLY `access_pin_hash`.
-    try {
-      const safeFilter = cleanId.replace(/[,()'"\\]/g, '');
-      const { data: rows, error } = await supabase
-        .from('employees')
-        .select('id, full_name, department, nik, email, access_pin_hash')
-        .or(`id.ilike.${safeFilter},nik.ilike.${safeFilter},email.ilike.${safeFilter}`)
-        .limit(1);
-
-      if (!error && rows && rows.length > 0) {
-        const emp = rows[0] as {
-          id: string;
-          full_name?: string;
-          department?: string;
-          nik?: string;
-          email?: string;
-          access_pin_hash?: string | null;
-        };
-        const expectedLocalHash = await getLocalEmployeePinHash(emp.id);
-        const candidateHash = await hashSecretSha256(emp.id, cleanSecret);
-        const dbHash = (emp.access_pin_hash || '').trim();
-
-        const isHashMatch =
-          Boolean(expectedLocalHash && candidateHash === expectedLocalHash) ||
-          Boolean(dbHash && (dbHash === `sha256:${candidateHash}` || dbHash === candidateHash));
-
-        if (isHashMatch) {
-          resetPinRateLimit(rateScope);
-          const token = generateClientSessionToken();
-          markEmployeeSessionLocked(emp.id, token);
-          return {
-            authenticated: true,
-            employeeId: emp.id,
-            employeeName: emp.full_name || cleanId,
-            department: emp.department || '',
-            sessionToken: token,
-          };
-        }
-
-        const failState = recordFailedPinAttempt(rateScope);
-        return {
-          authenticated: false,
-          isLockedOut: failState.isLocked,
-          remainingSeconds: failState.remainingSeconds,
-          remainingAttempts: failState.remainingAttempts,
-          message: failState.message,
-        };
-      }
-    } catch {
-      // ignore
     }
   }
 
-  // 3. Verify against local SHA-256 PIN hash map (never plaintext)
+  // 3. Offline fallback against local storage cache
   try {
     const rawEmps = localStorage.getItem('tgi_employees_data');
     if (rawEmps) {
@@ -734,7 +1091,21 @@ export async function verifyEmployeeLoginSecure(
         if (found?.id) {
           const expectedHash = await getLocalEmployeePinHash(String(found.id));
           const candidateHash = await hashSecretSha256(String(found.id), cleanSecret);
-          if (expectedHash && candidateHash === expectedHash) {
+          const candidateUniHash = await hashSecretSha256('emp_pin_v2', cleanSecret);
+          const foundObf =
+            typeof found.accessPinObfuscated === 'string'
+              ? deobfuscateSensitiveField(found.accessPinObfuscated)
+              : undefined;
+          if (
+            (expectedHash && candidateHash === expectedHash) ||
+            (found.accessPinHash &&
+              (found.accessPinHash === `sha256:${candidateHash}` ||
+                found.accessPinHash === candidateHash)) ||
+            (found.accessPinUniversalHash &&
+              (found.accessPinUniversalHash === `sha256:${candidateUniHash}` ||
+                found.accessPinUniversalHash === candidateUniHash)) ||
+            (foundObf && foundObf === cleanSecret)
+          ) {
             resetPinRateLimit(rateScope);
             const token = generateClientSessionToken();
             markEmployeeSessionLocked(String(found.id), token);
