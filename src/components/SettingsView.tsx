@@ -1034,6 +1034,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <label className="block text-slate-700 font-bold mb-1">Tanggal Mulai Cut-Off Presensi</label>
                 <input
                   type="number"
+                  step="any"
                   min={1}
                   max={31}
                   value={formData.cutOffStartDay}
@@ -1049,6 +1050,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <label className="block text-slate-700 font-bold mb-1">Tanggal Selesai Cut-Off Presensi</label>
                 <input
                   type="number"
+                  step="any"
                   min={1}
                   max={31}
                   value={formData.cutOffEndDay}
@@ -1066,6 +1068,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </label>
                 <input
                   type="number"
+                  step="any"
                   min={1}
                   max={31}
                   value={formData.payrollDisbursementDay}
@@ -1269,6 +1272,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <div className="flex items-center gap-1.5">
                   <input
                     type="number"
+                    step="any"
                     min={4}
                     max={12}
                     value={formData.standardWorkHoursPerDay}
@@ -1289,6 +1293,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <div className="flex items-center gap-1.5">
                   <input
                     type="number"
+                    step="any"
                     min={4}
                     max={6}
                     value={formData.standardWorkDaysPerWeek}
@@ -1308,7 +1313,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <label className="block text-slate-700 font-bold mb-1">Pengali Lembur (Multiplier)</label>
                 <input
                   type="number"
-                  step={0.1}
+                  step="any"
                   min={1.0}
                   max={3.0}
                   value={formData.defaultOvertimeMultiplier}
@@ -1327,8 +1332,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <label className="block text-slate-700 font-bold mb-1">Tarif Dasar Lembur (IDR / Menit)</label>
                 <input
                   type="number"
-                  step={100}
-                  min={200}
+                  step="any"
+                  min={0}
                   value={formData.defaultOvertimeRatePerMinute || Math.round((formData.defaultOvertimeRatePerHour || 55000) / 60)}
                   onChange={(e) => {
                     const perMin = Number(e.target.value);
@@ -1445,7 +1450,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <label className="block text-slate-700 font-bold mb-1">Plafon Maksimal BPJS Kesehatan</label>
                 <input
                   type="number"
-                  step={500000}
+                  step="any"
                   value={formData.bpjsKesehatanMaxCap}
                   onChange={(e) =>
                     setFormData({

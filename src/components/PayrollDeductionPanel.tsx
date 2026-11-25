@@ -297,8 +297,8 @@ export const PayrollDeductionPanel: React.FC<PayrollDeductionPanelProps> = ({
   );
 
   const validatedCicilanBulanIni = useMemo(() => {
-    const raw = Math.max(0, Math.round(Number(cicilanKasbonBulanIni) || 0));
-    const sisa = Math.max(0, Math.round(Number(sisaKasbonLalu) || 0));
+    const raw = Math.max(0, Number(cicilanKasbonBulanIni) || 0);
+    const sisa = Math.max(0, Number(sisaKasbonLalu) || 0);
     return sisa > 0 ? Math.min(sisa, raw) : 0;
   }, [cicilanKasbonBulanIni, sisaKasbonLalu]);
 
@@ -307,16 +307,16 @@ export const PayrollDeductionPanel: React.FC<PayrollDeductionPanelProps> = ({
     () =>
       Math.max(
         0,
-        Math.round((Number(sisaKasbonLalu) || 0) - validatedCicilanBulanIni)
+        (Number(sisaKasbonLalu) || 0) - validatedCicilanBulanIni
       ),
     [sisaKasbonLalu, validatedCicilanBulanIni]
   );
 
   const totalPotonganBpjsPphManual = useMemo(
     () =>
-      Math.max(0, Math.round(Number(bpjsTkManual) || 0)) +
-      Math.max(0, Math.round(Number(bpjsKesehatanManual) || 0)) +
-      Math.max(0, Math.round(Number(pph21Manual) || 0)),
+      Math.max(0, Number(bpjsTkManual) || 0) +
+      Math.max(0, Number(bpjsKesehatanManual) || 0) +
+      Math.max(0, Number(pph21Manual) || 0),
     [bpjsTkManual, bpjsKesehatanManual, pph21Manual]
   );
 
@@ -386,17 +386,17 @@ export const PayrollDeductionPanel: React.FC<PayrollDeductionPanelProps> = ({
         employee_name: selectedEmployee.fullName,
         period_month: selectedPeriodMonth,
         tanpa_keterangan_hari: Math.max(0, Number(tanpaKeteranganHari) || 0),
-        tanpa_keterangan_rate: Math.max(0, Math.round(Number(tanpaKeteranganRate) || 0)),
-        izin_jam_menit: Math.max(0, Math.round(Number(izinJamMenit) || 0)),
-        izin_jam_rate: Math.max(0, Math.round(Number(izinJamRate) || 0)),
+        tanpa_keterangan_rate: Math.max(0, Number(tanpaKeteranganRate) || 0),
+        izin_jam_menit: Math.max(0, Number(izinJamMenit) || 0),
+        izin_jam_rate: Math.max(0, Number(izinJamRate) || 0),
         izin_hari_jumlah: Math.max(0, Number(izinHariJumlah) || 0),
-        izin_hari_rate: Math.max(0, Math.round(Number(izinHariRate) || 0)),
-        sisa_kasbon_lalu: Math.max(0, Math.round(Number(sisaKasbonLalu) || 0)),
+        izin_hari_rate: Math.max(0, Number(izinHariRate) || 0),
+        sisa_kasbon_lalu: Math.max(0, Number(sisaKasbonLalu) || 0),
         cicilan_kasbon_bulan_ini: validatedCicilanBulanIni,
         sisa_kasbon_depan: sisaKasbonDepanOtomatis,
-        bpjs_tk_manual: Math.max(0, Math.round(Number(bpjsTkManual) || 0)),
-        bpjs_kesehatan_manual: Math.max(0, Math.round(Number(bpjsKesehatanManual) || 0)),
-        pph21_manual: Math.max(0, Math.round(Number(pph21Manual) || 0)),
+        bpjs_tk_manual: Math.max(0, Number(bpjsTkManual) || 0),
+        bpjs_kesehatan_manual: Math.max(0, Number(bpjsKesehatanManual) || 0),
+        pph21_manual: Math.max(0, Number(pph21Manual) || 0),
         catatan_potongan: catatanPotongan.trim(),
         department: selectedEmployee.department,
         role: selectedEmployee.role,
@@ -425,16 +425,16 @@ export const PayrollDeductionPanel: React.FC<PayrollDeductionPanelProps> = ({
     setSelectedEmployeeId(matchedEmp?.id || ded.employee_id);
     setEditingDeductionId(ded.id);
     setTanpaKeteranganHari(Math.max(0, Number(ded.tanpa_keterangan_hari) || 0));
-    setTanpaKeteranganRate(Math.max(0, Math.round(Number(ded.tanpa_keterangan_rate) || 0)));
-    setIzinJamMenit(Math.max(0, Math.round(Number(ded.izin_jam_menit) || 0)));
-    setIzinJamRate(Math.max(0, Math.round(Number(ded.izin_jam_rate) || 0)));
+    setTanpaKeteranganRate(Math.max(0, Number(ded.tanpa_keterangan_rate) || 0));
+    setIzinJamMenit(Math.max(0, Number(ded.izin_jam_menit) || 0));
+    setIzinJamRate(Math.max(0, Number(ded.izin_jam_rate) || 0));
     setIzinHariJumlah(Math.max(0, Number(ded.izin_hari_jumlah) || 0));
-    setIzinHariRate(Math.max(0, Math.round(Number(ded.izin_hari_rate) || 0)));
-    setSisaKasbonLalu(Math.max(0, Math.round(Number(ded.sisa_kasbon_lalu) || 0)));
-    setCicilanKasbonBulanIni(Math.max(0, Math.round(Number(ded.cicilan_kasbon_bulan_ini) || 0)));
-    setBpjsTkManual(Math.max(0, Math.round(Number(ded.bpjs_tk_manual) || 0)));
-    setBpjsKesehatanManual(Math.max(0, Math.round(Number(ded.bpjs_kesehatan_manual) || 0)));
-    setPph21Manual(Math.max(0, Math.round(Number(ded.pph21_manual) || 0)));
+    setIzinHariRate(Math.max(0, Number(ded.izin_hari_rate) || 0));
+    setSisaKasbonLalu(Math.max(0, Number(ded.sisa_kasbon_lalu) || 0));
+    setCicilanKasbonBulanIni(Math.max(0, Number(ded.cicilan_kasbon_bulan_ini) || 0));
+    setBpjsTkManual(Math.max(0, Number(ded.bpjs_tk_manual) || 0));
+    setBpjsKesehatanManual(Math.max(0, Number(ded.bpjs_kesehatan_manual) || 0));
+    setPph21Manual(Math.max(0, Number(ded.pph21_manual) || 0));
     setCatatanPotongan(ded.catatan_potongan || '');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -788,7 +788,7 @@ export const PayrollDeductionPanel: React.FC<PayrollDeductionPanelProps> = ({
                       type="number"
                       min={0}
                       max={31}
-                      step={0.5}
+                      step="any"
                       value={tanpaKeteranganHari}
                       onChange={(e) =>
                         setTanpaKeteranganHari(Math.max(0, Number(e.target.value) || 0))
@@ -812,11 +812,11 @@ export const PayrollDeductionPanel: React.FC<PayrollDeductionPanelProps> = ({
                     <input
                       type="number"
                       min={0}
-                      step={1000}
+                      step="any"
                       value={tanpaKeteranganRate}
                       onChange={(e) =>
                         setTanpaKeteranganRate(
-                          Math.max(0, Math.round(Number(e.target.value) || 0))
+                          Math.max(0, Number(e.target.value) || 0)
                         )
                       }
                       className="w-full pl-8 pr-3 py-2 rounded-lg border border-slate-300 text-sm font-mono font-bold text-slate-900 focus:ring-2 focus:ring-rose-500"
@@ -847,10 +847,10 @@ export const PayrollDeductionPanel: React.FC<PayrollDeductionPanelProps> = ({
                     <input
                       type="number"
                       min={0}
-                      step={5}
+                      step="any"
                       value={izinJamMenit}
                       onChange={(e) =>
-                        setIzinJamMenit(Math.max(0, Math.round(Number(e.target.value) || 0)))
+                        setIzinJamMenit(Math.max(0, Number(e.target.value) || 0))
                       }
                       className="w-full px-3 py-2 rounded-lg border border-slate-300 text-sm font-mono font-bold text-slate-900 focus:ring-2 focus:ring-rose-500"
                     />
@@ -871,10 +871,10 @@ export const PayrollDeductionPanel: React.FC<PayrollDeductionPanelProps> = ({
                     <input
                       type="number"
                       min={0}
-                      step={100}
+                      step="any"
                       value={izinJamRate}
                       onChange={(e) =>
-                        setIzinJamRate(Math.max(0, Math.round(Number(e.target.value) || 0)))
+                        setIzinJamRate(Math.max(0, Number(e.target.value) || 0))
                       }
                       className="w-full pl-8 pr-3 py-2 rounded-lg border border-slate-300 text-sm font-mono font-bold text-slate-900 focus:ring-2 focus:ring-rose-500"
                     />
@@ -905,7 +905,7 @@ export const PayrollDeductionPanel: React.FC<PayrollDeductionPanelProps> = ({
                       type="number"
                       min={0}
                       max={31}
-                      step={0.5}
+                      step="any"
                       value={izinHariJumlah}
                       onChange={(e) =>
                         setIzinHariJumlah(Math.max(0, Number(e.target.value) || 0))
@@ -929,10 +929,10 @@ export const PayrollDeductionPanel: React.FC<PayrollDeductionPanelProps> = ({
                     <input
                       type="number"
                       min={0}
-                      step={1000}
+                      step="any"
                       value={izinHariRate}
                       onChange={(e) =>
-                        setIzinHariRate(Math.max(0, Math.round(Number(e.target.value) || 0)))
+                        setIzinHariRate(Math.max(0, Number(e.target.value) || 0))
                       }
                       className="w-full pl-8 pr-3 py-2 rounded-lg border border-slate-300 text-sm font-mono font-bold text-slate-900 focus:ring-2 focus:ring-rose-500"
                     />
@@ -1011,10 +1011,10 @@ export const PayrollDeductionPanel: React.FC<PayrollDeductionPanelProps> = ({
                     <input
                       type="number"
                       min={0}
-                      step={50000}
+                      step="any"
                       value={sisaKasbonLalu}
                       onChange={(e) => {
-                        const nextSisa = Math.max(0, Math.round(Number(e.target.value) || 0));
+                        const nextSisa = Math.max(0, Number(e.target.value) || 0);
                         setSisaKasbonLalu(nextSisa);
                         if (cicilanKasbonBulanIni > nextSisa) {
                           setCicilanKasbonBulanIni(nextSisa);
@@ -1049,10 +1049,10 @@ export const PayrollDeductionPanel: React.FC<PayrollDeductionPanelProps> = ({
                       type="number"
                       min={0}
                       max={sisaKasbonLalu > 0 ? sisaKasbonLalu : undefined}
-                      step={50000}
+                      step="any"
                       value={cicilanKasbonBulanIni}
                       onChange={(e) => {
-                        const rawVal = Math.max(0, Math.round(Number(e.target.value) || 0));
+                        const rawVal = Math.max(0, Number(e.target.value) || 0);
                         setCicilanKasbonBulanIni(
                           sisaKasbonLalu > 0 ? Math.min(sisaKasbonLalu, rawVal) : 0
                         );
@@ -1156,10 +1156,10 @@ export const PayrollDeductionPanel: React.FC<PayrollDeductionPanelProps> = ({
                     <input
                       type="number"
                       min={0}
-                      step={5000}
+                      step="any"
                       value={bpjsTkManual}
                       onChange={(e) =>
-                        setBpjsTkManual(Math.max(0, Math.round(Number(e.target.value) || 0)))
+                        setBpjsTkManual(Math.max(0, Number(e.target.value) || 0))
                       }
                       className="w-full pl-8 pr-3 py-2 rounded-lg border border-slate-300 text-sm font-mono font-bold text-slate-900 focus:ring-2 focus:ring-indigo-500"
                     />
@@ -1181,10 +1181,10 @@ export const PayrollDeductionPanel: React.FC<PayrollDeductionPanelProps> = ({
                     <input
                       type="number"
                       min={0}
-                      step={5000}
+                      step="any"
                       value={bpjsKesehatanManual}
                       onChange={(e) =>
-                        setBpjsKesehatanManual(Math.max(0, Math.round(Number(e.target.value) || 0)))
+                        setBpjsKesehatanManual(Math.max(0, Number(e.target.value) || 0))
                       }
                       className="w-full pl-8 pr-3 py-2 rounded-lg border border-slate-300 text-sm font-mono font-bold text-slate-900 focus:ring-2 focus:ring-indigo-500"
                     />
@@ -1206,10 +1206,10 @@ export const PayrollDeductionPanel: React.FC<PayrollDeductionPanelProps> = ({
                     <input
                       type="number"
                       min={0}
-                      step={5000}
+                      step="any"
                       value={pph21Manual}
                       onChange={(e) =>
-                        setPph21Manual(Math.max(0, Math.round(Number(e.target.value) || 0)))
+                        setPph21Manual(Math.max(0, Number(e.target.value) || 0))
                       }
                       className="w-full pl-8 pr-3 py-2 rounded-lg border border-slate-300 text-sm font-mono font-bold text-slate-900 focus:ring-2 focus:ring-indigo-500"
                     />

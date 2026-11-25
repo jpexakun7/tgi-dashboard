@@ -2133,27 +2133,56 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
   return (
     <div className="space-y-5 sm:space-y-6 pb-36 md:pb-8 animate-in fade-in-50 max-w-full overflow-x-hidden">
       {/* Top Banner: Employee Mode Active & Back to Admin Switcher */}
-      <div className="bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-700 rounded-2xl p-4 sm:p-5 text-white shadow-md">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+      <div className="bg-[#141414] bg-cover bg-center rounded-2xl p-4 sm:p-5 text-white shadow-xl border border-amber-500/30 relative overflow-hidden">
+        {/* Background Logo TGI & Overlay Gelap Transparan bg-black/65 */}
+        <img
+          src="/assets/aistudio/WhatsApp_Image_2026-11-25_at_09.41.19_a4e57460.jpeg"
+          alt=""
+          aria-hidden="true"
+          className="absolute inset-0 w-full h-full object-cover object-center select-none pointer-events-none"
+        />
+        <div className="absolute inset-0 bg-black/65 pointer-events-none" />
+
+        <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div className="flex items-start sm:items-center gap-3.5 sm:gap-4 min-w-0">
-            <img
-              src={currentEmployee.avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=256&h=256&q=80'}
-              alt={currentEmployee.fullName}
-              className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl object-cover ring-3 ring-white/30 shadow-md shrink-0"
-            />
+            <div className="relative shrink-0">
+              <img
+                src={currentEmployee.avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=256&h=256&q=80'}
+                alt={currentEmployee.fullName}
+                className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl object-cover ring-2 ring-amber-400/50 shadow-md shrink-0"
+              />
+              {/* Monogram Logo Emas TGI Badge */}
+              <div
+                className="absolute -bottom-1 -right-1 w-6 h-6 rounded-lg bg-[#161616] border border-amber-500/40 shadow-md overflow-hidden flex items-center justify-center"
+                title={companyConfig.companyName || 'Tas Grosir Import'}
+              >
+                <img
+                  src="/assets/aistudio/WhatsApp_Image_2026-11-25_at_09.41.19_a4e57460.jpeg"
+                  alt="TGI"
+                  className="w-full h-full object-cover object-center scale-125 select-none"
+                />
+              </div>
+            </div>
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] sm:text-xs font-bold bg-white/20 backdrop-blur-xs text-white border border-white/20">
-                  Portal Karyawan
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] sm:text-xs font-bold bg-amber-500/20 backdrop-blur-xs text-amber-200 border border-amber-500/40">
+                  <span className="w-3.5 h-3.5 rounded-sm bg-[#161616] border border-amber-500/40 overflow-hidden inline-flex items-center justify-center shrink-0">
+                    <img
+                      src="/assets/aistudio/WhatsApp_Image_2026-11-25_at_09.41.19_a4e57460.jpeg"
+                      alt=""
+                      className="w-full h-full object-cover object-center scale-125 select-none"
+                    />
+                  </span>
+                  <span>Portal Karyawan</span>
                 </span>
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] sm:text-xs font-mono font-bold bg-slate-900/50 text-emerald-100 border border-emerald-400/35 inline-flex items-center gap-1">
-                  <Clock className="w-3 h-3 text-emerald-300" />
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] sm:text-xs font-mono font-bold bg-black/65 text-amber-200 border border-amber-500/35 inline-flex items-center gap-1 backdrop-blur-xs">
+                  <Clock className="w-3 h-3 text-amber-400" />
                   <span>{portalLiveClockLabel.compactLabel}</span>
                 </span>
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] sm:text-xs font-semibold bg-emerald-400/30 text-emerald-100 border border-emerald-300/30">
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] sm:text-xs font-semibold bg-white/15 text-stone-100 border border-amber-400/30 backdrop-blur-xs">
                   {currentEmployee.employmentStatus}
                 </span>
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] sm:text-xs font-extrabold bg-amber-300 text-slate-950 border border-amber-200 shadow-2xs">
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] sm:text-xs font-extrabold bg-amber-400 text-stone-950 border border-amber-200 shadow-2xs">
                   Tarif Gaji: {formatRupiah(myHourlyRate)} / jam (Std {myStandardDailyHours} Jam/Hari)
                 </span>
                 {canAccessLiveCommissionPanel && (
@@ -2180,15 +2209,15 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   </button>
                 )}
               </div>
-              <h1 className="text-lg sm:text-2xl font-bold text-white mt-1 truncate">
+              <h1 className="text-lg sm:text-2xl font-bold text-white mt-1 truncate drop-shadow-xs">
                 Halo, {currentEmployee.fullName}
               </h1>
-              <p className="text-xs sm:text-sm text-emerald-100 mt-0.5 truncate">
-                NIK: <span className="font-mono font-bold">{currentEmployee.nik}</span>
+              <p className="text-xs sm:text-sm text-amber-100/95 mt-0.5 truncate drop-shadow-2xs">
+                NIK: <span className="font-mono font-bold text-amber-300">{currentEmployee.nik}</span>
                 {currentEmployee.ktpNumber ? (
                   <>
                     {' '}
-                    • NIK KTP: <span className="font-mono font-bold">{currentEmployee.ktpNumber}</span>
+                    • NIK KTP: <span className="font-mono font-bold text-amber-200">{currentEmployee.ktpNumber}</span>
                   </>
                 ) : null}{' '}
                 •{' '}
@@ -2203,9 +2232,9 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   onClick={() => {
                     setActivePortalTab('attendance');
                   }}
-                  className="min-h-[38px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-white text-emerald-900 hover:bg-emerald-50 shadow-sm cursor-pointer transition-all"
+                  className="min-h-[38px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-gradient-to-r from-amber-400 via-yellow-500 to-amber-600 text-stone-950 hover:from-amber-300 hover:to-amber-500 border border-amber-200/60 shadow-md shadow-amber-500/20 cursor-pointer transition-all"
                 >
-                  <Camera className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  <Camera className="w-3.5 h-3.5 text-stone-950 shrink-0" />
                   <span>
                     {Boolean(todayAttendance?.checkIn)
                       ? `Absen Wajah & GPS HP (${todayAttendance?.checkIn}${
@@ -2217,9 +2246,9 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 <button
                   type="button"
                   onClick={() => setActivePortalTab('profile')}
-                  className={`min-h-[38px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                  className={`min-h-[38px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer backdrop-blur-xs ${
                     isCurrentKtpNumberValid
-                      ? 'bg-emerald-900/45 text-emerald-100 border-emerald-400/40 hover:bg-emerald-900/65'
+                      ? 'bg-black/60 text-amber-100 border-amber-500/40 hover:bg-black/80'
                       : 'bg-amber-400 text-slate-950 border-amber-300 hover:bg-amber-300 shadow-sm'
                   }`}
                 >
@@ -2233,9 +2262,9 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 <button
                   type="button"
                   onClick={() => setActivePortalTab('profile')}
-                  className={`min-h-[38px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer shadow-xs ${
+                  className={`min-h-[38px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer shadow-xs backdrop-blur-xs ${
                     myContractInfo.isPermanent
-                      ? 'bg-indigo-500/30 text-indigo-50 border-indigo-300/50 hover:bg-indigo-500/40'
+                      ? 'bg-black/60 text-amber-100 border-amber-500/40 hover:bg-black/80'
                       : myContractInfo.daysRemaining !== null && myContractInfo.daysRemaining <= 7
                       ? 'bg-rose-500 text-white border-rose-300 hover:bg-rose-600'
                       : myContractInfo.daysRemaining !== null && myContractInfo.daysRemaining <= 30
@@ -2247,7 +2276,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   <span
                     className={`w-2 h-2 rounded-full shrink-0 ${
                       myContractInfo.isPermanent
-                        ? 'bg-indigo-300'
+                        ? 'bg-amber-400'
                         : myContractInfo.daysRemaining !== null && myContractInfo.daysRemaining <= 7
                         ? 'bg-white animate-ping'
                         : myContractInfo.daysRemaining !== null && myContractInfo.daysRemaining <= 30
@@ -2265,13 +2294,13 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
           {/* Action Switchers: Sesi Login Ketat — Hapus total fitur Admin Preview / Switch Karyawan jika sesi yang aktif bukan sesi Admin resmi terverifikasi */}
           {!Boolean(isAdminUnlocked && isAdminSessionVerified() && onSwitchToAdminMode) ? (
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-              <div className="inline-flex items-center justify-between sm:justify-start gap-2 px-3.5 py-2 bg-emerald-950/45 border border-emerald-400/35 rounded-xl text-emerald-100 text-xs">
+              <div className="inline-flex items-center justify-between sm:justify-start gap-2 px-3.5 py-2 bg-black/65 border border-amber-500/35 rounded-xl text-amber-100 text-xs backdrop-blur-xs">
                 <div className="flex items-center gap-1.5 min-w-0">
-                  <ShieldCheck className="w-4 h-4 text-emerald-300 shrink-0" />
+                  <ShieldCheck className="w-4 h-4 text-amber-400 shrink-0" />
                   <span className="font-semibold text-white truncate max-w-[165px]">
                     Sesi Terkunci: {currentEmployee.fullName}
                   </span>
-                  <span className="text-[10px] bg-emerald-800/80 text-emerald-200 px-1.5 py-0.5 rounded font-mono shrink-0">
+                  <span className="text-[10px] bg-amber-500/20 text-amber-200 border border-amber-400/30 px-1.5 py-0.5 rounded font-mono shrink-0">
                     {currentEmployee.nik}
                   </span>
                 </div>
@@ -2301,7 +2330,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                         onSelectEmployee(e.target.value);
                       }
                     }}
-                    className="w-full sm:w-auto px-3 py-2 text-xs font-semibold bg-white/10 hover:bg-white/20 border border-white/30 rounded-xl text-white focus:outline-hidden cursor-pointer"
+                    className="w-full sm:w-auto px-3 py-2 text-xs font-semibold bg-black/65 hover:bg-black/80 border border-amber-500/40 rounded-xl text-amber-100 focus:outline-hidden cursor-pointer backdrop-blur-xs"
                     title="Admin Preview: Simulasi Karyawan (Khusus Sesi Admin Resmi)"
                   >
                     {allEmployees.map((emp) => (
@@ -2321,9 +2350,9 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                     onSwitchToAdminMode();
                   }
                 }}
-                className="inline-flex items-center justify-center gap-2 px-4 py-2 text-xs sm:text-sm font-bold bg-white text-emerald-800 hover:bg-emerald-50 rounded-xl shadow-xs transition-all cursor-pointer hover:shadow-md"
+                className="inline-flex items-center justify-center gap-2 px-4 py-2 text-xs sm:text-sm font-bold bg-gradient-to-r from-amber-400 via-yellow-500 to-amber-600 text-stone-950 hover:from-amber-300 hover:to-amber-500 border border-amber-200/60 rounded-xl shadow-md shadow-amber-500/20 transition-all cursor-pointer"
               >
-                <Shield className="w-4 h-4 text-emerald-600 shrink-0" />
+                <Shield className="w-4 h-4 text-stone-950 shrink-0" />
                 <span>Kembali ke Panel Admin</span>
               </button>
 
@@ -2331,10 +2360,10 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 <button
                   type="button"
                   onClick={onLockAdmin}
-                  className="inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-bold bg-emerald-950/40 hover:bg-rose-900/40 text-white rounded-xl border border-white/20 transition-all cursor-pointer"
+                  className="inline-flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-bold bg-black/65 hover:bg-rose-900/50 text-white rounded-xl border border-amber-500/35 transition-all cursor-pointer backdrop-blur-xs"
                   title="Kunci Akses Admin dan Kembali ke Mode Karyawan Biasa"
                 >
-                  <Lock className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+                  <Lock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                   <span className="hidden sm:inline">Kunci</span>
                 </button>
               )}
@@ -5282,9 +5311,9 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 </label>
                 <input
                   type="number"
-                  min={100000}
+                  min={0}
                   max={maxCashAdvancePlafon}
-                  step={50000}
+                  step="any"
                   required
                   value={cashAdvanceAmount}
                   onChange={(e) => setCashAdvanceAmount(Number(e.target.value))}
@@ -7074,7 +7103,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   type="number"
                   min={1}
                   max={720}
-                  step={1}
+                  step="any"
                   required
                   value={overtimeForm.minutes}
                   onChange={(e) =>
@@ -7196,8 +7225,8 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   <label className="block font-semibold text-slate-700 mb-1">Nominal Biaya (Rp) *</label>
                   <input
                     type="number"
-                    min={1000}
-                    step={1000}
+                    min={0}
+                    step="any"
                     required
                     value={reimbursementForm.amount}
                     onChange={(e) => setReimbursementForm({ ...reimbursementForm, amount: Number(e.target.value) })}

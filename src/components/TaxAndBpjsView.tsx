@@ -192,7 +192,7 @@ export const TaxAndBpjsView: React.FC<TaxAndBpjsViewProps> = ({
               </label>
               <input
                 type="number"
-                step={500000}
+                step="any"
                 value={simSalary}
                 onChange={(e) => setSimSalary(Number(e.target.value))}
                 className="w-full p-2.5 bg-slate-800/80 border border-slate-700 rounded-xl text-white font-bold text-sm focus:outline-hidden focus:border-purple-400"
@@ -226,6 +226,7 @@ export const TaxAndBpjsView: React.FC<TaxAndBpjsViewProps> = ({
                 </label>
                 <input
                   type="number"
+                  step="any"
                   min={1}
                   max={12}
                   value={simMonthsWorked}

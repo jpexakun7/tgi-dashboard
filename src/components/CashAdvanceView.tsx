@@ -1181,9 +1181,9 @@ export function CashAdvanceView({
                   <label className="block font-semibold text-slate-700 mb-1">Nominal Pinjaman (IDR)</label>
                   <input
                     type="number"
-                    min={100000}
+                    min={0}
                     max={maxPlafon}
-                    step={100000}
+                    step="any"
                     value={newAmount}
                     onChange={(e) => setNewAmount(Number(e.target.value))}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900 focus:outline-hidden focus:ring-1 focus:ring-amber-500"

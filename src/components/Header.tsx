@@ -733,8 +733,12 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Brand / Company identity in header */}
           <div className="flex items-center gap-2 sm:gap-2.5 text-slate-700 min-w-0">
-            <div className="p-1.5 sm:p-2 bg-emerald-50 text-emerald-700 rounded-xl border border-emerald-200 shrink-0">
-              <Building className="w-4 h-4" />
+            <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-[#161616] border border-amber-500/40 flex items-center justify-center shrink-0 overflow-hidden shadow-xs">
+              <img
+                src="/assets/aistudio/WhatsApp_Image_2026-11-25_at_09.41.19_a4e57460.jpeg"
+                alt="TGI Logo"
+                className="w-full h-full object-cover object-center scale-125 select-none"
+              />
             </div>
             <div className="min-w-0">
               <h2 className="text-xs sm:text-sm font-bold text-slate-900 leading-tight truncate max-w-[160px] sm:max-w-[240px] md:max-w-none">
@@ -1175,7 +1179,7 @@ export const Header: React.FC<HeaderProps> = ({
           {dashboardMode === 'admin' && (
             <button
               onClick={onOpenAddEmployee}
-              className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl transition-colors cursor-pointer shadow-xs shadow-emerald-600/30 shrink-0 whitespace-nowrap"
+              className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-neutral-950 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 border border-amber-300/60 rounded-xl transition-all cursor-pointer shadow-xs shadow-amber-500/25 shrink-0 whitespace-nowrap"
               title="Tambah Data Karyawan Baru"
             >
               <PlusCircle className="w-3.5 h-3.5 shrink-0" />

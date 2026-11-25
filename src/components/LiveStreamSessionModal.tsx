@@ -865,7 +865,7 @@ export const LiveStreamSessionModal: React.FC<LiveStreamSessionModalProps> = ({
                   <input
                     type="number"
                     min={0}
-                    step={50000}
+                    step="any"
                     placeholder="Contoh: 25000000"
                     value={omsetAmount || ''}
                     onChange={(e) => setOmsetAmount(Math.max(0, Number(e.target.value) || 0))}
@@ -886,7 +886,7 @@ export const LiveStreamSessionModal: React.FC<LiveStreamSessionModalProps> = ({
                   <input
                     type="number"
                     min={0}
-                    step={1}
+                    step="any"
                     placeholder="Contoh: 150"
                     value={pcsSold || ''}
                     onChange={(e) => setPcsSold(Math.max(0, Number(e.target.value) || 0))}
@@ -996,7 +996,7 @@ export const LiveStreamSessionModal: React.FC<LiveStreamSessionModalProps> = ({
                     type="number"
                     min={0}
                     max={100}
-                    step={0.1}
+                    step="any"
                     placeholder="Contoh: 2.5 untuk Host, 1.0 untuk Co-Host"
                     value={commissionPctInput}
                     onChange={(e) =>
@@ -1034,12 +1034,12 @@ export const LiveStreamSessionModal: React.FC<LiveStreamSessionModalProps> = ({
                   <input
                     type="number"
                     min={0}
-                    step={100}
+                    step="any"
                     placeholder="Contoh: 2000 untuk Host, 1000 untuk Co-Host"
                     value={commissionPerPcsInput}
                     onChange={(e) =>
                       setCommissionPerPcsInput(
-                        Math.max(0, Math.round(Number(e.target.value) || 0))
+                        Math.max(0, Number(e.target.value) || 0)
                       )
                     }
                     className="w-full pl-9 pr-14 py-2 bg-white border border-violet-400 rounded-xl font-mono font-extrabold text-violet-900 text-sm focus:outline-hidden focus:ring-2 focus:ring-violet-500/20"

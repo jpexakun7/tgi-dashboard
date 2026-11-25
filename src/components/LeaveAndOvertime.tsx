@@ -907,10 +907,11 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
                   </div>
                   <input
                     type="number"
-                    min={1}
+                    step="any"
+                    min={0.5}
                     max={365}
                     value={leaveDays}
-                    onChange={(e) => setLeaveDays(Math.max(1, Number(e.target.value) || 1))}
+                    onChange={(e) => setLeaveDays(Math.max(0.5, Number(e.target.value) || 1))}
                     className="w-full p-2 bg-emerald-50/40 border border-emerald-300 rounded-xl text-emerald-950 font-extrabold"
                   />
                 </div>
@@ -1087,7 +1088,7 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
                 </div>
                 <input
                   type="number"
-                  step={1}
+                  step="any"
                   min={1}
                   max={720}
                   required

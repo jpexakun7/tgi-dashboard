@@ -128,6 +128,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
   const [formError, setFormError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [showDemographics, setShowDemographics] = useState<boolean>(true);
+  const [monthlyEstimationDays, setMonthlyEstimationDays] = useState<25 | 26>(26);
 
   // Quick Photo Upload Modal State
   const [quickPhotoEmployee, setQuickPhotoEmployee] = useState<Employee | null>(null);
@@ -506,7 +507,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         overtime_rate: 37500,
         dailySalary: 225000,
         daily_salary: 225000,
-        baseSalary: 5625000,
+        baseSalary: 225000 * 26,
         isLiveStreamHost: false,
         salesCommissionPercentage: 0,
         salesCommissionPerPcs: 0,
@@ -544,6 +545,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
     const nextNum = employees.length + 1;
     const todayIso = getJakartaDateString();
     const nextYearIso = addDaysToDateString(todayIso, 365);
+    setMonthlyEstimationDays(26);
     setFormData({
       nik: `TGI-${currentYear}-${String(nextNum).padStart(3, '0')}`,
       fullName: '',
@@ -570,7 +572,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
       standardDailyHours: 9,
       dailySalary: 225000,
       daily_salary: 225000,
-      baseSalary: 5625000,
+      baseSalary: 225000 * 26,
       isLiveStreamHost: false,
       salesCommissionPercentage: 0,
       salesCommissionPerPcs: 0,
@@ -605,8 +607,20 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
     setFormError(null);
     setFormPhotoError(null);
     const resolvedStdHours = getEmployeeStandardDailyHours(emp, STANDARD_WORK_HOURS_PER_DAY);
-    const resolvedHourly = getEmployeeHourlyRate(emp, resolvedStdHours, 25);
-    const resolvedDaily = Math.round(resolvedHourly * resolvedStdHours);
+    const explicitHourly = Number(emp.hourlyRate ?? emp.hourly_rate) || 0;
+    const explicitDaily = Number(emp.dailySalary ?? emp.daily_salary) || 0;
+    const resolvedHourly =
+      explicitHourly > 0 ? explicitHourly : getEmployeeHourlyRate(emp, resolvedStdHours, 25);
+    const resolvedDaily =
+      explicitDaily > 0
+        ? explicitDaily
+        : Number((resolvedHourly * resolvedStdHours).toFixed(2));
+    const currentBase = Number(emp.baseSalary) || 0;
+    const detectedDays: 25 | 26 =
+      resolvedDaily > 0 && Math.abs(currentBase / resolvedDaily - 25) < 0.4 ? 25 : 26;
+    setMonthlyEstimationDays(detectedDays);
+    const resolvedBase =
+      currentBase > 0 ? currentBase : Number((resolvedDaily * detectedDays).toFixed(2));
     const resolvedIsHost = Boolean(emp.is_host === true || emp.isLiveStreamHost === true);
     const resolvedIsCoHost = Boolean(emp.is_co_host === true || emp.isCoHostLiveStream === true);
     const resolvedHostPct = Number(emp.host_commission_pct ?? emp.salesCommissionPercentage) || 0;
@@ -631,15 +645,15 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
       : emp.employmentStatus || 'PKWT (Kontrak)';
 
     const resolvedOvertimeRate =
-      Number(emp.overtimeRate ?? emp.overtime_rate) || Math.round(resolvedHourly * 1.5);
+      Number(emp.overtimeRate ?? emp.overtime_rate) || Number((resolvedHourly * 1.5).toFixed(2));
 
     const resolvedRemainingLeave =
       emp.remainingLeaveDays !== undefined && emp.remainingLeaveDays !== null && !isNaN(Number(emp.remainingLeaveDays))
-        ? Math.max(0, Math.round(Number(emp.remainingLeaveDays)))
+        ? Math.max(0, Number(emp.remainingLeaveDays))
         : emp.remaining_leave !== undefined && emp.remaining_leave !== null && !isNaN(Number(emp.remaining_leave))
-        ? Math.max(0, Math.round(Number(emp.remaining_leave)))
+        ? Math.max(0, Number(emp.remaining_leave))
         : emp.leave_quota !== undefined && emp.leave_quota !== null && !isNaN(Number(emp.leave_quota))
-        ? Math.max(0, Math.round(Number(emp.leave_quota)))
+        ? Math.max(0, Number(emp.leave_quota))
         : 0;
 
     setFormData({
@@ -660,6 +674,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
       standardDailyHours: resolvedStdHours,
       dailySalary: resolvedDaily,
       daily_salary: resolvedDaily,
+      baseSalary: resolvedBase,
       isLiveStreamHost: resolvedIsHost,
       is_host: resolvedIsHost,
       salesCommissionPercentage: resolvedHostPct,
@@ -718,20 +733,32 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
     const explicitDaily = Math.max(0, Number(formData.dailySalary ?? formData.daily_salary) || 0);
     const resolvedHourlyRate =
       explicitHourly > 0
-        ? Math.round(explicitHourly)
+        ? explicitHourly
         : explicitDaily > 0
-        ? Math.round(explicitDaily / resolvedStdHours)
-        : Math.round(Math.max(0, Number(formData.baseSalary) || 5625000) / (25 * resolvedStdHours));
-    const resolvedDailySalary = Math.round(resolvedHourlyRate * resolvedStdHours);
-    const resolvedBaseSalary = Math.round(resolvedDailySalary * 25);
+        ? Number((explicitDaily / resolvedStdHours).toFixed(2))
+        : Number(
+            (
+              Math.max(0, Number(formData.baseSalary) || 5850000) /
+              (monthlyEstimationDays * resolvedStdHours)
+            ).toFixed(2)
+          );
+    const resolvedDailySalary =
+      explicitDaily > 0
+        ? explicitDaily
+        : Number((resolvedHourlyRate * resolvedStdHours).toFixed(2));
+    const explicitBase = Math.max(0, Number(formData.baseSalary) || 0);
+    const resolvedBaseSalary =
+      explicitBase > 0
+        ? explicitBase
+        : Number((resolvedDailySalary * monthlyEstimationDays).toFixed(2));
     const explicitOvertimeRate = Math.max(
       0,
       Number(formData.overtimeRate ?? formData.overtime_rate) || 0
     );
     const resolvedOvertimeRate =
       explicitOvertimeRate > 0
-        ? Math.round(explicitOvertimeRate)
-        : Math.round(resolvedHourlyRate * 1.5);
+        ? explicitOvertimeRate
+        : Number((resolvedHourlyRate * 1.5).toFixed(2));
 
     const resolvedIsHost = Boolean(formData.isLiveStreamHost ?? formData.is_host);
     const resolvedCommPct = resolvedIsHost
@@ -740,7 +767,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
     const resolvedCommPerPcs = resolvedIsHost
       ? Math.max(
           0,
-          Math.round(Number(formData.salesCommissionPerPcs ?? formData.host_commission_per_pcs) || 0)
+          Number(formData.salesCommissionPerPcs ?? formData.host_commission_per_pcs) || 0
         )
       : 0;
 
@@ -754,9 +781,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
     const resolvedCoHostCommPerPcs = resolvedIsCoHost
       ? Math.max(
           0,
-          Math.round(
-            Number(formData.coHostCommissionPerPcs ?? formData.co_host_commission_per_pcs) || 0
-          )
+          Number(formData.coHostCommissionPerPcs ?? formData.co_host_commission_per_pcs) || 0
         )
       : 0;
 
@@ -779,7 +804,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
       formData.remainingLeaveDays !== undefined &&
       formData.remainingLeaveDays !== null &&
       !isNaN(Number(formData.remainingLeaveDays))
-        ? Math.max(0, Math.round(Number(formData.remainingLeaveDays)))
+        ? Math.max(0, Number(formData.remainingLeaveDays))
         : 0;
 
     if (editingEmployee) {
@@ -847,10 +872,10 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         liveStreamSalesLogs:
           formData.liveStreamSalesLogs || editingEmployee.liveStreamSalesLogs || [],
         allowances: {
-          position: Math.max(0, Math.round(Number(formData.allowances?.position) || 0)),
-          transport: Math.max(0, Math.round(Number(formData.allowances?.transport) || 0)),
-          meal: Math.max(0, Math.round(Number(formData.allowances?.meal) || 0)),
-          communication: Math.max(0, Math.round(Number(formData.allowances?.communication) || 0)),
+          position: Math.max(0, Number(formData.allowances?.position) || 0),
+          transport: Math.max(0, Number(formData.allowances?.transport) || 0),
+          meal: Math.max(0, Number(formData.allowances?.meal) || 0),
+          communication: Math.max(0, Number(formData.allowances?.communication) || 0),
         },
         avatarUrl: formData.avatarUrl || editingEmployee.avatarUrl,
         facePhotoUrl: formData.facePhotoUrl || formData.avatarUrl || editingEmployee.facePhotoUrl,
@@ -918,10 +943,10 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         co_host_commission_per_pcs: resolvedCoHostCommPerPcs,
         liveStreamSalesLogs: [],
         allowances: {
-          position: Math.max(0, Math.round(Number(formData.allowances?.position) || 0)),
-          transport: Math.max(0, Math.round(Number(formData.allowances?.transport) || 0)),
-          meal: Math.max(0, Math.round(Number(formData.allowances?.meal) || 0)),
-          communication: Math.max(0, Math.round(Number(formData.allowances?.communication) || 0)),
+          position: Math.max(0, Number(formData.allowances?.position) || 0),
+          transport: Math.max(0, Number(formData.allowances?.transport) || 0),
+          meal: Math.max(0, Number(formData.allowances?.meal) || 0),
+          communication: Math.max(0, Number(formData.allowances?.communication) || 0),
         },
         bankName: formData.bankName || 'BCA',
         bankAccountNumber:
@@ -2584,7 +2609,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                       <div className="flex items-center gap-1.5">
                         <input
                           type="number"
-                          step="0.1"
+                          step="any"
                           min={0}
                           max={100}
                           value={viewingEmployee.salesCommissionPercentage || 0}
@@ -2615,11 +2640,11 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                         <span className="text-slate-500 font-bold">Rp</span>
                         <input
                           type="number"
-                          step={500}
+                          step="any"
                           min={0}
                           value={viewingEmployee.salesCommissionPerPcs || 0}
                           onChange={(e) => {
-                            const nextPcs = Math.max(0, Math.round(Number(e.target.value) || 0));
+                            const nextPcs = Math.max(0, Number(e.target.value) || 0);
                             const updatedEmp = {
                               ...viewingEmployee,
                               isLiveStreamHost: true,
@@ -2658,7 +2683,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                       <div className="flex items-center gap-1.5">
                         <input
                           type="number"
-                          step="0.1"
+                          step="any"
                           min={0}
                           max={100}
                           value={viewingEmployee.coHostCommissionPercentage || 0}
@@ -2689,11 +2714,11 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                         <span className="text-violet-600 font-bold">Rp</span>
                         <input
                           type="number"
-                          step={500}
+                          step="any"
                           min={0}
                           value={viewingEmployee.coHostCommissionPerPcs || 0}
                           onChange={(e) => {
-                            const nextPcs = Math.max(0, Math.round(Number(e.target.value) || 0));
+                            const nextPcs = Math.max(0, Number(e.target.value) || 0);
                             const updatedEmp = {
                               ...viewingEmployee,
                               isCoHostLiveStream: true,
@@ -2819,7 +2844,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                         </label>
                         <input
                           type="number"
-                          step={50000}
+                          step="any"
                           min={0}
                           placeholder="Contoh: 15000000"
                           value={detailLiveOmset || ''}
@@ -2835,7 +2860,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                         </label>
                         <input
                           type="number"
-                          step={1}
+                          step="any"
                           min={0}
                           placeholder="Contoh: 95"
                           value={detailLivePcs || ''}
@@ -2863,7 +2888,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                         </label>
                         <input
                           type="number"
-                          step="0.5"
+                          step="any"
                           min="0.5"
                           value={detailLiveDuration}
                           onChange={(e) => setDetailLiveDuration(Number(e.target.value))}
@@ -3575,14 +3600,14 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                             <input
                               type="number"
                               min={0}
-                              step={500}
+                              step="any"
                               value={formData.hourlyRate ?? formData.hourly_rate ?? 0}
                               onChange={(e) => {
                                 const hRate = Math.max(0, Number(e.target.value) || 0);
                                 const stdHrs = getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY);
-                                const dRate = Math.round(hRate * stdHrs);
+                                const dRate = Number((hRate * stdHrs).toFixed(2));
                                 const currentOt = Number(formData.overtimeRate ?? formData.overtime_rate) || 0;
-                                const nextOt = currentOt > 0 ? currentOt : Math.round(hRate * 1.5);
+                                const nextOt = currentOt > 0 ? currentOt : Number((hRate * 1.5).toFixed(2));
                                 setFormData({
                                   ...formData,
                                   hourlyRate: hRate,
@@ -3591,7 +3616,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                                   overtime_rate: nextOt,
                                   dailySalary: dRate,
                                   daily_salary: dRate,
-                                  baseSalary: dRate * 25,
+                                  baseSalary: Number((dRate * monthlyEstimationDays).toFixed(2)),
                                 });
                               }}
                               placeholder="Contoh: 25000"
@@ -3606,8 +3631,8 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                                 type="button"
                                 onClick={() => {
                                   const stdHrs = getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY);
-                                  const dRate = Math.round(preset * stdHrs);
-                                  const otPreset = Math.round(preset * 1.5);
+                                  const dRate = Number((preset * stdHrs).toFixed(2));
+                                  const otPreset = Number((preset * 1.5).toFixed(2));
                                   setFormData({
                                     ...formData,
                                     hourlyRate: preset,
@@ -3616,7 +3641,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                                     overtime_rate: otPreset,
                                     dailySalary: dRate,
                                     daily_salary: dRate,
-                                    baseSalary: dRate * 25,
+                                    baseSalary: Number((dRate * monthlyEstimationDays).toFixed(2)),
                                   });
                                 }}
                                 className={`px-2 py-0.5 rounded-md text-[10px] font-bold border cursor-pointer transition-colors ${
@@ -3643,11 +3668,11 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                             <input
                               type="number"
                               min={0}
-                              step={500}
+                              step="any"
                               value={
                                 formData.overtimeRate ??
                                 formData.overtime_rate ??
-                                Math.round((Number(formData.hourlyRate ?? formData.hourly_rate) || 0) * 1.5)
+                                Number(((Number(formData.hourlyRate ?? formData.hourly_rate) || 0) * 1.5).toFixed(2))
                               }
                               onChange={(e) => {
                                 const otRate = Math.max(0, Number(e.target.value) || 0);
@@ -3761,10 +3786,10 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                         type="number"
                         min={0}
                         max={365}
-                        step={1}
+                        step="any"
                         value={formData.remainingLeaveDays ?? 0}
                         onChange={(e) => {
-                          const val = Math.max(0, Math.round(Number(e.target.value) || 0));
+                          const val = Math.max(0, Number(e.target.value) || 0);
                           setFormData({
                             ...formData,
                             remainingLeaveDays: val,
@@ -3997,14 +4022,14 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                           const nextStd = 9;
                           const currHourly =
                             Number(formData.hourlyRate ?? formData.hourly_rate) || 25000;
-                          const nextDaily = Math.round(currHourly * nextStd);
+                          const nextDaily = Number((currHourly * nextStd).toFixed(2));
                           setFormData({
                             ...formData,
                             standard_daily_hours: nextStd,
                             standardDailyHours: nextStd,
                             dailySalary: nextDaily,
                             daily_salary: nextDaily,
-                            baseSalary: Math.round(nextDaily * 25),
+                            baseSalary: Number((nextDaily * monthlyEstimationDays).toFixed(2)),
                           });
                         }}
                         className={`px-3 py-2 rounded-xl text-xs font-extrabold border transition-all cursor-pointer ${
@@ -4021,14 +4046,14 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                           const nextStd = 6;
                           const currHourly =
                             Number(formData.hourlyRate ?? formData.hourly_rate) || 25000;
-                          const nextDaily = Math.round(currHourly * nextStd);
+                          const nextDaily = Number((currHourly * nextStd).toFixed(2));
                           setFormData({
                             ...formData,
                             standard_daily_hours: nextStd,
                             standardDailyHours: nextStd,
                             dailySalary: nextDaily,
                             daily_salary: nextDaily,
-                            baseSalary: Math.round(nextDaily * 25),
+                            baseSalary: Number((nextDaily * monthlyEstimationDays).toFixed(2)),
                           });
                         }}
                         className={`px-3 py-2 rounded-xl text-xs font-extrabold border transition-all cursor-pointer ${
@@ -4046,14 +4071,14 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                           onClick={() => {
                             const currHourly =
                               Number(formData.hourlyRate ?? formData.hourly_rate) || 25000;
-                            const nextDaily = Math.round(currHourly * h);
+                            const nextDaily = Number((currHourly * h).toFixed(2));
                             setFormData({
                               ...formData,
                               standard_daily_hours: h,
                               standardDailyHours: h,
                               dailySalary: nextDaily,
                               daily_salary: nextDaily,
-                              baseSalary: Math.round(nextDaily * 25),
+                              baseSalary: Number((nextDaily * monthlyEstimationDays).toFixed(2)),
                             });
                           }}
                           className={`px-2.5 py-2 rounded-xl text-[11px] font-bold border transition-all cursor-pointer ${
@@ -4073,7 +4098,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                           type="number"
                           min={1}
                           max={24}
-                          step={0.5}
+                          step="any"
                           value={
                             formData.standard_daily_hours ??
                             formData.standardDailyHours ??
@@ -4087,14 +4112,14 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                                 : STANDARD_WORK_HOURS_PER_DAY;
                             const currHourly =
                               Number(formData.hourlyRate ?? formData.hourly_rate) || 25000;
-                            const nextDaily = Math.round(currHourly * nextStd);
+                            const nextDaily = Number((currHourly * nextStd).toFixed(2));
                             setFormData({
                               ...formData,
                               standard_daily_hours: nextStd,
                               standardDailyHours: nextStd,
                               dailySalary: nextDaily,
                               daily_salary: nextDaily,
-                              baseSalary: Math.round(nextDaily * 25),
+                              baseSalary: Number((nextDaily * monthlyEstimationDays).toFixed(2)),
                             });
                           }}
                           className="w-full pl-3 pr-20 py-2 bg-white border-2 border-sky-400 rounded-xl font-extrabold text-sky-950 text-sm focus:outline-hidden focus:ring-2 focus:ring-sky-500/30"
@@ -4117,30 +4142,32 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                       name="hourly_rate"
                       required
                       min={0}
-                      step={500}
+                      step="any"
                       value={
                         formData.hourlyRate ??
                         formData.hourly_rate ??
-                        Math.round(
-                          (Number(formData.dailySalary ?? formData.daily_salary) ||
-                            Math.round((Number(formData.baseSalary) || 0) / 25)) /
+                        Number(
+                          (
+                            (Number(formData.dailySalary ?? formData.daily_salary) ||
+                              (Number(formData.baseSalary) || 0) / monthlyEstimationDays) /
                             getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY)
+                          ).toFixed(2)
                         )
                       }
                       onChange={(e) => {
                         const nextHourly = Math.max(0, Number(e.target.value) || 0);
                         const stdHrs = getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY);
-                        const nextDaily = Math.round(nextHourly * stdHrs);
+                        const nextDaily = Number((nextHourly * stdHrs).toFixed(2));
                         setFormData({
                           ...formData,
                           hourlyRate: nextHourly,
                           hourly_rate: nextHourly,
                           dailySalary: nextDaily,
                           daily_salary: nextDaily,
-                          baseSalary: Math.round(nextDaily * 25),
+                          baseSalary: Number((nextDaily * monthlyEstimationDays).toFixed(2)),
                         });
                       }}
-                      placeholder="Contoh: 15000"
+                      placeholder="Contoh: 15000 atau 955"
                       className="w-full p-2 bg-white border border-emerald-500 rounded-lg text-emerald-950 font-extrabold focus:outline-hidden focus:ring-2 focus:ring-emerald-500/30"
                     />
                     <span className="block text-[10px] text-emerald-700 mt-1 font-medium">
@@ -4155,23 +4182,23 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                       type="number"
                       name="daily_salary"
                       min={0}
-                      step={5000}
+                      step="any"
                       value={
                         formData.dailySalary ??
                         formData.daily_salary ??
-                        Math.round((Number(formData.baseSalary) || 0) / 25)
+                        Number(((Number(formData.baseSalary) || 0) / monthlyEstimationDays).toFixed(2))
                       }
                       onChange={(e) => {
                         const nextDaily = Math.max(0, Number(e.target.value) || 0);
                         const stdHrs = getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY);
-                        const nextHourly = Math.round(nextDaily / stdHrs);
+                        const nextHourly = Number((nextDaily / stdHrs).toFixed(2));
                         setFormData({
                           ...formData,
                           hourlyRate: nextHourly,
                           hourly_rate: nextHourly,
                           dailySalary: nextDaily,
                           daily_salary: nextDaily,
-                          baseSalary: Math.round(nextDaily * 25),
+                          baseSalary: Number((nextDaily * monthlyEstimationDays).toFixed(2)),
                         });
                       }}
                       placeholder="Contoh: 135000"
@@ -4182,18 +4209,46 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                     </span>
                   </div>
                   <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl">
-                    <label className="block text-slate-600 font-semibold mb-1">
-                      Estimasi Bulanan (25 Hari / {25 * getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY)} Jam)
-                    </label>
+                    <div className="flex flex-wrap items-center justify-between gap-1.5 mb-1">
+                      <label className="block text-slate-700 font-bold text-xs">
+                        Estimasi Bulanan ({monthlyEstimationDays} Hari / {Number((monthlyEstimationDays * getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY)).toFixed(1))} Jam)
+                      </label>
+                      <div className="inline-flex items-center rounded-lg bg-slate-200/80 p-0.5 border border-slate-300">
+                        {([25, 26] as const).map((daysOpt) => (
+                          <button
+                            key={daysOpt}
+                            type="button"
+                            onClick={() => {
+                              setMonthlyEstimationDays(daysOpt);
+                              const stdHrs = getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY);
+                              const currDaily =
+                                Number(formData.dailySalary ?? formData.daily_salary) ||
+                                Number(((Number(formData.hourlyRate ?? formData.hourly_rate) || 0) * stdHrs).toFixed(2));
+                              setFormData({
+                                ...formData,
+                                baseSalary: Number((currDaily * daysOpt).toFixed(2)),
+                              });
+                            }}
+                            className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold transition-all cursor-pointer ${
+                              monthlyEstimationDays === daysOpt
+                                ? 'bg-amber-500 text-neutral-950 shadow-2xs'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            {daysOpt} Hari
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                     <input
                       type="number"
-                      step={50000}
+                      step="any"
                       value={formData.baseSalary}
                       onChange={(e) => {
                         const nextBase = Math.max(0, Number(e.target.value) || 0);
                         const stdHrs = getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY);
-                        const syncedDaily = Math.round(nextBase / 25);
-                        const syncedHourly = Math.round(syncedDaily / stdHrs);
+                        const syncedDaily = Number((nextBase / monthlyEstimationDays).toFixed(2));
+                        const syncedHourly = Number((syncedDaily / stdHrs).toFixed(2));
                         setFormData({
                           ...formData,
                           baseSalary: nextBase,
@@ -4205,8 +4260,8 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                       }}
                       className="w-full p-2 bg-white border border-slate-200 rounded-lg text-slate-800 font-semibold"
                     />
-                    <span className="block text-[10px] text-slate-400 mt-1">
-                      Estimasi penuh 25 hari × {getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY)} jam kerja
+                    <span className="block text-[10px] text-slate-500 mt-1">
+                      Simulasi {monthlyEstimationDays} hari × {getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY)} jam kerja = {Number((monthlyEstimationDays * getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY)).toFixed(1))} jam (Payroll riil tetap mengikuti jam kehadiran aktual)
                     </span>
                   </div>
                 </div>
@@ -4215,6 +4270,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                     <label className="block text-slate-600 mb-1">Tunj. Jabatan</label>
                     <input
                       type="number"
+                      step="any"
                       value={formData.allowances?.position || 0}
                       onChange={(e) =>
                         setFormData({
@@ -4232,6 +4288,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                     <label className="block text-slate-600 mb-1">Tunj. Transport</label>
                     <input
                       type="number"
+                      step="any"
                       value={formData.allowances?.transport || 0}
                       onChange={(e) =>
                         setFormData({
@@ -4249,6 +4306,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                     <label className="block text-slate-600 mb-1">Tunj. Uang Makan</label>
                     <input
                       type="number"
+                      step="any"
                       value={formData.allowances?.meal || 0}
                       onChange={(e) =>
                         setFormData({
@@ -4266,6 +4324,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                     <label className="block text-slate-600 mb-1">Tunj. Komunikasi</label>
                     <input
                       type="number"
+                      step="any"
                       value={formData.allowances?.communication || 0}
                       onChange={(e) =>
                         setFormData({
@@ -4334,7 +4393,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                             name="sales_commission_percentage"
                             min={0}
                             max={100}
-                            step={0.1}
+                            step="any"
                             value={formData.salesCommissionPercentage ?? 0}
                             onChange={(e) => {
                               const nextPct = Math.max(0, Number(e.target.value) || 0);
@@ -4373,10 +4432,10 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                           type="number"
                           name="sales_commission_per_pcs"
                           min={0}
-                          step={500}
+                          step="any"
                           value={formData.salesCommissionPerPcs ?? 0}
                           onChange={(e) => {
-                            const nextPcs = Math.max(0, Math.round(Number(e.target.value) || 0));
+                            const nextPcs = Math.max(0, Number(e.target.value) || 0);
                             setFormData({
                               ...formData,
                               isLiveStreamHost: true,
@@ -4393,7 +4452,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                           {formatRupiah(Number(formData.salesCommissionPerPcs) || 0)} ={' '}
                           <strong>
                             {formatRupiah(
-                              300 * Math.round(Number(formData.salesCommissionPerPcs) || 0)
+                              300 * (Number(formData.salesCommissionPerPcs) || 0)
                             )}
                           </strong>
                         </span>
@@ -4472,7 +4531,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                               name="co_host_commission_percentage"
                               min={0}
                               max={100}
-                              step={0.1}
+                              step="any"
                               value={formData.coHostCommissionPercentage ?? 0}
                               onChange={(e) =>
                                 setFormData({
@@ -4511,7 +4570,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                             type="number"
                             name="co_host_commission_per_pcs"
                             min={0}
-                            step={500}
+                            step="any"
                             value={formData.coHostCommissionPerPcs ?? 0}
                             onChange={(e) =>
                               setFormData({
@@ -4519,7 +4578,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                                 isCoHostLiveStream: true,
                                 coHostCommissionPerPcs: Math.max(
                                   0,
-                                  Math.round(Number(e.target.value) || 0)
+                                  Number(e.target.value) || 0
                                 ),
                               })
                             }

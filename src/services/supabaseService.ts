@@ -209,8 +209,8 @@ export function saveEmployeeEmploymentMetaLocal(emp: Partial<Employee>): void {
   const resolvedStatus = isPt
     ? 'Part-Time'
     : emp.employmentStatus || (emp as any).status || 'PKWT (Kontrak)';
-  const hRate = Math.max(0, Math.round(Number(emp.hourlyRate ?? emp.hourly_rate) || 0));
-  const oRate = Math.max(0, Math.round(Number(emp.overtimeRate ?? emp.overtime_rate) || 0));
+  const hRate = Math.max(0, Number(emp.hourlyRate ?? emp.hourly_rate) || 0);
+  const oRate = Math.max(0, Number(emp.overtimeRate ?? emp.overtime_rate) || 0);
   const stdHours = getEmployeeStandardDailyHours(emp, STANDARD_WORK_HOURS_PER_DAY);
 
   try {
@@ -462,19 +462,19 @@ export function employeeToDb(emp: Employee) {
   const explicitDaily = Number(emp.dailySalary ?? emp.daily_salary) || 0;
   const resolvedHourlyRate =
     explicitHourly > 0
-      ? Math.round(explicitHourly)
+      ? explicitHourly
       : explicitDaily > 0
-      ? Math.round(explicitDaily / resolvedStandardDailyHours)
-      : Math.round((Number(emp.baseSalary) || 0) / (25 * resolvedStandardDailyHours));
+      ? Number((explicitDaily / resolvedStandardDailyHours).toFixed(2))
+      : Number(((Number(emp.baseSalary) || 0) / (25 * resolvedStandardDailyHours)).toFixed(2));
   const resolvedDailySalary =
-    explicitHourly > 0
-      ? Math.round(resolvedHourlyRate * resolvedStandardDailyHours)
-      : explicitDaily > 0
-      ? Math.round(explicitDaily)
-      : Math.round(resolvedHourlyRate * resolvedStandardDailyHours);
+    explicitDaily > 0
+      ? explicitDaily
+      : explicitHourly > 0
+      ? Number((resolvedHourlyRate * resolvedStandardDailyHours).toFixed(2))
+      : Number((resolvedHourlyRate * resolvedStandardDailyHours).toFixed(2));
   const explicitOvertimeRate = Number(emp.overtimeRate ?? emp.overtime_rate) || 0;
   const resolvedOvertimeRate =
-    explicitOvertimeRate > 0 ? Math.round(explicitOvertimeRate) : Math.round(resolvedHourlyRate * 1.5);
+    explicitOvertimeRate > 0 ? explicitOvertimeRate : Number((resolvedHourlyRate * 1.5).toFixed(2));
   const isPartTimeStatus =
     normalizeEmploymentType(emp.employmentType) === 'Part-Time' ||
     normalizeEmploymentType(emp.employment_type) === 'Part-Time' ||
@@ -720,18 +720,18 @@ export function dbToEmployee(row: any): Employee {
   const baseSalary = Number(row.base_salary) || 0;
   const rawDaily =
     Number(row.daily_salary ?? rawAllowances._dailySalary) ||
-    (baseSalary > 0 ? Math.round(baseSalary / 25) : 0);
+    (baseSalary > 0 ? Number((baseSalary / 25).toFixed(2)) : 0);
   const hourlyRate =
     Number(row.hourly_rate ?? rawAllowances._hourlyRate ?? localMeta?.hourlyRate) ||
-    (rawDaily > 0 ? Math.round(rawDaily / standardDailyHours) : 0);
+    (rawDaily > 0 ? Number((rawDaily / standardDailyHours).toFixed(2)) : 0);
   const overtimeRate =
     Number(row.overtime_rate ?? rawAllowances._overtimeRate ?? localMeta?.overtimeRate) ||
-    Math.round(hourlyRate * 1.5);
+    Number((hourlyRate * 1.5).toFixed(2));
   const dailySalary =
-    hourlyRate > 0
-      ? Math.round(hourlyRate * standardDailyHours)
-      : rawDaily > 0
+    rawDaily > 0
       ? rawDaily
+      : hourlyRate > 0
+      ? Number((hourlyRate * standardDailyHours).toFixed(2))
       : 0;
 
   const isHostResolved = Boolean(
@@ -3855,12 +3855,12 @@ export function getSavedEmployeeAdjustments(): EmployeeAdjustment[] {
         employee_nik: String(item.employee_nik || ''),
         employee_name: String(item.employee_name || ''),
         period_month: String(item.period_month || getJakartaYearMonth()),
-        tunjangan_kerajinan: Math.max(0, Math.round(Number(item.tunjangan_kerajinan) || 0)),
-        tunjangan_kedisiplinan: Math.max(0, Math.round(Number(item.tunjangan_kedisiplinan) || 0)),
-        kesalahan_count: Math.max(0, Math.round(Number(item.kesalahan_count) || 0)),
+        tunjangan_kerajinan: Math.max(0, Number(item.tunjangan_kerajinan) || 0),
+        tunjangan_kedisiplinan: Math.max(0, Number(item.tunjangan_kedisiplinan) || 0),
+        kesalahan_count: Math.max(0, Number(item.kesalahan_count) || 0),
         kesalahan_rate:
           item.kesalahan_rate !== undefined && !isNaN(Number(item.kesalahan_rate))
-            ? Math.max(0, Math.round(Number(item.kesalahan_rate)))
+            ? Math.max(0, Number(item.kesalahan_rate))
             : 10000,
         catatan_kesalahan: String(item.catatan_kesalahan || ''),
         updated_at: String(item.updated_at || new Date().toISOString()),
@@ -3899,19 +3899,19 @@ function dbToEmployeeAdjustment(row: any): EmployeeAdjustment {
     ),
     tunjangan_kerajinan: Math.max(
       0,
-      Math.round(Number(row.tunjangan_kerajinan ?? row.tunjanganKerajinan) || 0)
+      Number(row.tunjangan_kerajinan ?? row.tunjanganKerajinan) || 0
     ),
     tunjangan_kedisiplinan: Math.max(
       0,
-      Math.round(Number(row.tunjangan_kedisiplinan ?? row.tunjanganKedisiplinan) || 0)
+      Number(row.tunjangan_kedisiplinan ?? row.tunjanganKedisiplinan) || 0
     ),
     kesalahan_count: Math.max(
       0,
-      Math.round(Number(row.kesalahan_count ?? row.kesalahanCount) || 0)
+      Number(row.kesalahan_count ?? row.kesalahanCount) || 0
     ),
     kesalahan_rate:
       row.kesalahan_rate !== undefined || row.kesalahanRate !== undefined
-        ? Math.max(0, Math.round(Number(row.kesalahan_rate ?? row.kesalahanRate) || 0))
+        ? Math.max(0, Number(row.kesalahan_rate ?? row.kesalahanRate) || 0)
         : 10000,
     catatan_kesalahan: String(row.catatan_kesalahan ?? row.catatanKesalahan ?? ''),
     updated_at: String(row.updated_at || row.updatedAt || new Date().toISOString()),
@@ -4009,19 +4009,19 @@ export async function upsertEmployeeAdjustment(
     period_month: normalizedPeriod,
     tunjangan_kerajinan: Math.min(
       500_000_000,
-      Math.max(0, Math.round(Number(payload.tunjangan_kerajinan) || 0))
+      Math.max(0, Number(payload.tunjangan_kerajinan) || 0)
     ),
     tunjangan_kedisiplinan: Math.min(
       500_000_000,
-      Math.max(0, Math.round(Number(payload.tunjangan_kedisiplinan) || 0))
+      Math.max(0, Number(payload.tunjangan_kedisiplinan) || 0)
     ),
     kesalahan_count: Math.min(
       1000,
-      Math.max(0, Math.round(Number(payload.kesalahan_count) || 0))
+      Math.max(0, Number(payload.kesalahan_count) || 0)
     ),
     kesalahan_rate:
       payload.kesalahan_rate !== undefined && !isNaN(Number(payload.kesalahan_rate))
-        ? Math.min(100_000_000, Math.max(0, Math.round(Number(payload.kesalahan_rate))))
+        ? Math.min(100_000_000, Math.max(0, Number(payload.kesalahan_rate)))
         : 10000,
     catatan_kesalahan: sanitizeSafeText(payload.catatan_kesalahan || '', 500),
     updated_at: payload.updated_at || new Date().toISOString(),
@@ -4111,8 +4111,8 @@ export function getSavedPayrollDeductions(): PayrollDeductionRecord[] {
     return parsed
       .filter((item) => item && typeof item === 'object' && item.id)
       .map((item) => {
-        const sisaLalu = Math.max(0, Math.round(Number(item.sisa_kasbon_lalu) || 0));
-        const rawCicilan = Math.max(0, Math.round(Number(item.cicilan_kasbon_bulan_ini) || 0));
+        const sisaLalu = Math.max(0, Number(item.sisa_kasbon_lalu) || 0);
+        const rawCicilan = Math.max(0, Number(item.cicilan_kasbon_bulan_ini) || 0);
         const cicilanBulanIni = sisaLalu > 0 ? Math.min(sisaLalu, rawCicilan) : rawCicilan;
         const sisaDepan = Math.max(0, sisaLalu - cicilanBulanIni);
         return {
@@ -4122,17 +4122,17 @@ export function getSavedPayrollDeductions(): PayrollDeductionRecord[] {
           employee_name: String(item.employee_name || ''),
           period_month: String(item.period_month || getJakartaYearMonth()),
           tanpa_keterangan_hari: Math.max(0, Number(item.tanpa_keterangan_hari) || 0),
-          tanpa_keterangan_rate: Math.max(0, Math.round(Number(item.tanpa_keterangan_rate) || 0)),
-          izin_jam_menit: Math.max(0, Math.round(Number(item.izin_jam_menit) || 0)),
-          izin_jam_rate: Math.max(0, Math.round(Number(item.izin_jam_rate) || 0)),
+          tanpa_keterangan_rate: Math.max(0, Number(item.tanpa_keterangan_rate) || 0),
+          izin_jam_menit: Math.max(0, Number(item.izin_jam_menit) || 0),
+          izin_jam_rate: Math.max(0, Number(item.izin_jam_rate) || 0),
           izin_hari_jumlah: Math.max(0, Number(item.izin_hari_jumlah) || 0),
-          izin_hari_rate: Math.max(0, Math.round(Number(item.izin_hari_rate) || 0)),
+          izin_hari_rate: Math.max(0, Number(item.izin_hari_rate) || 0),
           sisa_kasbon_lalu: sisaLalu,
           cicilan_kasbon_bulan_ini: cicilanBulanIni,
           sisa_kasbon_depan: sisaDepan,
-          bpjs_tk_manual: Math.max(0, Math.round(Number(item.bpjs_tk_manual) || 0)),
-          bpjs_kesehatan_manual: Math.max(0, Math.round(Number(item.bpjs_kesehatan_manual) || 0)),
-          pph21_manual: Math.max(0, Math.round(Number(item.pph21_manual) || 0)),
+          bpjs_tk_manual: Math.max(0, Number(item.bpjs_tk_manual) || 0),
+          bpjs_kesehatan_manual: Math.max(0, Number(item.bpjs_kesehatan_manual) || 0),
+          pph21_manual: Math.max(0, Number(item.pph21_manual) || 0),
           catatan_potongan: String(item.catatan_potongan || ''),
           updated_at: String(item.updated_at || new Date().toISOString()),
           department: item.department ? String(item.department) : undefined,
@@ -4152,17 +4152,17 @@ export function savePayrollDeductionsLocal(deductions: PayrollDeductionRecord[])
     const clean = (Array.isArray(deductions) ? deductions : [])
       .filter((item) => item && item.id)
       .map((item) => {
-        const sisaLalu = Math.max(0, Math.round(Number(item.sisa_kasbon_lalu) || 0));
-        const rawCicilan = Math.max(0, Math.round(Number(item.cicilan_kasbon_bulan_ini) || 0));
+        const sisaLalu = Math.max(0, Number(item.sisa_kasbon_lalu) || 0);
+        const rawCicilan = Math.max(0, Number(item.cicilan_kasbon_bulan_ini) || 0);
         const cicilanBulanIni = sisaLalu > 0 ? Math.min(sisaLalu, rawCicilan) : rawCicilan;
         return {
           ...item,
           sisa_kasbon_lalu: sisaLalu,
           cicilan_kasbon_bulan_ini: cicilanBulanIni,
           sisa_kasbon_depan: Math.max(0, sisaLalu - cicilanBulanIni),
-          bpjs_tk_manual: Math.max(0, Math.round(Number(item.bpjs_tk_manual) || 0)),
-          bpjs_kesehatan_manual: Math.max(0, Math.round(Number(item.bpjs_kesehatan_manual) || 0)),
-          pph21_manual: Math.max(0, Math.round(Number(item.pph21_manual) || 0)),
+          bpjs_tk_manual: Math.max(0, Number(item.bpjs_tk_manual) || 0),
+          bpjs_kesehatan_manual: Math.max(0, Number(item.bpjs_kesehatan_manual) || 0),
+          pph21_manual: Math.max(0, Number(item.pph21_manual) || 0),
         };
       })
       .sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || ''));
@@ -4178,11 +4178,11 @@ export function savePayrollDeductionsLocal(deductions: PayrollDeductionRecord[])
 function dbToPayrollDeduction(row: any): PayrollDeductionRecord {
   const sisaLalu = Math.max(
     0,
-    Math.round(Number(row.sisa_kasbon_lalu ?? row.sisaKasbonLalu) || 0)
+    Number(row.sisa_kasbon_lalu ?? row.sisaKasbonLalu) || 0
   );
   const rawCicilan = Math.max(
     0,
-    Math.round(Number(row.cicilan_kasbon_bulan_ini ?? row.cicilanKasbonBulanIni) || 0)
+    Number(row.cicilan_kasbon_bulan_ini ?? row.cicilanKasbonBulanIni) || 0
   );
   const cicilanBulanIni = sisaLalu > 0 ? Math.min(sisaLalu, rawCicilan) : rawCicilan;
   const sisaDepan = Math.max(0, sisaLalu - cicilanBulanIni);
@@ -4218,15 +4218,15 @@ function dbToPayrollDeduction(row: any): PayrollDeductionRecord {
     ),
     tanpa_keterangan_rate: Math.max(
       0,
-      Math.round(Number(row.tanpa_keterangan_rate ?? row.tanpaKeteranganRate) || 0)
+      Number(row.tanpa_keterangan_rate ?? row.tanpaKeteranganRate) || 0
     ),
     izin_jam_menit: Math.max(
       0,
-      Math.round(Number(row.izin_jam_menit ?? row.izinJamMenit) || 0)
+      Number(row.izin_jam_menit ?? row.izinJamMenit) || 0
     ),
     izin_jam_rate: Math.max(
       0,
-      Math.round(Number(row.izin_jam_rate ?? row.izinJamRate) || 0)
+      Number(row.izin_jam_rate ?? row.izinJamRate) || 0
     ),
     izin_hari_jumlah: Math.max(
       0,
@@ -4234,22 +4234,22 @@ function dbToPayrollDeduction(row: any): PayrollDeductionRecord {
     ),
     izin_hari_rate: Math.max(
       0,
-      Math.round(Number(row.izin_hari_rate ?? row.izinHariRate) || 0)
+      Number(row.izin_hari_rate ?? row.izinHariRate) || 0
     ),
     sisa_kasbon_lalu: sisaLalu,
     cicilan_kasbon_bulan_ini: cicilanBulanIni,
     sisa_kasbon_depan: sisaDepan,
     bpjs_tk_manual: Math.max(
       0,
-      Math.round(Number(row.bpjs_tk_manual ?? row.bpjsTkManual ?? embeddedBpjsTk) || 0)
+      Number(row.bpjs_tk_manual ?? row.bpjsTkManual ?? embeddedBpjsTk) || 0
     ),
     bpjs_kesehatan_manual: Math.max(
       0,
-      Math.round(Number(row.bpjs_kesehatan_manual ?? row.bpjsKesehatanManual ?? embeddedBpjsKes) || 0)
+      Number(row.bpjs_kesehatan_manual ?? row.bpjsKesehatanManual ?? embeddedBpjsKes) || 0
     ),
     pph21_manual: Math.max(
       0,
-      Math.round(Number(row.pph21_manual ?? row.pph21Manual ?? embeddedPph21) || 0)
+      Number(row.pph21_manual ?? row.pph21Manual ?? embeddedPph21) || 0
     ),
     catatan_potongan: cleanNote,
     updated_at: String(row.updated_at || row.updatedAt || new Date().toISOString()),
@@ -4326,11 +4326,11 @@ export async function upsertPayrollDeduction(
 
   const sisaLalu = Math.min(
     1_000_000_000,
-    Math.max(0, Math.round(Number(payload.sisa_kasbon_lalu) || 0))
+    Math.max(0, Number(payload.sisa_kasbon_lalu) || 0)
   );
   const rawCicilan = Math.min(
     1_000_000_000,
-    Math.max(0, Math.round(Number(payload.cicilan_kasbon_bulan_ini) || 0))
+    Math.max(0, Number(payload.cicilan_kasbon_bulan_ini) || 0)
   );
   const cicilanBulanIni = sisaLalu > 0 ? Math.min(sisaLalu, rawCicilan) : rawCicilan;
   const sisaDepan = Math.max(0, sisaLalu - cicilanBulanIni);
@@ -4353,15 +4353,15 @@ export async function upsertPayrollDeduction(
     ),
     tanpa_keterangan_rate: Math.min(
       100_000_000,
-      Math.max(0, Math.round(Number(payload.tanpa_keterangan_rate) || 0))
+      Math.max(0, Number(payload.tanpa_keterangan_rate) || 0)
     ),
     izin_jam_menit: Math.min(
       15000,
-      Math.max(0, Math.round(Number(payload.izin_jam_menit) || 0))
+      Math.max(0, Number(payload.izin_jam_menit) || 0)
     ),
     izin_jam_rate: Math.min(
       10_000_000,
-      Math.max(0, Math.round(Number(payload.izin_jam_rate) || 0))
+      Math.max(0, Number(payload.izin_jam_rate) || 0)
     ),
     izin_hari_jumlah: Math.min(
       31,
@@ -4369,22 +4369,22 @@ export async function upsertPayrollDeduction(
     ),
     izin_hari_rate: Math.min(
       100_000_000,
-      Math.max(0, Math.round(Number(payload.izin_hari_rate) || 0))
+      Math.max(0, Number(payload.izin_hari_rate) || 0)
     ),
     sisa_kasbon_lalu: sisaLalu,
     cicilan_kasbon_bulan_ini: cicilanBulanIni,
     sisa_kasbon_depan: sisaDepan,
     bpjs_tk_manual: Math.min(
       100_000_000,
-      Math.max(0, Math.round(Number(payload.bpjs_tk_manual) || 0))
+      Math.max(0, Number(payload.bpjs_tk_manual) || 0)
     ),
     bpjs_kesehatan_manual: Math.min(
       100_000_000,
-      Math.max(0, Math.round(Number(payload.bpjs_kesehatan_manual) || 0))
+      Math.max(0, Number(payload.bpjs_kesehatan_manual) || 0)
     ),
     pph21_manual: Math.min(
       100_000_000,
-      Math.max(0, Math.round(Number(payload.pph21_manual) || 0))
+      Math.max(0, Number(payload.pph21_manual) || 0)
     ),
     catatan_potongan: sanitizeSafeText(payload.catatan_potongan || '', 500),
     updated_at: payload.updated_at || new Date().toISOString(),

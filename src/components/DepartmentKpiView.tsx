@@ -973,7 +973,7 @@ export const DepartmentKpiView: React.FC<DepartmentKpiViewProps> = ({ employees 
                   <label className="block text-slate-600 font-semibold mb-1">Pencapaian (%)</label>
                   <input
                     type="number"
-                    step="0.1"
+                    step="any"
                     required
                     value={editingMetric.achievementRate}
                     onChange={(e) =>

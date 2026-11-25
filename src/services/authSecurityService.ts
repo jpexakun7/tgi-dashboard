@@ -1428,14 +1428,14 @@ export function sanitizeNonNegativeAmount(
 ): number {
   if (typeof val === 'number') {
     if (!Number.isFinite(val) || Number.isNaN(val) || val < 0) return 0;
-    return Math.min(maxAmount, Math.max(0, Math.round(val)));
+    return Math.min(maxAmount, Math.max(0, val));
   }
   if (typeof val === 'string') {
     const trimmed = val.trim();
     if (!trimmed || trimmed.startsWith('-')) return 0;
-    const numeric = Number(trimmed.replace(/[^\d.]/g, ''));
+    const numeric = parseFloat(trimmed.replace(/[^\d.]/g, ''));
     if (!Number.isFinite(numeric) || Number.isNaN(numeric) || numeric < 0) return 0;
-    return Math.min(maxAmount, Math.max(0, Math.round(numeric)));
+    return Math.min(maxAmount, Math.max(0, numeric));
   }
   return 0;
 }
@@ -1443,16 +1443,15 @@ export function sanitizeNonNegativeAmount(
 export function validatePositiveIntegerAmount(val: unknown): number | null {
   if (typeof val === 'number') {
     if (!Number.isFinite(val) || Number.isNaN(val) || val <= 0) return null;
-    const rounded = Math.floor(val);
-    return Number.isSafeInteger(rounded) && rounded > 0 ? rounded : null;
+    return val;
   }
   if (typeof val === 'string') {
     const trimmed = val.trim();
     if (trimmed.startsWith('-')) return null;
-    const digits = trimmed.replace(/[^\d]/g, '');
-    if (!digits) return null;
-    const parsed = parseInt(digits, 10);
-    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+    const cleaned = trimmed.replace(/[^\d.]/g, '');
+    if (!cleaned) return null;
+    const parsed = parseFloat(cleaned);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
   }
   return null;
 }

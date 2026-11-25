@@ -1144,6 +1144,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                           </label>
                           <input
                             type="number"
+                            step="any"
                             min={0}
                             max={120}
                             value={shift.gracePeriodMinutes}
@@ -1593,6 +1594,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                       <div className="flex items-center gap-2">
                         <input
                           type="number"
+                          step="any"
                           min={0}
                           max={120}
                           value={penaltyPolicy.gracePeriodMinutes}
@@ -1679,7 +1681,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                         </label>
                         <input
                           type="number"
-                          step={5000}
+                          step="any"
                           min={0}
                           value={penaltyPolicy.flatLatePenaltyAmount}
                           onChange={(e) =>
@@ -1706,7 +1708,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                         </label>
                         <input
                           type="number"
-                          step={500}
+                          step="any"
                           min={0}
                           value={penaltyPolicy.perMinutePenaltyAmount}
                           onChange={(e) =>
@@ -1733,8 +1735,8 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                         </label>
                         <input
                           type="number"
-                          step={10}
-                          min={10}
+                          step="any"
+                          min={0}
                           max={100}
                           value={penaltyPolicy.dailyAllowanceCutPercentage}
                           onChange={(e) =>
@@ -1797,6 +1799,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                         </label>
                         <input
                           type="number"
+                          step="any"
                           min={20}
                           max={30}
                           value={penaltyPolicy.alphaWorkingDaysDivisor}
@@ -1818,7 +1821,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                         </label>
                         <input
                           type="number"
-                          step={25000}
+                          step="any"
                           min={0}
                           value={penaltyPolicy.fixedAlphaPenaltyAmount}
                           onChange={(e) =>
@@ -2414,6 +2417,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                   </label>
                   <input
                     type="number"
+                    step="any"
                     min={0}
                     max={120}
                     value={shiftForm.gracePeriodMinutes}
@@ -2432,6 +2436,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                   </label>
                   <input
                     type="number"
+                    step="any"
                     min={0}
                     max={180}
                     value={shiftForm.breakDurationMinutes}
@@ -2918,6 +2923,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                         </label>
                         <input
                           type="number"
+                          step="any"
                           min={1}
                           max={600}
                           value={editAttManualLateMins}

@@ -226,10 +226,10 @@ export const PayrollAdjustmentPanel: React.FC<PayrollAdjustmentPanelProps> = ({
         employee_nik: selectedEmployee.nik || '-',
         employee_name: selectedEmployee.fullName,
         period_month: selectedPeriodMonth,
-        tunjangan_kerajinan: Math.max(0, Math.round(Number(tunjanganKerajinan) || 0)),
-        tunjangan_kedisiplinan: Math.max(0, Math.round(Number(tunjanganKedisiplinan) || 0)),
-        kesalahan_count: Math.max(0, Math.round(Number(kesalahanCount) || 0)),
-        kesalahan_rate: Math.max(0, Math.round(Number(kesalahanRate) || 0)),
+        tunjangan_kerajinan: Math.max(0, Number(tunjanganKerajinan) || 0),
+        tunjangan_kedisiplinan: Math.max(0, Number(tunjanganKedisiplinan) || 0),
+        kesalahan_count: Math.max(0, Number(kesalahanCount) || 0),
+        kesalahan_rate: Math.max(0, Number(kesalahanRate) || 0),
         catatan_kesalahan: catatanKesalahan.trim(),
         department: selectedEmployee.department,
         role: selectedEmployee.role,
@@ -254,12 +254,12 @@ export const PayrollAdjustmentPanel: React.FC<PayrollAdjustmentPanelProps> = ({
     setSelectedPeriodMonth(normalizePeriodToYearMonth(adj.period_month) || selectedPeriodMonth);
     setSelectedEmployeeId(matchedEmp?.id || adj.employee_id);
     setEditingAdjustmentId(adj.id);
-    setTunjanganKerajinan(Math.max(0, Math.round(Number(adj.tunjangan_kerajinan) || 0)));
-    setTunjanganKedisiplinan(Math.max(0, Math.round(Number(adj.tunjangan_kedisiplinan) || 0)));
-    setKesalahanCount(Math.max(0, Math.round(Number(adj.kesalahan_count) || 0)));
+    setTunjanganKerajinan(Math.max(0, Number(adj.tunjangan_kerajinan) || 0));
+    setTunjanganKedisiplinan(Math.max(0, Number(adj.tunjangan_kedisiplinan) || 0));
+    setKesalahanCount(Math.max(0, Number(adj.kesalahan_count) || 0));
     setKesalahanRate(
       adj.kesalahan_rate !== undefined && !isNaN(Number(adj.kesalahan_rate))
-        ? Math.max(0, Math.round(Number(adj.kesalahan_rate)))
+        ? Math.max(0, Number(adj.kesalahan_rate))
         : DEFAULT_KESALAHAN_RATE
     );
     setCatatanKesalahan(adj.catatan_kesalahan || '');
@@ -607,10 +607,10 @@ export const PayrollAdjustmentPanel: React.FC<PayrollAdjustmentPanelProps> = ({
                     <input
                       type="number"
                       min={0}
-                      step={1000}
+                      step="any"
                       value={tunjanganKerajinan}
                       onChange={(e) =>
-                        setTunjanganKerajinan(Math.max(0, Math.round(Number(e.target.value) || 0)))
+                        setTunjanganKerajinan(Math.max(0, Number(e.target.value) || 0))
                       }
                       placeholder="0"
                       className="w-full pl-9 pr-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-sm font-mono font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500"
@@ -645,11 +645,11 @@ export const PayrollAdjustmentPanel: React.FC<PayrollAdjustmentPanelProps> = ({
                     <input
                       type="number"
                       min={0}
-                      step={1000}
+                      step="any"
                       value={tunjanganKedisiplinan}
                       onChange={(e) =>
                         setTunjanganKedisiplinan(
-                          Math.max(0, Math.round(Number(e.target.value) || 0))
+                          Math.max(0, Number(e.target.value) || 0)
                         )
                       }
                       placeholder="0"
@@ -696,9 +696,10 @@ export const PayrollAdjustmentPanel: React.FC<PayrollAdjustmentPanelProps> = ({
                     type="number"
                     min={0}
                     max={500}
+                    step="any"
                     value={kesalahanCount}
                     onChange={(e) =>
-                      setKesalahanCount(Math.max(0, Math.round(Number(e.target.value) || 0)))
+                      setKesalahanCount(Math.max(0, Number(e.target.value) || 0))
                     }
                     className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-sm font-mono font-bold text-slate-900 focus:ring-2 focus:ring-rose-500"
                   />
@@ -731,10 +732,10 @@ export const PayrollAdjustmentPanel: React.FC<PayrollAdjustmentPanelProps> = ({
                     <input
                       type="number"
                       min={0}
-                      step={1000}
+                      step="any"
                       value={kesalahanRate}
                       onChange={(e) =>
-                        setKesalahanRate(Math.max(0, Math.round(Number(e.target.value) || 0)))
+                        setKesalahanRate(Math.max(0, Number(e.target.value) || 0))
                       }
                       className="w-full pl-9 pr-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-sm font-mono font-bold text-slate-900 focus:ring-2 focus:ring-rose-500"
                     />

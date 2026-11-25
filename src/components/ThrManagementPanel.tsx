@@ -975,7 +975,7 @@ export const ThrManagementPanel: React.FC<ThrManagementPanelProps> = ({
                       <div className="flex items-center gap-1.5">
                         <input
                           type="number"
-                          step="10000"
+                          step="any"
                           value={draftAdjValue}
                           onChange={(e) =>
                             setManualAdjustmentsDraft((prev) => ({

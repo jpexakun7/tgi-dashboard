@@ -1128,6 +1128,7 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
                       <div className="flex items-center gap-2">
                         <input
                           type="number"
+                          step="any"
                           min={1}
                           max={100}
                           value={formKpiScore}
@@ -1161,6 +1162,7 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
                       <div className="flex items-center gap-2">
                         <input
                           type="number"
+                          step="any"
                           min={1}
                           max={100}
                           value={formDisciplineScore}
@@ -1194,6 +1196,7 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
                       <div className="flex items-center gap-2">
                         <input
                           type="number"
+                          step="any"
                           min={1}
                           max={100}
                           value={formTeamworkScore}
@@ -1227,6 +1230,7 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
                       <div className="flex items-center gap-2">
                         <input
                           type="number"
+                          step="any"
                           min={1}
                           max={100}
                           value={formInitiativeScore}
@@ -1350,7 +1354,7 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
                     </label>
                     <input
                       type="number"
-                      step={50000}
+                      step="any"
                       value={customBonusAmount}
                       onChange={(e) => setCustomBonusAmount(Number(e.target.value))}
                       className="w-full p-2.5 bg-white border border-emerald-300 rounded-xl text-emerald-900 font-bold"

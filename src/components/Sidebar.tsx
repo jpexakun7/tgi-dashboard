@@ -273,13 +273,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <aside
         className={`fixed top-0 bottom-0 left-0 z-50 w-64 ${
           isCollapsed ? 'lg:w-20' : 'lg:w-64'
-        } bg-slate-900 text-slate-300 flex flex-col shrink-0 transition-all duration-300 ease-in-out border-r border-slate-800 lg:static lg:z-auto lg:translate-x-0 ${
+        } bg-[#121212] text-neutral-300 flex flex-col shrink-0 transition-all duration-300 ease-in-out border-r border-amber-500/20 lg:static lg:z-auto lg:translate-x-0 ${
           isOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'
         }`}
       >
         {/* Brand Header */}
         <div
-          className={`h-16 px-4 flex items-center justify-between gap-2 border-b border-slate-800 bg-slate-950/60 ${
+          className={`h-16 px-4 flex items-center justify-between gap-2 border-b border-amber-500/20 bg-neutral-950/80 ${
             isCollapsed ? 'lg:px-2 lg:justify-center' : ''
           }`}
         >
@@ -295,18 +295,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   ? 'Lebarkan Sidebar Navigasi (Tampilkan Teks)'
                   : 'TGI Dashboard — Klik tombol di kanan untuk menciutkan sidebar'
               }
-              className={`w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-white font-extrabold text-lg shadow-lg shadow-emerald-500/20 shrink-0 ${
+              className={`w-10 h-10 rounded-xl bg-[#161616] border border-amber-500/40 flex items-center justify-center shadow-lg shadow-amber-500/15 shrink-0 overflow-hidden ${
                 isCollapsed ? 'lg:cursor-pointer' : ''
               }`}
             >
-              TGI
+              <img
+                src="/assets/aistudio/WhatsApp_Image_2026-11-25_at_09.41.19_a4e57460.jpeg"
+                alt="TGI Logo"
+                className="w-full h-full object-cover object-center scale-125 select-none"
+              />
             </div>
             <div className={`flex flex-col min-w-0 ${isCollapsed ? 'lg:hidden' : ''}`}>
               <span className="font-bold text-white text-base tracking-wide flex items-center gap-1.5 truncate">
                 TGI Dashboard
               </span>
-              <span className="text-[11px] text-emerald-400 font-medium truncate">
-                Platform Penggajian & HR
+              <span className="text-[11px] text-amber-400 font-medium truncate">
+                Platform Penggajian &amp; HR
               </span>
             </div>
           </div>
@@ -316,7 +320,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <button
               type="button"
               onClick={onToggleCollapse}
-              className={`hidden lg:inline-flex items-center justify-center p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 border border-transparent hover:border-slate-700 transition-colors cursor-pointer shrink-0 ${
+              className={`hidden lg:inline-flex items-center justify-center p-1.5 rounded-lg text-neutral-400 hover:text-amber-300 hover:bg-amber-500/10 border border-transparent hover:border-amber-500/30 transition-colors cursor-pointer shrink-0 ${
                 isCollapsed ? 'lg:hidden' : ''
               }`}
               title="Ciutkan Sidebar (Mode Ikon Saja)"
@@ -329,7 +333,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <button
             type="button"
             onClick={() => setIsOpen(false)}
-            className="lg:hidden inline-flex items-center justify-center p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer shrink-0"
+            className="lg:hidden inline-flex items-center justify-center p-1.5 rounded-lg text-neutral-400 hover:text-amber-300 hover:bg-amber-500/10 transition-colors cursor-pointer shrink-0"
             title="Tutup Menu Sidebar"
           >
             <X className="w-5 h-5" />
@@ -338,11 +342,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         {/* Desktop Expand Trigger Bar when Collapsed (w-20 mode) */}
         {onToggleCollapse && isCollapsed && (
-          <div className="hidden lg:flex justify-center py-2 border-b border-slate-800/80 bg-slate-900/90">
+          <div className="hidden lg:flex justify-center py-2 border-b border-amber-500/20 bg-neutral-950/90">
             <button
               type="button"
               onClick={onToggleCollapse}
-              className="p-2 rounded-xl bg-slate-800/80 hover:bg-emerald-600/20 text-emerald-400 hover:text-emerald-300 border border-slate-700/70 hover:border-emerald-500/40 transition-all cursor-pointer"
+              className="p-2 rounded-xl bg-neutral-900/90 hover:bg-amber-500/20 text-amber-400 hover:text-amber-300 border border-amber-500/25 hover:border-amber-500/40 transition-all cursor-pointer"
               title="Lebarkan Sidebar (w-64)"
             >
               <PanelLeftOpen className="w-4 h-4" />
@@ -352,19 +356,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         {/* Company Quick Badge */}
         <div
-          className={`px-4 py-3 mx-3 my-3 rounded-xl bg-slate-800/60 border border-slate-700/60 flex items-center gap-2.5 ${
+          className={`px-4 py-3 mx-3 my-3 rounded-xl bg-neutral-900/90 border border-amber-500/25 flex items-center gap-2.5 ${
             isCollapsed ? 'lg:mx-2 lg:px-2 lg:py-2.5 lg:justify-center' : ''
           }`}
           title={`${companyConfig?.companyName || 'Tas Grosir Import'} • Periode: ${activePeriodLabel} (Cut-off ${cutOffEndDay})`}
         >
           <div
-            className={`w-2.5 h-2.5 rounded-full shrink-0 ${
-              isPeriodArchivedOrLocked ? 'bg-amber-400' : 'bg-emerald-400 animate-pulse'
-            }`}
+            className="w-2.5 h-2.5 rounded-full shrink-0 bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.6)] animate-pulse"
           />
           <div className={`overflow-hidden min-w-0 flex-1 ${isCollapsed ? 'lg:hidden' : ''}`}>
             <div className="flex items-center justify-between gap-1">
-              <p className="text-xs font-medium text-slate-200 truncate">
+              <p className="text-xs font-medium text-neutral-100 truncate">
                 {companyConfig?.companyName || 'Tas Grosir Import'}
               </p>
               {isPeriodArchivedOrLocked && (
@@ -374,7 +376,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </span>
               )}
             </div>
-            <p className="text-[10px] text-slate-400 truncate">
+            <p className="text-[10px] text-neutral-400 truncate">
               Periode: {activePeriodLabel} (Cut-off {cutOffEndDay})
             </p>
           </div>
@@ -390,17 +392,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   onOpenEmployeePortal();
                   setIsOpen(false);
                 }}
-                className={`w-full flex items-center justify-between p-2.5 rounded-xl bg-gradient-to-r from-emerald-600/25 via-teal-600/20 to-indigo-600/25 hover:from-emerald-600/40 hover:to-teal-600/35 border border-emerald-500/40 text-emerald-200 text-xs font-bold transition-all group cursor-pointer shadow-xs ${
+                className={`w-full flex items-center justify-between p-2.5 rounded-xl bg-gradient-to-r from-amber-500/15 via-amber-600/10 to-neutral-900 hover:from-amber-500/25 hover:via-amber-600/20 hover:to-neutral-900 border border-amber-500/40 text-amber-300 text-xs font-bold transition-all group cursor-pointer shadow-xs ${
                   isCollapsed ? 'lg:justify-center lg:px-2' : ''
                 }`}
                 title="Buka Portal Layanan Mandiri Karyawan (Self-Service)"
               >
                 <div className="flex items-center gap-2">
-                  <UserCheck className="w-4 h-4 text-emerald-400 group-hover:scale-110 transition-transform shrink-0" />
+                  <UserCheck className="w-4 h-4 text-amber-400 group-hover:scale-110 transition-transform shrink-0" />
                   <span className={isCollapsed ? 'lg:hidden' : ''}>Portal Karyawan</span>
                 </div>
                 <span
-                  className={`text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-1.5 py-0.5 rounded font-semibold ${
+                  className={`text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-1.5 py-0.5 rounded font-semibold ${
                     isCollapsed ? 'lg:hidden' : ''
                   }`}
                 >
@@ -422,8 +424,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 isCollapsed ? 'lg:justify-center lg:px-2' : ''
               } ${
                 activeTab === 'settings'
-                  ? 'bg-gradient-to-r from-indigo-600 to-indigo-700 text-white border-indigo-400 shadow-md shadow-indigo-950/50'
-                  : 'bg-slate-800/70 hover:bg-slate-800 border-slate-700/80 text-slate-200 hover:text-white hover:border-indigo-500/50'
+                  ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 border-amber-400 shadow-md shadow-amber-500/20'
+                  : 'bg-neutral-900/80 hover:bg-amber-500/10 border-amber-500/20 text-neutral-200 hover:text-amber-300 hover:border-amber-500/40'
               }`}
               title="Buka Pengaturan Sistem, Konfigurasi Payroll & Hak Akses Role RBAC"
             >
@@ -431,8 +433,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <Settings
                   className={`w-4 h-4 shrink-0 ${
                     activeTab === 'settings'
-                      ? 'text-white'
-                      : 'text-indigo-400 group-hover:rotate-45'
+                      ? 'text-neutral-950'
+                      : 'text-amber-400 group-hover:rotate-45'
                   } transition-transform duration-300`}
                 />
                 <span className={isCollapsed ? 'lg:hidden' : ''}>Pengaturan Sistem</span>
@@ -442,11 +444,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   isCollapsed ? 'lg:hidden' : ''
                 } ${
                   activeTab === 'settings'
-                    ? 'bg-white/20 text-white'
-                    : 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/40'
+                    ? 'bg-black/20 text-neutral-950'
+                    : 'bg-amber-500/15 text-amber-300 border border-amber-500/30'
                 }`}
               >
-                RBAC & Config
+                RBAC &amp; Config
               </span>
             </button>
           </div>
@@ -456,10 +458,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
               isCollapsed ? 'lg:hidden' : ''
             }`}
           >
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-neutral-400">
               Menu Utama
             </p>
-            <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-slate-800 text-emerald-400 border border-slate-700">
+            <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30">
               {adminUser?.role === 'admin' ? 'Super Admin' : (adminUser?.role || 'Admin')}
             </span>
           </div>
@@ -494,17 +496,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     setIsOpen(false);
                   }}
                   title={item.badge ? `${item.label} (${item.badge})` : item.label}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium transition-all group cursor-pointer relative ${
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs transition-all group cursor-pointer relative ${
                     isCollapsed ? 'lg:justify-center lg:px-2' : ''
                   } ${
                     isActive
-                      ? 'bg-emerald-600 text-white shadow-md shadow-emerald-900/30'
-                      : 'text-slate-300 hover:text-white hover:bg-slate-800/70'
+                      ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 font-bold shadow-md shadow-amber-500/20'
+                      : 'text-neutral-300 font-medium hover:bg-amber-500/10 hover:text-amber-300'
                   }`}
                 >
                   <Icon
                     className={`w-4 h-4 shrink-0 transition-colors ${
-                      isActive ? 'text-white' : 'text-slate-400 group-hover:text-emerald-400'
+                      isActive ? 'text-neutral-950' : 'text-neutral-400 group-hover:text-amber-400'
                     }`}
                   />
                   <span className={`flex-1 text-left truncate ${isCollapsed ? 'lg:hidden' : ''}`}>
@@ -514,14 +516,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <span
                       className={`px-1.5 py-0.5 text-[10px] font-bold rounded-md uppercase shrink-0 ${
                         isCollapsed ? 'lg:hidden' : ''
-                      } ${isActive ? 'bg-white/20 text-white' : item.badgeColor}`}
+                      } ${isActive ? 'bg-black/20 text-neutral-950' : item.badgeColor}`}
                     >
                       {item.badge}
                     </span>
                   )}
                   {isActive && (
                     <ChevronRight
-                      className={`w-3.5 h-3.5 text-white/70 shrink-0 ${
+                      className={`w-3.5 h-3.5 text-neutral-950/75 shrink-0 ${
                         isCollapsed ? 'lg:hidden' : ''
                       }`}
                     />
@@ -534,23 +536,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         {/* Help / Support box */}
         <div
-          className={`px-4 py-3 mx-3 my-2 rounded-xl bg-gradient-to-br from-slate-800/80 to-slate-800/40 border border-slate-700/50 ${
+          className={`px-4 py-3 mx-3 my-2 rounded-xl bg-gradient-to-br from-neutral-900/90 to-neutral-900/50 border border-amber-500/20 ${
             isCollapsed ? 'lg:hidden' : ''
           }`}
         >
-          <div className="flex items-center gap-2 text-xs font-semibold text-slate-200">
-            <HelpCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+          <div className="flex items-center gap-2 text-xs font-semibold text-neutral-200">
+            <HelpCircle className="w-4 h-4 text-amber-400 shrink-0" />
             <span>Pusat Bantuan TGI</span>
           </div>
-          <p className="text-[11px] text-slate-400 mt-1">
-            Panduan TER PPh 21, BPJS, & ekspor bank BCA/Mandiri format.
+          <p className="text-[11px] text-neutral-400 mt-1">
+            Panduan TER PPh 21, BPJS, &amp; ekspor bank BCA/Mandiri format.
           </p>
         </div>
 
         {/* Admin User Footer */}
-        <div className={`p-3 border-t border-slate-800 bg-slate-950/70 ${isCollapsed ? 'lg:p-2' : ''}`}>
+        <div className={`p-3 border-t border-amber-500/20 bg-neutral-950/90 ${isCollapsed ? 'lg:p-2' : ''}`}>
           <div
-            className={`flex items-center gap-2.5 p-2 rounded-xl bg-slate-800/40 border border-slate-700/50 ${
+            className={`flex items-center gap-2.5 p-2 rounded-xl bg-neutral-900/70 border border-amber-500/20 ${
               isCollapsed ? 'lg:flex-col lg:gap-2 lg:p-1.5' : ''
             }`}
           >
@@ -561,18 +563,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=128&h=128&q=80'
                 }
                 alt="Google Admin"
-                className="w-9 h-9 rounded-full object-cover ring-2 ring-emerald-500/50"
+                className="w-9 h-9 rounded-full object-cover ring-2 ring-amber-500/50"
               />
-              <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 ring-2 ring-slate-900" />
+              <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-amber-400 ring-2 ring-neutral-950" />
             </div>
             <div className={`overflow-hidden flex-1 min-w-0 ${isCollapsed ? 'lg:hidden' : ''}`}>
-              <p className="text-xs font-semibold text-slate-200 truncate">
+              <p className="text-xs font-semibold text-neutral-100 truncate">
                 {adminUser?.name || 'Administrator Utama'}
               </p>
-              <p className="text-[10px] text-emerald-400 truncate font-mono">
+              <p className="text-[10px] text-amber-400 truncate font-mono">
                 {adminUser?.email || 'jpexakun7@gmail.com'}
               </p>
-              <span className="inline-block text-[9px] font-bold text-emerald-300 bg-emerald-950/80 px-1.5 py-0.5 rounded border border-emerald-800/60 truncate mt-0.5">
+              <span className="inline-block text-[9px] font-bold text-amber-300 bg-amber-500/15 px-1.5 py-0.5 rounded border border-amber-500/30 truncate mt-0.5">
                 {adminUser?.role === 'admin' ? 'Super Admin' : (adminUser?.role || 'Admin')}
               </span>
             </div>
@@ -583,8 +585,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
               }}
               className={`p-1.5 rounded-lg transition-colors cursor-pointer shrink-0 ${
                 activeTab === 'settings'
-                  ? 'text-emerald-400 bg-emerald-950/80 ring-1 ring-emerald-500/50'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800/80'
+                  ? 'text-amber-300 bg-amber-500/20 ring-1 ring-amber-500/40'
+                  : 'text-neutral-400 hover:text-amber-300 hover:bg-amber-500/10'
               }`}
               title="Buka Pengaturan Sistem (RBAC & Konfigurasi)"
             >
@@ -593,7 +595,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {onLogout && (
               <button
                 onClick={onLogout}
-                className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-950/40 rounded-lg transition-colors cursor-pointer shrink-0"
+                className="p-1.5 text-neutral-400 hover:text-rose-400 hover:bg-rose-950/40 rounded-lg transition-colors cursor-pointer shrink-0"
                 title="Keluar (Logout Google Admin)"
               >
                 <LogOut className="w-4 h-4" />

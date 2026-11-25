@@ -1001,7 +1001,7 @@ export const AssetManagementView: React.FC<AssetManagementViewProps> = ({
                   <input
                     type="number"
                     min={0}
-                    step={50000}
+                    step="any"
                     required
                     value={assetForm.purchaseCost}
                     onChange={(e) => setAssetForm({ ...assetForm, purchaseCost: Number(e.target.value) })}

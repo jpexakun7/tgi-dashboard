@@ -583,26 +583,35 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   return (
     <div className="space-y-6 w-full max-w-full overflow-x-hidden">
       {/* Welcome & Payroll Period Banner */}
-      <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-emerald-950 rounded-2xl p-6 text-white shadow-xl border border-slate-700/60 relative overflow-hidden">
+      <div className="bg-[#141414] bg-cover bg-center rounded-2xl p-6 text-white shadow-xl border border-amber-500/30 relative overflow-hidden">
+        {/* Background Logo TGI & Overlay Gelap Transparan bg-black/65 */}
+        <img
+          src="/assets/aistudio/WhatsApp_Image_2026-11-25_at_09.41.19_a4e57460.jpeg"
+          alt=""
+          aria-hidden="true"
+          className="absolute inset-0 w-full h-full object-cover object-center select-none pointer-events-none"
+        />
+        <div className="absolute inset-0 bg-black/65 pointer-events-none" />
+
         <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <div className="flex flex-wrap items-center gap-2 mb-2">
-              <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-xs font-semibold border border-emerald-500/30">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+              <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-amber-500/20 text-amber-300 text-xs font-semibold border border-amber-400/35 backdrop-blur-xs">
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
                 Siklus Penggajian Berjalan: {companyConfig.currentPayrollPeriod}
               </div>
-              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-950/60 text-emerald-200 text-xs font-mono font-bold border border-emerald-500/30">
-                <Clock className="w-3.5 h-3.5 text-emerald-400" />
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/65 text-amber-200 text-xs font-mono font-bold border border-amber-500/35 backdrop-blur-xs">
+                <Clock className="w-3.5 h-3.5 text-amber-400" />
                 <span>{dashLiveClock.compactLabel}</span>
               </div>
             </div>
-            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white">
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white drop-shadow-xs">
               Halo, Tim HR Tas Grosir Import 👋
             </h1>
-            <p className="text-xs sm:text-sm text-slate-300 mt-1 max-w-xl">
+            <p className="text-xs sm:text-sm text-stone-200 mt-1 max-w-xl drop-shadow-2xs">
               Periode cut-off presensi: Tanggal {companyConfig.cutOffStartDay} s/d{' '}
               {companyConfig.cutOffEndDay}. Jadwal pencairan gaji:{' '}
-              <span className="text-emerald-300 font-semibold">
+              <span className="text-amber-300 font-semibold">
                 Tanggal {companyConfig.payrollDisbursementDay}{' '}
                 {companyConfig.currentPayrollPeriod}
               </span>
@@ -612,37 +621,37 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
           <div className="flex flex-wrap items-center gap-2.5">
             <button
               onClick={() => onNavigateTab('payroll')}
-              className="px-3.5 py-2 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border border-emerald-500/30 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer"
+              className="px-3.5 py-2 bg-black/55 hover:bg-black/75 text-amber-200 border border-amber-500/40 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer backdrop-blur-xs"
             >
-              <Upload className="w-4 h-4 text-emerald-400" />
+              <Upload className="w-4 h-4 text-amber-400" />
               Upload Excel / CSV
             </button>
             <button
               onClick={() => onNavigateTab('payroll')}
-              className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white font-semibold rounded-xl text-xs flex items-center gap-2 shadow-lg shadow-emerald-500/30 transition-all cursor-pointer"
+              className="px-4 py-2 bg-gradient-to-r from-amber-500 via-yellow-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-stone-950 font-bold rounded-xl text-xs flex items-center gap-2 shadow-lg shadow-amber-500/25 border border-amber-300/50 transition-all cursor-pointer"
             >
               <Calculator className="w-4 h-4" />
               Kelola Payroll Bulan Ini
             </button>
             <button
               onClick={() => onNavigateTab('attendance')}
-              className="px-4 py-2 bg-slate-800/90 hover:bg-slate-700 text-slate-200 border border-slate-600 rounded-xl text-xs flex items-center gap-2 transition-all cursor-pointer"
+              className="px-4 py-2 bg-stone-900/85 hover:bg-stone-800 text-stone-100 border border-amber-500/30 rounded-xl text-xs flex items-center gap-2 transition-all cursor-pointer backdrop-blur-xs"
             >
-              <CalendarCheck className="w-4 h-4 text-emerald-400" />
+              <CalendarCheck className="w-4 h-4 text-amber-400" />
               Rekap Presensi
             </button>
           </div>
         </div>
 
-        {/* Ambient subtle glow background */}
-        <div className="absolute right-0 top-0 -mt-12 -mr-12 w-80 h-80 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none"></div>
+        {/* Ambient subtle gold glow background */}
+        <div className="absolute right-0 top-0 -mt-12 -mr-12 w-80 h-80 bg-amber-500/10 rounded-full blur-3xl pointer-events-none"></div>
       </div>
 
       {/* Empty State Banner when Supabase has 0 employees */}
       {employees.length === 0 && (
-        <div className="bg-white rounded-2xl border-2 border-dashed border-emerald-300 p-6 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xs">
+        <div className="bg-white rounded-2xl border-2 border-dashed border-amber-300 p-6 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xs">
           <div className="flex items-center gap-3.5 text-center sm:text-left">
-            <div className="w-12 h-12 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-600 shrink-0 mx-auto sm:mx-0">
+            <div className="w-12 h-12 rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600 shrink-0 mx-auto sm:mx-0">
               <Users className="w-6 h-6" />
             </div>
             <div>
@@ -657,7 +666,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
           <button
             type="button"
             onClick={() => onNavigateTab('employees')}
-            className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/20 cursor-pointer shrink-0"
+            className="px-4 py-2.5 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold rounded-xl text-xs shadow-md shadow-amber-500/20 border border-amber-300/60 cursor-pointer shrink-0 transition-all"
           >
             + Tambah Karyawan Baru
           </button>

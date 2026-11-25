@@ -792,7 +792,7 @@ export const PartTimeLogs: React.FC<PartTimeLogsProps> = ({
                   type="number"
                   min={0}
                   max={24}
-                  step="0.01"
+                  step="any"
                   value={normalHours}
                   onChange={(e) => setNormalHours(Math.max(0, Number(e.target.value) || 0))}
                   className="w-full pl-3 pr-10 py-2 text-xs bg-orange-50 border border-orange-300 rounded-xl font-bold text-orange-950"
@@ -813,7 +813,7 @@ export const PartTimeLogs: React.FC<PartTimeLogsProps> = ({
                   type="number"
                   min={0}
                   max={24}
-                  step="0.01"
+                  step="any"
                   value={overtimeHours}
                   onChange={(e) => setOvertimeHours(Math.max(0, Number(e.target.value) || 0))}
                   className="w-full pl-3 pr-10 py-2 text-xs bg-indigo-50 border border-indigo-300 rounded-xl font-bold text-indigo-950"
@@ -835,7 +835,7 @@ export const PartTimeLogs: React.FC<PartTimeLogsProps> = ({
                 <input
                   type="number"
                   min={0}
-                  step={500}
+                  step="any"
                   value={hourlyRateInput}
                   onChange={(e) => setHourlyRateInput(Math.max(0, Number(e.target.value) || 0))}
                   className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900"
@@ -848,7 +848,7 @@ export const PartTimeLogs: React.FC<PartTimeLogsProps> = ({
                 <input
                   type="number"
                   min={0}
-                  step={500}
+                  step="any"
                   value={overtimeRateInput}
                   onChange={(e) => setOvertimeRateInput(Math.max(0, Number(e.target.value) || 0))}
                   className="w-full px-3 py-2 text-xs bg-indigo-50/60 border border-indigo-200 rounded-xl font-bold text-indigo-950"

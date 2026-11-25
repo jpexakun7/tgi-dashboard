@@ -909,8 +909,8 @@ export const ReimbursementView: React.FC<ReimbursementViewProps> = ({
                   <label className="block text-slate-600 font-semibold mb-1">Nominal Biaya (IDR)</label>
                   <input
                     type="number"
-                    min="1000"
-                    step="1000"
+                    min="0"
+                    step="any"
                     required
                     value={formAmount}
                     onChange={(e) => setFormAmount(Number(e.target.value))}

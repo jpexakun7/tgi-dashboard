@@ -1198,6 +1198,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
               <div className="flex items-center gap-2">
                 <input
                   type="number"
+                  step="any"
                   min={0}
                   max={120}
                   value={penaltyPolicy.gracePeriodMinutes}
@@ -1244,7 +1245,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                   <span className="text-slate-500">Nominal/hari:</span>
                   <input
                     type="number"
-                    step={5000}
+                    step="any"
                     min={0}
                     value={penaltyPolicy.flatLatePenaltyAmount}
                     onChange={(e) =>
@@ -1261,7 +1262,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                   <span className="text-slate-500">Tarif/menit:</span>
                   <input
                     type="number"
-                    step={500}
+                    step="any"
                     min={0}
                     value={penaltyPolicy.perMinutePenaltyAmount}
                     onChange={(e) =>
@@ -1278,7 +1279,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                   <span className="text-slate-500">Potong (%):</span>
                   <input
                     type="number"
-                    step={10}
+                    step="any"
                     min={10}
                     max={100}
                     value={penaltyPolicy.dailyAllowanceCutPercentage}
@@ -1318,7 +1319,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                   <span className="text-slate-500">Nominal/hari:</span>
                   <input
                     type="number"
-                    step={25000}
+                    step="any"
                     min={0}
                     value={penaltyPolicy.fixedAlphaPenaltyAmount}
                     onChange={(e) =>
@@ -1989,7 +1990,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                 </label>
                 <input
                   type="number"
-                  step={50000}
+                  step="any"
                   value={bonusInput}
                   onChange={(e) => setBonusInput(Number(e.target.value))}
                   className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-bold text-sm"
@@ -2007,7 +2008,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                 </div>
                 <input
                   type="number"
-                  step={1}
+                  step="any"
                   min={0}
                   value={overtimeMinutesInput}
                   onChange={(e) => setOvertimeMinutesInput(Math.max(0, Number(e.target.value)))}
