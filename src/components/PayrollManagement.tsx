@@ -84,6 +84,7 @@ interface PayrollManagementProps {
   attendances?: AttendanceRecord[];
   reviews?: PerformanceReview[];
   companyConfig: CompanyConfig;
+  onUpdateCompanyConfig?: (nextConfig: CompanyConfig) => void;
   onOpenPayslip: (payroll: PayrollRecord) => void;
   onRecalculatePayroll: () => void;
   onUpdatePayrollRecord: (record: PayrollRecord) => void;
@@ -104,6 +105,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
   payrolls,
   reviews = [],
   companyConfig,
+  onUpdateCompanyConfig,
   onOpenPayslip,
   onRecalculatePayroll,
   onUpdatePayrollRecord,
@@ -409,6 +411,52 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
     );
   };
 
+  // Resolusi jadwal pencairan aktif untuk periode saat ini
+  const currentPeriodPayoutSetting =
+    companyConfig.periodPayoutDates?.[companyConfig.currentPayrollPeriod] ||
+    (companyConfig.payrollPayoutMode === 'flexible'
+      ? 'FLEKSIBEL'
+      : companyConfig.manualPayrollPayoutDate || '');
+
+  const isFlexibleMonthlyPayout =
+    currentPeriodPayoutSetting === 'FLEKSIBEL' ||
+    (companyConfig.payrollPayoutMode === 'flexible' && !currentPeriodPayoutSetting);
+
+  const manualMonthlyPayoutDateStr =
+    currentPeriodPayoutSetting &&
+    currentPeriodPayoutSetting !== 'FLEKSIBEL' &&
+    /^\d{4}-\d{2}-\d{2}$/.test(currentPeriodPayoutSetting)
+      ? currentPeriodPayoutSetting
+      : '';
+
+  const resolvedMonthlyPayoutDisplayLabel = isFlexibleMonthlyPayout
+    ? 'Fleksibel / Mengikuti Jadwal Pencairan Admin'
+    : manualMonthlyPayoutDateStr
+    ? formatIndoDate(manualMonthlyPayoutDateStr)
+    : `Tanggal ${companyConfig.payrollDisbursementDay || 28} ${companyConfig.currentPayrollPeriod}`;
+
+  const handleSetPeriodManualPayoutDate = (dateOrFlexible: string) => {
+    if (!onUpdateCompanyConfig) return;
+    const isFlex = dateOrFlexible === 'FLEKSIBEL';
+    const nextPeriodDates = {
+      ...(companyConfig.periodPayoutDates || {}),
+      [companyConfig.currentPayrollPeriod]: dateOrFlexible,
+    };
+    onUpdateCompanyConfig({
+      ...companyConfig,
+      payrollPayoutMode: isFlex ? 'flexible' : dateOrFlexible ? 'manual_date' : 'fixed_day',
+      manualPayrollPayoutDate: !isFlex && dateOrFlexible ? dateOrFlexible : companyConfig.manualPayrollPayoutDate,
+      periodPayoutDates: nextPeriodDates,
+    });
+    showToast(
+      isFlex
+        ? `Jadwal pencairan gaji periode ${companyConfig.currentPayrollPeriod} diatur ke mode "Fleksibel / Tidak Menentu".`
+        : dateOrFlexible
+        ? `Tanggal pencairan gaji periode ${companyConfig.currentPayrollPeriod} diatur manual ke ${formatIndoDate(dateOrFlexible)}.`
+        : `Jadwal pencairan gaji dikembalikan ke default Tanggal ${companyConfig.payrollDisbursementDay || 28}.`
+    );
+  };
+
   // Ubah tahapan status verifikasi & pembayaran slip gaji (Draft -> Menunggu Transfer -> Lunas)
   const handleChangePaymentStatus = (
     record: PayrollRecord,
@@ -421,18 +469,21 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
       return;
     }
 
+    const chosenPayoutDate = manualMonthlyPayoutDateStr || getJakartaDateString();
     const emp = employees.find((e) => e.id === record.employeeId);
     onUpdatePayrollRecord({
       ...record,
       paymentStatus: nextStatus,
       paymentDate:
         nextStatus === 'Lunas'
-          ? getJakartaDateString()
+          ? chosenPayoutDate
           : undefined,
     });
 
     showToast(
-      `Status slip gaji ${emp?.fullName || record.employeeId} diperbarui menjadi "${nextStatus}".`
+      nextStatus === 'Lunas'
+        ? `Slip gaji ${emp?.fullName || record.employeeId} ditandai "Lunas" dengan Tanggal Pencairan ${formatIndoDate(chosenPayoutDate)}.`
+        : `Status slip gaji ${emp?.fullName || record.employeeId} diperbarui menjadi "${nextStatus}".`
     );
   };
 
@@ -441,13 +492,13 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
       showToast(`Periode ${companyConfig.currentPayrollPeriod} sedang terkunci!`);
       return;
     }
-    const todayStr = getJakartaDateString();
+    const chosenPayoutDate = manualMonthlyPayoutDateStr || getJakartaDateString();
     const updated = payrolls.map((rec) =>
       rec.period === companyConfig.currentPayrollPeriod
         ? {
             ...rec,
             paymentStatus: nextStatus,
-            paymentDate: nextStatus === 'Lunas' ? todayStr : undefined,
+            paymentDate: nextStatus === 'Lunas' ? chosenPayoutDate : undefined,
           }
         : rec
     );
@@ -457,7 +508,9 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
       updated.forEach((u) => onUpdatePayrollRecord(u));
     }
     showToast(
-      `Seluruh slip gaji periode ${companyConfig.currentPayrollPeriod} diperbarui ke status "${nextStatus}"!`
+      nextStatus === 'Lunas'
+        ? `Seluruh slip gaji periode ${companyConfig.currentPayrollPeriod} ditandai "Lunas" dengan Tanggal Pencairan ${formatIndoDate(chosenPayoutDate)}!`
+        : `Seluruh slip gaji periode ${companyConfig.currentPayrollPeriod} diperbarui ke status "${nextStatus}"!`
     );
   };
 
@@ -570,7 +623,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
   });
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 w-full max-w-full overflow-x-hidden">
       {/* Toast popup */}
       {toastMessage && (
         <div className="fixed bottom-6 right-6 z-50 bg-slate-900 text-white px-4 py-2.5 rounded-xl text-xs font-semibold shadow-xl flex items-center gap-2 border border-slate-700">
@@ -1021,8 +1074,45 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                 </div>
               )}
             </div>
+            <div className="pt-1.5 border-t border-emerald-700/50 flex flex-wrap items-center gap-2 text-[11px] text-emerald-200">
+              <span className="font-bold text-white flex items-center gap-1">
+                <Calendar className="w-3.5 h-3.5 text-emerald-300" />
+                Tanggal Pencairan Gaji Bulanan:
+              </span>
+              <input
+                type="date"
+                value={manualMonthlyPayoutDateStr}
+                onChange={(e) => handleSetPeriodManualPayoutDate(e.target.value)}
+                className="px-2 py-1 rounded-lg bg-slate-900/90 border border-emerald-400/50 text-emerald-200 text-[11px] font-bold focus:outline-none focus:ring-2 focus:ring-emerald-400 cursor-pointer"
+                title="Pilih Tanggal Pencairan Gaji Bulanan secara manual (tampil di Header Slip Gaji)"
+              />
+              <button
+                type="button"
+                onClick={() => handleSetPeriodManualPayoutDate(getJakartaDateString())}
+                className="px-2 py-0.5 rounded-md bg-emerald-500/30 hover:bg-emerald-500/40 border border-emerald-300/40 text-white text-[10px] font-bold cursor-pointer"
+                title="Atur Tanggal Pencairan ke Hari Ini"
+              >
+                Hari Ini
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  handleSetPeriodManualPayoutDate(
+                    isFlexibleMonthlyPayout ? '' : 'FLEKSIBEL'
+                  )
+                }
+                className={`px-2.5 py-0.5 rounded-md border text-[10px] font-extrabold cursor-pointer transition-colors ${
+                  isFlexibleMonthlyPayout
+                    ? 'bg-amber-400 text-slate-950 border-amber-300'
+                    : 'bg-white/10 hover:bg-white/20 text-emerald-100 border-white/20'
+                }`}
+                title="Mode Fleksibel / Tidak Menentu (tanpa warning keterlambatan jika tanggal gajian bergeser)"
+              >
+                {isFlexibleMonthlyPayout ? '✓ Mode Fleksibel / Tidak Menentu' : 'Set Fleksibel / Tidak Menentu'}
+              </button>
+            </div>
             <p className="text-[11px] text-emerald-300">
-              Jadwal Pencairan: 28 {companyConfig.currentPayrollPeriod} • Berita: &ldquo;{formatBankTransferRemark(companyConfig.currentPayrollPeriod, 'Tas Grosir Import')}&rdquo;
+              Jadwal Pencairan di Slip Gaji: <strong className="text-white">{resolvedMonthlyPayoutDisplayLabel}</strong> (Cut-Off Absensi Tetap Tgl {companyConfig.cutOffEndDay || 25}) • Berita: &ldquo;{formatBankTransferRemark(companyConfig.currentPayrollPeriod, 'Tas Grosir Import')}&rdquo;
             </p>
           </div>
         </div>
@@ -1352,7 +1442,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
 
       {/* Payroll Table */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-        <div className="overflow-x-auto">
+        <div className="w-full overflow-x-auto">
           <table className="w-full text-xs text-left">
             <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
               <tr>

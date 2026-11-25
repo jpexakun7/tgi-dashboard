@@ -2131,7 +2131,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
   };
 
   return (
-    <div className="space-y-5 sm:space-y-6 pb-28 md:pb-6 animate-in fade-in-50 max-w-full overflow-x-hidden">
+    <div className="space-y-5 sm:space-y-6 pb-36 md:pb-8 animate-in fade-in-50 max-w-full overflow-x-hidden">
       {/* Top Banner: Employee Mode Active & Back to Admin Switcher */}
       <div className="bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-700 rounded-2xl p-4 sm:p-5 text-white shadow-md">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -3347,9 +3347,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                     isPartTimeEmployee ? 'text-orange-700' : 'text-emerald-600'
                   }`}
                 >
-                  {isPartTimeEmployee
-                    ? 'Setiap Hari Minggu (Weekly Payout)'
-                    : `Tgl ${companyConfig.payrollDisbursementDay} ${effectiveSelectedPeriod.split(' ')[0]}`}
+                  {officialPayslipData.payoutDateLabel}
                 </span>
               </div>
             </div>
@@ -8159,9 +8157,9 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       {/* Fixed Native-Style Mobile Bottom Navigation Bar (<768px, md:hidden) */}
       <nav
         aria-label="Navigasi Bawah Portal Karyawan"
-        className="fixed bottom-0 left-0 right-0 z-40 md:hidden bg-white/95 backdrop-blur-md border-t border-slate-200 shadow-[0_-6px_24px_rgba(15,23,42,0.08)] px-2 pb-1.5 pt-1"
+        className="fixed bottom-0 left-0 right-0 z-40 md:hidden bg-white/95 backdrop-blur-md border-t border-slate-200 shadow-[0_-4px_20px_rgba(15,23,42,0.08)] px-1.5 pt-1.5 pb-2.5"
       >
-        <div className="grid grid-cols-5 items-center max-w-md mx-auto">
+        <div className="grid grid-cols-5 items-stretch max-w-md mx-auto gap-1">
           {/* 1. Home */}
           <button
             type="button"
@@ -8169,14 +8167,14 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
               setActivePortalTab('home');
               setIsMobileMenuSheetOpen(false);
             }}
-            className={`min-h-[52px] flex flex-col items-center justify-center gap-0.5 rounded-xl transition-colors cursor-pointer ${
+            className={`min-h-[54px] py-1.5 px-1 flex flex-col items-center justify-center gap-1 rounded-xl transition-colors cursor-pointer ${
               activePortalTab === 'home'
-                ? 'text-emerald-600 font-extrabold'
+                ? 'bg-emerald-50 text-emerald-700 font-extrabold'
                 : 'text-slate-500 hover:text-slate-800 font-semibold'
             }`}
           >
-            <Home className="w-5 h-5" />
-            <span className="text-[10px] leading-tight">Home</span>
+            <Home className="w-5 h-5 shrink-0" />
+            <span className="text-[10px] leading-none whitespace-nowrap">Home</span>
           </button>
 
           {/* 2. Slip Gaji */}
@@ -8186,48 +8184,38 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
               setActivePortalTab('payroll');
               setIsMobileMenuSheetOpen(false);
             }}
-            className={`min-h-[52px] flex flex-col items-center justify-center gap-0.5 rounded-xl transition-colors cursor-pointer ${
+            className={`min-h-[54px] py-1.5 px-1 flex flex-col items-center justify-center gap-1 rounded-xl transition-colors cursor-pointer ${
               activePortalTab === 'payroll'
-                ? 'text-emerald-600 font-extrabold'
+                ? 'bg-emerald-50 text-emerald-700 font-extrabold'
                 : 'text-slate-500 hover:text-slate-800 font-semibold'
             }`}
           >
-            <WalletCards className="w-5 h-5" />
-            <span className="text-[10px] leading-tight">Slip Gaji</span>
+            <WalletCards className="w-5 h-5 shrink-0" />
+            <span className="text-[10px] leading-none whitespace-nowrap">Slip Gaji</span>
           </button>
 
-          {/* 3. Kamera Absen (Prominent Center One-Handed Thumb Action) */}
+          {/* 3. Kamera Absen (Clean Navigation Tab — Non-floating so it never covers content above) */}
           <button
             type="button"
             onClick={() => {
               setActivePortalTab('attendance');
               setIsMobileMenuSheetOpen(false);
             }}
-            className="flex flex-col items-center justify-center cursor-pointer group -mt-4"
+            className={`min-h-[54px] py-1.5 px-1 flex flex-col items-center justify-center gap-1 rounded-xl transition-all cursor-pointer relative ${
+              activePortalTab === 'attendance'
+                ? 'bg-emerald-600 text-white font-extrabold shadow-xs'
+                : 'bg-emerald-50/80 text-emerald-800 hover:bg-emerald-100 font-bold border border-emerald-200/80'
+            }`}
           >
-            <div
-              className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg transition-transform active:scale-95 relative ${
-                activePortalTab === 'attendance'
-                  ? 'bg-gradient-to-br from-emerald-500 to-teal-700 text-white ring-4 ring-emerald-100 shadow-emerald-600/35'
-                  : 'bg-gradient-to-br from-emerald-600 to-teal-600 text-white ring-4 ring-white shadow-emerald-600/25'
-              }`}
-            >
-              <Camera className="w-5 h-5" />
+            <div className="relative flex items-center justify-center">
+              <Camera className="w-5 h-5 shrink-0" />
               <span
-                className={`absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ring-2 ring-white ${
+                className={`absolute -top-0.5 -right-1.5 w-2 h-2 rounded-full ring-1 ring-white ${
                   todayAttendance ? 'bg-emerald-300' : 'bg-amber-400 animate-pulse'
                 }`}
               />
             </div>
-            <span
-              className={`text-[10px] mt-1 leading-tight ${
-                activePortalTab === 'attendance'
-                  ? 'text-emerald-700 font-extrabold'
-                  : 'text-slate-700 font-bold'
-              }`}
-            >
-              Kamera Absen
-            </span>
+            <span className="text-[10px] leading-none whitespace-nowrap">Kamera Absen</span>
           </button>
 
           {/* 4. Cuti/Izin */}
@@ -8237,34 +8225,34 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
               setActivePortalTab('leave');
               setIsMobileMenuSheetOpen(false);
             }}
-            className={`min-h-[52px] flex flex-col items-center justify-center gap-0.5 rounded-xl transition-colors cursor-pointer relative ${
+            className={`min-h-[54px] py-1.5 px-1 flex flex-col items-center justify-center gap-1 rounded-xl transition-colors cursor-pointer relative ${
               activePortalTab === 'leave'
-                ? 'text-emerald-600 font-extrabold'
+                ? 'bg-emerald-50 text-emerald-700 font-extrabold'
                 : 'text-slate-500 hover:text-slate-800 font-semibold'
             }`}
           >
-            <div className="relative">
-              <CalendarDays className="w-5 h-5" />
+            <div className="relative flex items-center justify-center">
+              <CalendarDays className="w-5 h-5 shrink-0" />
               {myLeaveRequests.filter((l) => l.status === 'Menunggu Persetujuan').length > 0 && (
                 <span className="absolute -top-1 -right-1.5 w-2 h-2 rounded-full bg-amber-500 ring-1 ring-white" />
               )}
             </div>
-            <span className="text-[10px] leading-tight">Cuti/Izin</span>
+            <span className="text-[10px] leading-none whitespace-nowrap">Cuti/Izin</span>
           </button>
 
           {/* 5. Lainnya (Opens Full Portal Menu Sheet) */}
           <button
             type="button"
             onClick={() => setIsMobileMenuSheetOpen((prev) => !prev)}
-            className={`min-h-[52px] flex flex-col items-center justify-center gap-0.5 rounded-xl transition-colors cursor-pointer ${
+            className={`min-h-[54px] py-1.5 px-1 flex flex-col items-center justify-center gap-1 rounded-xl transition-colors cursor-pointer ${
               isMobileMenuSheetOpen ||
               ['claims', 'cash_advance', 'assets', 'performance', 'profile'].includes(activePortalTab)
-                ? 'text-emerald-600 font-extrabold'
+                ? 'bg-emerald-50 text-emerald-700 font-extrabold'
                 : 'text-slate-500 hover:text-slate-800 font-semibold'
             }`}
           >
-            <LayoutGrid className="w-5 h-5" />
-            <span className="text-[10px] leading-tight">Lainnya</span>
+            <LayoutGrid className="w-5 h-5 shrink-0" />
+            <span className="text-[10px] leading-none whitespace-nowrap">Lainnya</span>
           </button>
         </div>
       </nav>

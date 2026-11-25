@@ -625,6 +625,10 @@ export interface CompanyConfig {
   cutOffStartDay: number;
   cutOffEndDay: number;
   payrollDisbursementDay: number;
+  payrollPayoutMode?: 'fixed_day' | 'manual_date' | 'flexible';
+  manualPayrollPayoutDate?: string; // YYYY-MM-DD
+  periodPayoutDates?: Record<string, string>; // Map periode -> YYYY-MM-DD atau 'FLEKSIBEL'
+  partTimePlannedPayoutDates?: Record<string, string>; // Map weekStart__weekEnd -> YYYY-MM-DD
   bpjsKesehatanMaxCap: number; // Max cap IDR 12.000.000
   bpjsJpMaxCap: number; // Plafon iuran JP 2026 IDR 10.600.000
   disbursementBank: 'BCA Bisnis' | 'Mandiri Cash Management' | 'BNI Direct';

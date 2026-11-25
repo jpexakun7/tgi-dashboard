@@ -278,6 +278,7 @@ try {
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('overview');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [isAddEmployeeModalOpen, setIsAddEmployeeModalOpen] = useState(false);
   const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState(false);
@@ -5708,7 +5709,7 @@ export default function App() {
       null;
 
     return (
-      <div className="min-h-screen bg-slate-100 flex flex-col antialiased font-sans text-slate-800">
+      <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-slate-100 flex flex-col antialiased font-sans text-slate-800">
         <Header
           onOpenSidebar={() => {}}
           companyConfig={companyConfig}
@@ -5716,6 +5717,10 @@ export default function App() {
           onOpenRunPayroll={() => {}}
           searchQuery=""
           setSearchQuery={() => {}}
+          employees={canSwitchToAdmin ? employees : currentEmployee ? [currentEmployee] : []}
+          payrolls={safePayrolls}
+          cashAdvances={cashAdvances}
+          onOpenPayslip={handleOpenPayslip}
           pendingLeaves={pendingLeaves}
           pendingOvertimes={pendingOvertimes}
           onNavigateTab={setActiveTab}
@@ -5739,7 +5744,7 @@ export default function App() {
           onLockAdmin={handleLockAdmin}
         />
 
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">
+        <main className="flex-1 min-w-0 p-3 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto overflow-x-hidden">
           <Suspense
             fallback={
               <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center max-w-lg mx-auto my-12 shadow-xs">
@@ -5875,8 +5880,8 @@ export default function App() {
 
   // View: Admin HR Panel Tas Grosir Import (Accessible by Google Admin)
   return (
-    <div className="min-h-screen bg-slate-100 flex flex-col antialiased font-sans text-slate-800">
-      <div className="flex flex-1 min-h-screen">
+    <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-slate-100 flex flex-col antialiased font-sans text-slate-800">
+      <div className="flex flex-1 min-h-screen w-full max-w-full overflow-x-hidden">
         {/* Sidebar Navigation */}
         <Sidebar
           activeTab={activeTab}
@@ -5887,6 +5892,8 @@ export default function App() {
           pendingCashAdvancesCount={pendingCashAdvances.length}
           isOpen={isSidebarOpen}
           setIsOpen={setIsSidebarOpen}
+          isCollapsed={isSidebarCollapsed}
+          onToggleCollapse={() => setIsSidebarCollapsed((prev) => !prev)}
           adminUser={adminUser}
           onLogout={handleLogout}
           allowedModules={userAllowedModules}
@@ -5895,10 +5902,12 @@ export default function App() {
         />
 
         {/* Main Content Area */}
-        <div className="flex-1 flex flex-col min-w-0">
+        <div className="flex-1 flex flex-col min-w-0 max-w-full overflow-x-hidden">
           <Header
             activeTab={activeTab}
             onOpenSidebar={() => setIsSidebarOpen(true)}
+            isSidebarCollapsed={isSidebarCollapsed}
+            onToggleSidebarCollapse={() => setIsSidebarCollapsed((prev) => !prev)}
             companyConfig={companyConfig}
             onOpenAddEmployee={() => {
               setActiveTab('employees');
@@ -5910,6 +5919,10 @@ export default function App() {
             }}
             searchQuery={searchQuery}
             setSearchQuery={setSearchQuery}
+            employees={employees}
+            payrolls={syncedPayrolls}
+            cashAdvances={cashAdvances}
+            onOpenPayslip={handleOpenPayslip}
             pendingLeaves={pendingLeaves}
             pendingOvertimes={pendingOvertimes}
             onNavigateTab={setActiveTab}
@@ -5943,7 +5956,7 @@ export default function App() {
             }
           />
 
-          <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">
+          <main className="flex-1 min-w-0 p-3 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto overflow-x-hidden">
             <Suspense
               fallback={
                 <div className="bg-white rounded-2xl border border-slate-200 p-10 text-center my-8 shadow-xs">
@@ -5992,6 +6005,7 @@ export default function App() {
                 attendances={attendances}
                 reviews={reviews}
                 companyConfig={companyConfig}
+                onUpdateCompanyConfig={(newConfig) => setCompanyConfig(newConfig)}
                 onOpenPayslip={handleOpenPayslip}
                 onRecalculatePayroll={handleRecalculatePayroll}
                 onUpdatePayrollRecord={handleUpdatePayrollRecord}
@@ -6016,6 +6030,8 @@ export default function App() {
                 logs={partTimeLogs}
                 payouts={partTimePayouts}
                 attendances={attendances}
+                companyConfig={companyConfig}
+                onUpdateCompanyConfig={(newConfig) => setCompanyConfig(newConfig)}
                 onSaveLog={handleSavePartTimeLog}
                 onDeleteLog={handleDeletePartTimeLog}
                 onMarkLogsPaid={handleMarkPartTimeLogsPaid}

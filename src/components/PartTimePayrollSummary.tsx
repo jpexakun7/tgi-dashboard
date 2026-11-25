@@ -20,6 +20,7 @@ import {
   AttendanceRecord,
   EmployeeBonus,
   ThrPayoutRecord,
+  CompanyConfig,
 } from '../types';
 import {
   formatRupiah,
@@ -66,6 +67,8 @@ interface PartTimePayrollSummaryProps {
   logs: PartTimeWorkLog[];
   payouts: PartTimeWeeklyPayout[];
   attendances?: AttendanceRecord[];
+  companyConfig?: CompanyConfig;
+  onUpdateCompanyConfig?: (nextConfig: CompanyConfig) => void;
   onSaveLog: (log: PartTimeWorkLog) => void;
   onDeleteLog: (id: string) => void;
   onMarkLogsPaid: (logIds: string[], payout: PartTimeWeeklyPayout) => void;
@@ -121,6 +124,8 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
   logs,
   payouts,
   attendances = [],
+  companyConfig,
+  onUpdateCompanyConfig,
   onSaveLog,
   onDeleteLog,
   onMarkLogsPaid,
@@ -137,6 +142,13 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
   const [isPullingAttendance, setIsPullingAttendance] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [viewingSlipRow, setViewingSlipRow] = useState<EmployeeWeeklySummaryRow | null>(null);
+  const [payoutConfirmModal, setPayoutConfirmModal] = useState<{
+    mode: 'single' | 'bulk';
+    row?: EmployeeWeeklySummaryRow;
+    actualPayoutDate: string;
+    paymentMethod: 'Transfer Bank' | 'Tunai / Kas Operasional';
+    notes: string;
+  } | null>(null);
   const [employeeBonuses, setEmployeeBonuses] = useState<EmployeeBonus[]>(() =>
     getSavedEmployeeBonuses()
   );
@@ -146,6 +158,81 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
   const [payrollDeductions, setPayrollDeductions] = useState(() =>
     getSavedPayrollDeductions()
   );
+
+  // Compute default end-of-cycle payout date (next day after weekEnd or weekEnd) in WIB without UTC shift
+  const defaultCyclePayoutDate = useMemo(() => {
+    if (!weekEnd || !/^\d{4}-\d{2}-\d{2}$/.test(weekEnd.trim())) {
+      return defaultWeek.sundayPayoutDate;
+    }
+    return addDaysToDateString(weekEnd.trim(), 1);
+  }, [weekEnd, defaultWeek.sundayPayoutDate]);
+
+  const cycleStorageKey = `${weekStart}__${weekEnd}`;
+
+  // Tanggal Rencana Pencairan Fleksibel (bisa diubah manual oleh Admin kapan saja)
+  const [plannedPayoutDate, setPlannedPayoutDate] = useState<string>(() => {
+    try {
+      const fromConfig = companyConfig?.partTimePlannedPayoutDates?.[`${defaultWeek.startDate}__${defaultWeek.endDate}`];
+      if (fromConfig && /^\d{4}-\d{2}-\d{2}$/.test(fromConfig)) return fromConfig;
+      const raw = localStorage.getItem('tgi_pt_planned_payout_dates');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const saved = parsed?.[`${defaultWeek.startDate}__${defaultWeek.endDate}`];
+        if (saved && /^\d{4}-\d{2}-\d{2}$/.test(saved)) return saved;
+      }
+    } catch {
+      // ignore
+    }
+    return defaultWeek.sundayPayoutDate;
+  });
+
+  useEffect(() => {
+    try {
+      const fromConfig = companyConfig?.partTimePlannedPayoutDates?.[cycleStorageKey];
+      if (fromConfig && /^\d{4}-\d{2}-\d{2}$/.test(fromConfig)) {
+        setPlannedPayoutDate(fromConfig);
+        return;
+      }
+      const raw = localStorage.getItem('tgi_pt_planned_payout_dates');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const saved = parsed?.[cycleStorageKey];
+        if (saved && /^\d{4}-\d{2}-\d{2}$/.test(saved)) {
+          setPlannedPayoutDate(saved);
+          return;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    setPlannedPayoutDate(defaultCyclePayoutDate);
+  }, [cycleStorageKey, defaultCyclePayoutDate, companyConfig?.partTimePlannedPayoutDates]);
+
+  const handleChangePlannedPayoutDate = (newDate: string) => {
+    const cleanDate = newDate && /^\d{4}-\d{2}-\d{2}$/.test(newDate.trim()) ? newDate.trim() : defaultCyclePayoutDate;
+    setPlannedPayoutDate(cleanDate);
+    try {
+      const raw = localStorage.getItem('tgi_pt_planned_payout_dates');
+      const parsed = raw ? JSON.parse(raw) : {};
+      const nextMap = { ...(parsed || {}), [cycleStorageKey]: cleanDate };
+      localStorage.setItem('tgi_pt_planned_payout_dates', JSON.stringify(nextMap));
+      window.dispatchEvent(new CustomEvent('tgi_pt_planned_payout_updated'));
+      if (companyConfig && onUpdateCompanyConfig) {
+        onUpdateCompanyConfig({
+          ...companyConfig,
+          partTimePlannedPayoutDates: {
+            ...(companyConfig.partTimePlannedPayoutDates || {}),
+            [cycleStorageKey]: cleanDate,
+          },
+        });
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  // Alias sundayPayoutDate -> plannedPayoutDate agar kompatibel dengan variabel yang ada
+  const sundayPayoutDate = plannedPayoutDate;
 
   useEffect(() => {
     const syncBonuses = () => setEmployeeBonuses(getSavedEmployeeBonuses());
@@ -165,14 +252,6 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 4500);
   };
-
-  // Compute Sunday Payout date from weekEnd (or next day after weekEnd) in WIB without UTC shift
-  const sundayPayoutDate = useMemo(() => {
-    if (!weekEnd || !/^\d{4}-\d{2}-\d{2}$/.test(weekEnd.trim())) {
-      return defaultWeek.sundayPayoutDate;
-    }
-    return addDaysToDateString(weekEnd.trim(), 1);
-  }, [weekEnd, defaultWeek.sundayPayoutDate]);
 
   const safeEmployees = useMemo(
     () =>
@@ -894,17 +973,42 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
     }
   };
 
-  // Action: Mark as Paid (Sunday Payout) for a single Part-Time employee
-  const handleMarkEmployeePaid = async (row: EmployeeWeeklySummaryRow) => {
+  // Action: Open Confirmation Modal before marking as Paid (Flexible Payout) for a single Part-Time employee
+  const handleMarkEmployeePaid = (row: EmployeeWeeklySummaryRow) => {
     if (row.totalHoursWorked <= 0 || row.grossPay <= 0 || row.unpaidGrossPay <= 0 || row.unpaidLogs.length === 0) {
       showToast(`Belum ada tagihan gaji untuk ${row.employee.fullName} (Total Rp 0).`);
       return;
     }
+    const defaultActualDate = getJakartaDateString() || plannedPayoutDate;
+    setPayoutConfirmModal({
+      mode: 'single',
+      row,
+      actualPayoutDate: defaultActualDate,
+      paymentMethod: 'Transfer Bank',
+      notes: `Flexible Payout Part-Time (${weekStart} s/d ${weekEnd})`,
+    });
+  };
+
+  // Action: Execute single employee Flexible Payout with chosen actualPayoutDate
+  const executeSingleEmployeePaid = async (
+    row: EmployeeWeeklySummaryRow,
+    actualDate: string,
+    paymentMethod: string,
+    customNotes: string
+  ) => {
+    const chosenDate =
+      actualDate && /^\d{4}-\d{2}-\d{2}$/.test(actualDate.trim())
+        ? actualDate.trim()
+        : plannedPayoutDate;
 
     setProcessingEmpId(row.employee.id);
     try {
       const logIds = row.unpaidLogs.map((l) => l.id);
       const nowIso = getJakartaIsoTimestamp();
+      const paidIsoWithDate =
+        chosenDate === getJakartaDateString()
+          ? nowIso
+          : `${chosenDate}T${nowIso.split('T')[1] || '12:00:00+07:00'}`;
       const normalPayPart = Math.round(row.unpaidNormalHours * row.hourlyRate);
       const overtimePayPart = Math.round(row.unpaidOvertimeHours * row.overtimeRate);
 
@@ -920,8 +1024,9 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
         week_start_date: weekStart,
         weekEndDate: weekEnd,
         week_end_date: weekEnd,
-        sundayPayoutDate,
-        sunday_payout_date: sundayPayoutDate,
+        sundayPayoutDate: chosenDate,
+        sunday_payout_date: chosenDate,
+        payoutDate: chosenDate,
         normalHoursWorked: row.unpaidNormalHours,
         normal_hours_worked: row.unpaidNormalHours,
         overtimeHoursWorked: row.unpaidOvertimeHours,
@@ -944,31 +1049,34 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
         bankAccountNumber: row.employee.bankAccountNumber,
         bankAccountHolder: row.employee.bankAccountHolder,
         status: 'Paid',
-        paidAt: nowIso,
-        paid_at: nowIso,
+        paidAt: paidIsoWithDate,
+        paid_at: paidIsoWithDate,
         logIds,
-        notes: `Sunday Payout Part-Time (${weekStart} s/d ${weekEnd}) • Normal ${row.unpaidNormalHours}j × ${formatRupiah(row.hourlyRate)} + Lembur ${row.unpaidOvertimeHours}j × ${formatRupiah(row.overtimeRate)}`,
+        notes: `${customNotes ? customNotes.trim() + ' • ' : ''}Tanggal Cair Aktual: ${formatIndoDate(chosenDate)} (${paymentMethod}) • Normal ${row.unpaidNormalHours}j × ${formatRupiah(row.hourlyRate)} + Lembur ${row.unpaidOvertimeHours}j × ${formatRupiah(row.overtimeRate)}`,
       };
+
+      // Simpan juga tanggal rencana pencairan siklus ini agar sinkron
+      handleChangePlannedPayoutDate(chosenDate);
 
       onMarkLogsPaid(logIds, payoutRecord);
       await markPartTimeLogsPaidInSupabase(logIds, payoutRecord);
 
       showToast(
-        `Sunday Payout berhasil! Gaji mingguan ${row.employee.fullName} sebesar ${formatRupiah(
+        `Pencairan Gaji Part-Time berhasil! Gaji ${row.employee.fullName} sebesar ${formatRupiah(
           row.unpaidGrossPay
-        )} (${row.unpaidNormalHours}j normal + ${row.unpaidOvertimeHours}j lembur) telah ditandai Paid & masuk Laporan Pengeluaran Mingguan.`
+        )} telah ditandai Paid pada Tanggal Pencairan ${formatIndoDate(chosenDate)} & masuk Laporan Pengeluaran Mingguan.`
       );
     } catch (err: any) {
       showToast(
-        err?.message || `Gagal menyimpan Sunday Payout untuk ${row.employee.fullName}.`
+        err?.message || `Gagal menyimpan pencairan gaji untuk ${row.employee.fullName}.`
       );
     } finally {
       setProcessingEmpId(null);
     }
   };
 
-  // Action: Bulk Mark All Unpaid Part-Time Employees as Paid (Sunday Payout)
-  const handleBulkMarkPaid = async () => {
+  // Action: Open Confirmation Modal for Bulk Mark All Unpaid Part-Time Employees as Paid (Flexible Payout)
+  const handleBulkMarkPaid = () => {
     const unpaidRows = weeklySummaryRows.filter(
       (r) => r.unpaidLogs.length > 0 && r.totalHoursWorked > 0 && r.unpaidGrossPay > 0
     );
@@ -976,12 +1084,40 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
       showToast('Tidak ada tagihan jam kerja Part-Time (> Rp 0) yang belum dibayar pada siklus minggu ini.');
       return;
     }
+    const defaultActualDate = getJakartaDateString() || plannedPayoutDate;
+    setPayoutConfirmModal({
+      mode: 'bulk',
+      actualPayoutDate: defaultActualDate,
+      paymentMethod: 'Transfer Bank',
+      notes: `Bulk Flexible Payout Part-Time (${weekStart} s/d ${weekEnd})`,
+    });
+  };
+
+  const executeBulkMarkPaid = async (
+    actualDate: string,
+    paymentMethod: string,
+    customNotes: string
+  ) => {
+    const unpaidRows = weeklySummaryRows.filter(
+      (r) => r.unpaidLogs.length > 0 && r.totalHoursWorked > 0 && r.unpaidGrossPay > 0
+    );
+    if (unpaidRows.length === 0) return;
+
+    const chosenDate =
+      actualDate && /^\d{4}-\d{2}-\d{2}$/.test(actualDate.trim())
+        ? actualDate.trim()
+        : plannedPayoutDate;
 
     setIsBulkPaying(true);
     try {
+      const nowIso = getJakartaIsoTimestamp();
+      const paidIsoWithDate =
+        chosenDate === getJakartaDateString()
+          ? nowIso
+          : `${chosenDate}T${nowIso.split('T')[1] || '12:00:00+07:00'}`;
+
       for (const row of unpaidRows) {
         const logIds = row.unpaidLogs.map((l) => l.id);
-        const nowIso = getJakartaIsoTimestamp();
         const normalPayPart = Math.round(row.unpaidNormalHours * row.hourlyRate);
         const overtimePayPart = Math.round(row.unpaidOvertimeHours * row.overtimeRate);
 
@@ -997,8 +1133,9 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
           week_start_date: weekStart,
           weekEndDate: weekEnd,
           week_end_date: weekEnd,
-          sundayPayoutDate,
-          sunday_payout_date: sundayPayoutDate,
+          sundayPayoutDate: chosenDate,
+          sunday_payout_date: chosenDate,
+          payoutDate: chosenDate,
           normalHoursWorked: row.unpaidNormalHours,
           normal_hours_worked: row.unpaidNormalHours,
           overtimeHoursWorked: row.unpaidOvertimeHours,
@@ -1021,20 +1158,23 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
           bankAccountNumber: row.employee.bankAccountNumber,
           bankAccountHolder: row.employee.bankAccountHolder,
           status: 'Paid',
-          paidAt: nowIso,
-          paid_at: nowIso,
+          paidAt: paidIsoWithDate,
+          paid_at: paidIsoWithDate,
           logIds,
-          notes: `Bulk Sunday Payout Part-Time (${weekStart} s/d ${weekEnd})`,
+          notes: `${customNotes ? customNotes.trim() + ' • ' : ''}Tanggal Cair Aktual: ${formatIndoDate(chosenDate)} (${paymentMethod})`,
         };
         onMarkLogsPaid(logIds, payoutRecord);
         await markPartTimeLogsPaidInSupabase(logIds, payoutRecord);
       }
+
+      handleChangePlannedPayoutDate(chosenDate);
+
       showToast(
-        `Sunday Payout Massal selesai! ${unpaidRows.length} karyawan Part-Time telah ditandai Paid dan tercatat ke Laporan Pengeluaran Mingguan.`
+        `Flexible Payout Massal selesai! ${unpaidRows.length} karyawan Part-Time telah ditandai Paid pada Tanggal Pencairan ${formatIndoDate(chosenDate)} dan tercatat ke Laporan Pengeluaran Mingguan.`
       );
     } catch (err: any) {
       showToast(
-        err?.message || 'Gagal memproses Sunday Payout Massal. Periksa koneksi jaringan.'
+        err?.message || 'Gagal memproses Flexible Payout Massal. Periksa koneksi jaringan.'
       );
     } finally {
       setIsBulkPaying(false);
@@ -1048,7 +1188,7 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
       'Departemen',
       'Siklus Mulai (Senin)',
       'Siklus Akhir (Sabtu)',
-      'Jadwal Sunday Payout',
+      'Jadwal Pencairan (Flexible Payout)',
       'Hari Kerja',
       'Jam Normal',
       'Jam Lembur',
@@ -1066,7 +1206,7 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
       `"${r.employee.department}"`,
       weekStart,
       weekEnd,
-      sundayPayoutDate,
+      plannedPayoutDate,
       r.totalDaysWorked,
       r.normalHoursWorked,
       r.overtimeHoursWorked,
@@ -1074,7 +1214,7 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
       r.hourlyRate,
       r.overtimeRate,
       r.grossPay,
-      r.isFullyPaid ? 'Paid (Sunday Payout)' : r.totalHoursWorked > 0 ? 'Unpaid' : 'Belum Ada Jam',
+      r.isFullyPaid ? 'Paid (Flexible Payout)' : r.totalHoursWorked > 0 ? 'Unpaid' : 'Belum Ada Jam',
       `"${r.employee.bankName} ${r.employee.bankAccountNumber} a/n ${r.employee.bankAccountHolder}"`,
     ]);
 
@@ -1083,7 +1223,7 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
       [headers.join(','), ...rows.map((line) => line.join(','))].join('\n');
     const link = document.createElement('a');
     link.setAttribute('href', encodeURI(csv));
-    link.setAttribute('download', `TGI_PartTime_SundayPayout_${weekStart}_sd_${weekEnd}.csv`);
+    link.setAttribute('download', `TGI_PartTime_FlexiblePayout_${weekStart}_sd_${weekEnd}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -1111,17 +1251,17 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
           <div className="space-y-1.5">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-orange-500/20 border border-orange-400/40 text-orange-300 text-[11px] font-bold">
               <Clock className="w-3.5 h-3.5" />
-              <span>MODUL PAYROLL PART-TIME MINGGUAN &amp; SUNDAY PAYOUT</span>
+              <span>MODUL PAYROLL PART-TIME MINGGUAN &amp; FLEXIBLE PAYOUT</span>
             </div>
             <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight">
-              Payroll Part-Time (Minggu) — Tas Grosir Import
+              Payroll Part-Time (Mingguan) — Jadwal Cair Fleksibel
             </h1>
             <p className="text-xs text-slate-300 max-w-2xl">
-              Terhubung otomatis dengan absensi Clock-In &amp; Clock-Out Portal Karyawan Part-Time pada siklus operasional 6 hari (Senin–Sabtu) dengan rumus:{' '}
+              Terhubung otomatis dengan absensi Clock-In &amp; Clock-Out Portal Karyawan Part-Time pada siklus operasional (Senin–Sabtu / Rentang Kustom) dengan rumus:{' '}
               <span className="text-orange-300 font-semibold">
                 Total Gaji Kotor = (Jam Normal × hourly_rate) + (Jam Lembur × overtime_rate)
               </span>{' '}
-              untuk pencairan setiap hari Minggu (<strong>Sunday Payout</strong>).
+              untuk pencairan kapan saja (<strong>Flexible Payout / Jadwal Cair Fleksibel</strong>).
             </p>
           </div>
 
@@ -1159,7 +1299,7 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
                 <CheckCircle2 className="w-4 h-4" />
                 <span>
                   {isBulkPaying
-                    ? 'Memproses Sunday Payout...'
+                    ? 'Memproses Pencairan...'
                     : `Tandai Semua Sudah Dibayar (${formatRupiah(aggregateTotals.totalUnpaid)})`}
                 </span>
               </button>
@@ -1167,7 +1307,7 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
           </div>
         </div>
 
-        {/* Pemilih Siklus Mingguan (6 Hari Operasional + Hari Minggu Payout) Tanpa Terpotong Tgl 25/26 */}
+        {/* Pemilih Siklus Mingguan (Senin–Sabtu / Kustom) & Date Picker Tanggal Rencana Pencairan Fleksibel */}
         <div className="mt-5 pt-4 border-t border-white/10 space-y-3">
           <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2">
@@ -1219,9 +1359,27 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
                   ✓ Siklus Mingguan Utuh Lintas Cut-Off Tgl 25/26 (Senin–Sabtu Menyatu)
                 </span>
               )}
-              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-emerald-500/20 border border-emerald-400/40 text-emerald-200 text-xs font-bold">
-                <Wallet className="w-4 h-4 text-emerald-400" />
-                <span>Jadwal Pencairan Minggu (Sunday Payout): {formatIndoDate(sundayPayoutDate)}</span>
+              <div className="inline-flex flex-wrap items-center gap-2 px-3.5 py-1.5 rounded-xl bg-emerald-500/20 border border-emerald-400/40 text-emerald-100 text-xs font-bold">
+                <Wallet className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>Tanggal Rencana Pencairan (Flexible Payout):</span>
+                <input
+                  type="date"
+                  value={plannedPayoutDate}
+                  onChange={(e) => handleChangePlannedPayoutDate(e.target.value)}
+                  className="px-2.5 py-1 rounded-lg bg-slate-900/90 border border-emerald-400/60 text-emerald-200 text-xs font-extrabold focus:outline-none focus:ring-2 focus:ring-emerald-400 cursor-pointer"
+                  title="Ubah manual Tanggal Rencana Pencairan gaji Part-Time kapan saja"
+                />
+                <span className="text-[11px] text-emerald-300 font-semibold">
+                  ({formatIndoDate(plannedPayoutDate)})
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleChangePlannedPayoutDate(getJakartaDateString())}
+                  className="px-2 py-0.5 rounded-md bg-emerald-500/30 hover:bg-emerald-500/50 border border-emerald-300/40 text-[10px] font-extrabold text-white cursor-pointer"
+                  title="Set Tanggal Rencana Pencairan ke Hari Ini"
+                >
+                  Hari Ini
+                </button>
               </div>
             </div>
           </div>
@@ -1247,14 +1405,14 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
               className="px-2.5 py-1 rounded-lg bg-white/10 border border-white/20 text-white text-[11px] font-semibold"
             />
             <span className="text-orange-200/90 italic">
-              *Perhitungan Part-Time Mingguan selalu mengikuti siklus kalender Senin s/d Sabtu utuh tanpa terpotong di tanggal 25/26.
+              *Perhitungan Part-Time Mingguan mengikuti siklus Senin–Sabtu (atau rentang kustom) tanpa terpotong di tanggal 25/26, dengan tanggal gajian bebas diatur manual kapan saja.
             </span>
           </div>
         </div>
       </div>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-bold text-slate-500 uppercase">
@@ -1268,7 +1426,7 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
             {aggregateTotals.partTimeCount} Orang
           </p>
           <p className="text-[11px] text-slate-500 mt-0.5">
-            {aggregateTotals.unpaidEmployeeCount} karyawan menunggu Sunday Payout
+            {aggregateTotals.unpaidEmployeeCount} karyawan menunggu pencairan gaji
           </p>
         </div>
 
@@ -1293,7 +1451,7 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
         <div className="bg-white p-4 rounded-2xl border border-amber-200 shadow-xs">
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-bold text-amber-800 uppercase">
-              Siap Cair Hari Minggu (Unpaid)
+              Siap Dicairkan (Unpaid)
             </span>
             <span className="p-2 rounded-xl bg-amber-100 text-amber-700">
               <Wallet className="w-4 h-4" />
@@ -1303,14 +1461,14 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
             {formatRupiah(aggregateTotals.totalUnpaid)}
           </p>
           <p className="text-[11px] text-amber-700 mt-0.5">
-            Klik &ldquo;Tandai Sudah Dibayar&rdquo; saat cair
+            Rencana Cair: {formatIndoDate(plannedPayoutDate)} (Fleksibel)
           </p>
         </div>
 
         <div className="bg-white p-4 rounded-2xl border border-emerald-200 shadow-xs">
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-bold text-emerald-800 uppercase">
-              Sudah Dibayar (Sunday Payout)
+              Sudah Dibayar (Flexible Payout)
             </span>
             <span className="p-2 rounded-xl bg-emerald-100 text-emerald-700">
               <CheckCircle2 className="w-4 h-4" />
@@ -1337,7 +1495,7 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
           }`}
         >
           <Wallet className="w-4 h-4 text-orange-400" />
-          <span>1. Rekap Gaji Mingguan &amp; Sunday Payout</span>
+          <span>1. Rekap Gaji Mingguan &amp; Flexible Payout</span>
         </button>
 
         <button
@@ -1367,7 +1525,7 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
         </button>
       </div>
 
-      {/* SUB-TAB 1: REKAP GAJI MINGGUAN & SUNDAY PAYOUT */}
+      {/* SUB-TAB 1: REKAP GAJI MINGGUAN & FLEXIBLE PAYOUT */}
       {activeSubTab === 'summary' && (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
           <div className="p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -1380,7 +1538,7 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
                 <strong>
                   Total Gaji Kotor = (Jam Normal × hourly_rate) + (Jam Lembur × overtime_rate)
                 </strong>
-                . Klik &ldquo;Tarik Data Absensi Minggu Ini&rdquo; sebelum mengeksekusi Sunday Payout.
+                . Jadwal rencana cair saat ini: <strong className="text-emerald-700">{formatIndoDate(plannedPayoutDate)}</strong> (bebas diubah kapan saja).
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2 shrink-0">
@@ -1414,8 +1572,8 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
                   <th className="py-3.5 px-4 text-right">Tarif Normal &amp; Lembur / Jam</th>
                   <th className="py-3.5 px-4 text-right">Total Gaji Kotor Mingguan</th>
                   <th className="py-3.5 px-4">Rekening Pencairan</th>
-                  <th className="py-3.5 px-4 text-center">Status Sunday Payout</th>
-                  <th className="py-3.5 px-4 text-center">Aksi Sunday Payout</th>
+                  <th className="py-3.5 px-4 text-center">Status Pencairan (Flexible Payout)</th>
+                  <th className="py-3.5 px-4 text-center">Aksi Pencairan</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -1511,7 +1669,7 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
                         {row.isFullyPaid ? (
                           <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 text-[10px] font-bold">
                             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                            <span>Paid (Sunday Payout)</span>
+                            <span>Paid (Flexible Payout)</span>
                           </span>
                         ) : row.totalHoursWorked === 0 ? (
                           <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-100 text-slate-500 text-[10px] font-semibold">
@@ -1701,16 +1859,16 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
         />
       )}
 
-      {/* SUB-TAB 3: LAPORAN PENGELUARAN GAJI MINGGUAN (SUNDAY PAYOUT EXPENSE REPORT) */}
+      {/* SUB-TAB 3: LAPORAN PENGELUARAN GAJI MINGGUAN (FLEXIBLE PAYOUT EXPENSE REPORT) */}
       {activeSubTab === 'expenses' && (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
           <div className="p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div>
               <h3 className="text-sm font-bold text-slate-900">
-                Laporan Pengeluaran Gaji Mingguan Part-Time (Sunday Payout Expense Report)
+                Laporan Pengeluaran Gaji Mingguan Part-Time (Flexible Payout Expense Report)
               </h3>
               <p className="text-xs text-slate-500">
-                Rekam jejak seluruh pencairan gaji mingguan karyawan Part-Time yang telah ditandai <strong>Paid</strong>.
+                Rekam jejak seluruh pencairan gaji mingguan karyawan Part-Time beserta Tanggal Aktual Pembayaran yang telah ditandai <strong>Paid</strong>.
               </p>
             </div>
             <div className="px-3.5 py-1.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-extrabold">
@@ -1725,7 +1883,7 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
             <table className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="bg-slate-50 text-slate-600 border-b border-slate-200 uppercase text-[10px] font-bold">
-                  <th className="py-3 px-4">Tanggal Sunday Payout</th>
+                  <th className="py-3 px-4">Tanggal Pencairan Aktual</th>
                   <th className="py-3 px-4">Karyawan Part-Time</th>
                   <th className="py-3 px-4">Periode Kerja (6 Hari)</th>
                   <th className="py-3 px-4 text-center">Jam Normal &amp; Lembur</th>
@@ -1803,8 +1961,215 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
         </div>
       )}
 
-      {/* MODAL SLIP GAJI MINGGUAN PART-TIME (SUNDAY PAYOUT SLIP) */}
+      {/* MODAL KONFIRMASI TANGGAL AKTUAL PEMBAYARAN (FLEXIBLE PAYOUT) */}
+      {Boolean(payoutConfirmModal) && payoutConfirmModal && (() => {
+        const unpaidRowsForBulk = weeklySummaryRows.filter(
+          (r) => r.unpaidLogs.length > 0 && r.totalHoursWorked > 0 && r.unpaidGrossPay > 0
+        );
+        const totalAmountToPay =
+          payoutConfirmModal.mode === 'single' && payoutConfirmModal.row
+            ? payoutConfirmModal.row.unpaidGrossPay
+            : unpaidRowsForBulk.reduce((s, r) => s + r.unpaidGrossPay, 0);
+
+        return (
+          <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+              <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2.5 rounded-xl bg-emerald-100 text-emerald-700">
+                    <Wallet className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-extrabold text-slate-900">
+                      {payoutConfirmModal.mode === 'single'
+                        ? 'Konfirmasi Tanggal Pencairan Gaji Part-Time'
+                        : `Konfirmasi Pencairan Massal (${unpaidRowsForBulk.length} Karyawan)`}
+                    </h3>
+                    <p className="text-[11px] text-slate-500">
+                      Jadwal Cair Fleksibel (Flexible Payout) • Siklus {weekStart} s/d {weekEnd}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPayoutConfirmModal(null)}
+                  className="p-1 rounded-lg text-slate-400 hover:text-slate-700 cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 space-y-1">
+                {payoutConfirmModal.mode === 'single' && payoutConfirmModal.row ? (
+                  <>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-600 font-semibold">Karyawan:</span>
+                      <span className="font-extrabold text-slate-900">
+                        {payoutConfirmModal.row.employee.fullName}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-600 font-semibold">Rekening Tujuan:</span>
+                      <span className="font-bold text-slate-800">
+                        {payoutConfirmModal.row.employee.bankName} •{' '}
+                        {payoutConfirmModal.row.employee.bankAccountNumber || '-'}
+                      </span>
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-slate-600 font-semibold">Jumlah Penerima:</span>
+                    <span className="font-extrabold text-slate-900">
+                      {unpaidRowsForBulk.length} Karyawan Part-Time
+                    </span>
+                  </div>
+                )}
+                <div className="flex items-center justify-between text-xs pt-1 border-t border-emerald-200/70">
+                  <span className="text-emerald-900 font-bold">Total Nominal Dicairkan:</span>
+                  <span className="font-mono text-sm font-extrabold text-emerald-800">
+                    {formatRupiah(totalAmountToPay)}
+                  </span>
+                </div>
+              </div>
+
+              <div className="space-y-3 text-xs">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Tanggal Aktual Pembayaran / Pencairan Gaji
+                  </label>
+                  <input
+                    type="date"
+                    value={payoutConfirmModal.actualPayoutDate}
+                    onChange={(e) =>
+                      setPayoutConfirmModal((prev) =>
+                        prev ? { ...prev, actualPayoutDate: e.target.value } : null
+                      )
+                    }
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-slate-900 font-bold text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                  <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setPayoutConfirmModal((prev) =>
+                          prev ? { ...prev, actualPayoutDate: getJakartaDateString() } : null
+                        )
+                      }
+                      className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-bold cursor-pointer"
+                    >
+                      Hari Ini ({formatIndoDate(getJakartaDateString())})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setPayoutConfirmModal((prev) =>
+                          prev ? { ...prev, actualPayoutDate: plannedPayoutDate } : null
+                        )
+                      }
+                      className="px-2.5 py-1 rounded-lg bg-orange-50 hover:bg-orange-100 text-orange-800 border border-orange-200 text-[10px] font-bold cursor-pointer"
+                    >
+                      Sesuai Rencana ({formatIndoDate(plannedPayoutDate)})
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Metode Pembayaran
+                  </label>
+                  <select
+                    value={payoutConfirmModal.paymentMethod}
+                    onChange={(e) =>
+                      setPayoutConfirmModal((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              paymentMethod: e.target.value as
+                                | 'Transfer Bank'
+                                | 'Tunai / Kas Operasional',
+                            }
+                          : null
+                      )
+                    }
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-slate-900 font-semibold text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  >
+                    <option value="Transfer Bank">Transfer Bank</option>
+                    <option value="Tunai / Kas Operasional">Tunai / Kas Operasional</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                    Catatan Pencairan (Opsional)
+                  </label>
+                  <input
+                    type="text"
+                    value={payoutConfirmModal.notes}
+                    onChange={(e) =>
+                      setPayoutConfirmModal((prev) =>
+                        prev ? { ...prev, notes: e.target.value } : null
+                      )
+                    }
+                    placeholder="Contoh: Pencairan gaji mingguan Part-Time"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-slate-800 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPayoutConfirmModal(null)}
+                  className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const modalData = payoutConfirmModal;
+                    setPayoutConfirmModal(null);
+                    if (modalData.mode === 'single' && modalData.row) {
+                      await executeSingleEmployeePaid(
+                        modalData.row,
+                        modalData.actualPayoutDate,
+                        modalData.paymentMethod,
+                        modalData.notes
+                      );
+                    } else if (modalData.mode === 'bulk') {
+                      await executeBulkMarkPaid(
+                        modalData.actualPayoutDate,
+                        modalData.paymentMethod,
+                        modalData.notes
+                      );
+                    }
+                  }}
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold shadow-md flex items-center gap-1.5 cursor-pointer"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Simpan &amp; Tandai Sudah Dibayar</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* MODAL SLIP GAJI MINGGUAN PART-TIME (FLEXIBLE PAYOUT SLIP) */}
       {Boolean(viewingSlipRow) && viewingSlipRow && (() => {
+        const matchedPayout = safePayouts.find(
+          (p) =>
+            (p.employeeId === viewingSlipRow.employee.id ||
+              p.employee_id === viewingSlipRow.employee.id) &&
+            (p.weekStartDate === weekStart || p.week_start_date === weekStart) &&
+            (p.weekEndDate === weekEnd || p.week_end_date === weekEnd)
+        );
+        const resolvedSlipPayoutDate =
+          matchedPayout?.payoutDate ||
+          matchedPayout?.sundayPayoutDate ||
+          matchedPayout?.sunday_payout_date ||
+          plannedPayoutDate;
+
         const ptSignatories = getPayrollSignatoriesConfig();
         const ptAccountingName =
           ptSignatories.preparedBy?.name && ptSignatories.preparedBy.name.trim()
@@ -1850,10 +2215,10 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
                       SLIP GAJI PART-TIME (MINGGUAN)
                     </div>
                     <h3 className="text-sm sm:text-base font-extrabold text-slate-900">
-                      Periode Mingguan: Senin, {formatIndoDate(weekStart)} – Sabtu, {formatIndoDate(weekEnd)}
+                      Periode Mingguan: {formatIndoDate(weekStart)} – {formatIndoDate(weekEnd)}
                     </h3>
                     <p className="text-xs text-slate-500">
-                      Tas Grosir Import • Siklus Kerja 6 Hari Operasional (Cair Minggu, {formatIndoDate(sundayPayoutDate)})
+                      Tas Grosir Import • Tanggal Pencairan: <strong>{formatIndoDate(resolvedSlipPayoutDate)}</strong> (Flexible Payout)
                     </p>
                   </div>
                 </div>
@@ -1889,10 +2254,10 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
                   </div>
                   <div>
                     <span className="text-[10px] text-slate-400 uppercase font-bold block">
-                      Jadwal Pencairan Minggu
+                      Tanggal Pencairan (Flexible Payout)
                     </span>
                     <span className="font-bold text-orange-700 text-sm">
-                      {formatIndoDate(sundayPayoutDate)}
+                      {formatIndoDate(resolvedSlipPayoutDate)}
                     </span>
                     <span className="block text-[11px] text-slate-500">
                       Status: {viewingSlipRow.isFullyPaid ? 'LUNAS (PAID)' : 'BELUM CAIR (UNPAID)'}
@@ -2164,7 +2529,7 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
                   <div className="flex flex-col justify-between min-h-[125px]">
                     <div>
                       <div className="text-[11px] text-slate-600 mb-0.5">
-                        {ptCity}, {formatIndoDate(sundayPayoutDate)}
+                        {ptCity}, {formatIndoDate(resolvedSlipPayoutDate)}
                       </div>
                       <span className="font-semibold text-slate-800">Prepared by Accounting,</span>
                     </div>

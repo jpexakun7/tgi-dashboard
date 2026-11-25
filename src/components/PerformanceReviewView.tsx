@@ -629,7 +629,7 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
       </div>
 
       {/* KPI Stats Highlight Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         <div className="bg-white p-4.5 rounded-2xl border border-slate-200 shadow-xs flex items-center justify-between">
           <div>
             <span className="text-[11px] font-semibold text-slate-500 block">Rata-rata Skor Kinerja</span>

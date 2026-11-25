@@ -312,7 +312,7 @@ export const PinManagementPanel: React.FC<PinManagementPanelProps> = ({
   const departments = Array.from(new Set(employees.map((e) => e.department)));
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-6 animate-fade-in w-full max-w-full overflow-x-hidden">
       {toastMsg && (
         <div className="fixed top-5 right-5 z-50 flex items-center gap-2.5 bg-slate-900 text-white px-4 py-3 rounded-xl shadow-xl text-xs font-semibold border border-slate-700 animate-in fade-in">
           <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
@@ -458,7 +458,7 @@ export const PinManagementPanel: React.FC<PinManagementPanelProps> = ({
               <Shield className="w-3.5 h-3.5 text-purple-600" />
               Daftar PIN / Password Masing-Masing Akun Pengelola Admin ({(companyConfig.allowedGoogleAdmins || []).length} Akun Admin)
             </h4>
-            <div className="overflow-x-auto border border-slate-200 rounded-xl">
+            <div className="w-full overflow-x-auto border border-slate-200 rounded-xl">
               <table className="w-full text-left text-xs border-collapse">
                 <thead>
                   <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold">
@@ -590,7 +590,7 @@ export const PinManagementPanel: React.FC<PinManagementPanelProps> = ({
           </div>
 
           {/* Employee PIN Table */}
-          <div className="overflow-x-auto border border-slate-200 rounded-xl">
+          <div className="w-full overflow-x-auto border border-slate-200 rounded-xl">
             <table className="w-full text-left text-xs border-collapse">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold">

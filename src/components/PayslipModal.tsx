@@ -80,6 +80,7 @@ export interface OfficialPayslipComputedData {
   weeklyStartDate?: string;
   weeklyEndDate?: string;
   sundayPayoutDate?: string;
+  payoutDateLabel: string;
   periodCutOffLabel: string;
   printCityAndDate: string;
   workDaysCount: number;
@@ -456,6 +457,78 @@ export function computeOfficialPayslipData(params: {
   const weeklyRangeShort = `Senin, ${weeklyStartFormatted} – Sabtu, ${weeklyEndFormatted}`;
   const weeklyPeriodLabel = `Periode Mingguan: ${weeklyRangeShort}`;
 
+  // Resolusi Tanggal Pencairan (Payout Date) untuk Part-Time (Flexible Payout) maupun Bulanan
+  let resolvedPartTimePayoutDate = weeklyCycle.sundayPayoutDate;
+  if (isPartTime) {
+    if (payroll.paymentDate && /^\d{4}-\d{2}-\d{2}$/.test(payroll.paymentDate.slice(0, 10))) {
+      resolvedPartTimePayoutDate = payroll.paymentDate.slice(0, 10);
+    } else {
+      const cycleKey = `${weeklyCycle.startDate}__${weeklyCycle.endDate}`;
+      const fromConfig = companyConfig.partTimePlannedPayoutDates?.[cycleKey];
+      if (fromConfig && /^\d{4}-\d{2}-\d{2}$/.test(fromConfig)) {
+        resolvedPartTimePayoutDate = fromConfig;
+      } else if (typeof window !== 'undefined') {
+        try {
+          // Cek apakah sudah ada record PartTimeWeeklyPayout untuk minggu ini
+          const rawPayouts = localStorage.getItem('tgi_part_time_payouts_data');
+          if (rawPayouts) {
+            const parsedPayouts = JSON.parse(rawPayouts);
+            if (Array.isArray(parsedPayouts)) {
+              const matched = parsedPayouts.find(
+                (p: any) =>
+                  p &&
+                  (p.employeeId === employee.id || p.employee_id === employee.id) &&
+                  (p.weekStartDate === weeklyCycle.startDate || p.week_start_date === weeklyCycle.startDate)
+              );
+              const matchedDate =
+                matched?.payoutDate || matched?.sundayPayoutDate || matched?.sunday_payout_date;
+              if (matchedDate && /^\d{4}-\d{2}-\d{2}$/.test(String(matchedDate).slice(0, 10))) {
+                resolvedPartTimePayoutDate = String(matchedDate).slice(0, 10);
+              }
+            }
+          }
+          // Jika belum dibayar, cek rencana tanggal pencairan manual dari Admin
+          const rawPlanned = localStorage.getItem('tgi_pt_planned_payout_dates');
+          if (rawPlanned) {
+            const parsedPlanned = JSON.parse(rawPlanned);
+            const savedPlanned = parsedPlanned?.[cycleKey];
+            if (savedPlanned && /^\d{4}-\d{2}-\d{2}$/.test(savedPlanned)) {
+              resolvedPartTimePayoutDate = savedPlanned;
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+    }
+  }
+
+  let payoutDateLabel = '';
+  if (isPartTime) {
+    payoutDateLabel = `${formatIndoDate(resolvedPartTimePayoutDate)} (Flexible Payout)`;
+  } else {
+    const periodSetting =
+      companyConfig.periodPayoutDates?.[periodStr] ||
+      companyConfig.periodPayoutDates?.[companyConfig.currentPayrollPeriod];
+    if (payroll.paymentDate && /^\d{4}-\d{2}-\d{2}$/.test(payroll.paymentDate.slice(0, 10))) {
+      payoutDateLabel = formatIndoDate(payroll.paymentDate.slice(0, 10));
+    } else if (
+      periodSetting === 'FLEKSIBEL' ||
+      (companyConfig.payrollPayoutMode === 'flexible' && !periodSetting)
+    ) {
+      payoutDateLabel = 'Fleksibel (Sesuai Jadwal Pencairan Admin)';
+    } else if (periodSetting && /^\d{4}-\d{2}-\d{2}$/.test(periodSetting)) {
+      payoutDateLabel = formatIndoDate(periodSetting);
+    } else if (
+      companyConfig.manualPayrollPayoutDate &&
+      /^\d{4}-\d{2}-\d{2}$/.test(companyConfig.manualPayrollPayoutDate)
+    ) {
+      payoutDateLabel = formatIndoDate(companyConfig.manualPayrollPayoutDate);
+    } else {
+      payoutDateLabel = `Tanggal ${companyConfig.payrollDisbursementDay || 28} ${periodStr}`;
+    }
+  }
+
   const periodCutOffLabel = isPartTime
     ? weeklyRangeShort
     : formatCutOffPeriodRange(
@@ -467,7 +540,7 @@ export function computeOfficialPayslipData(params: {
   const resolvedCity = signatories?.city?.trim() || 'Tangerang';
   const printDateStr =
     isPartTime && !signatories?.customDateText?.trim()
-      ? formatIndoDate(weeklyCycle.sundayPayoutDate)
+      ? formatIndoDate(resolvedPartTimePayoutDate)
       : formatEndOfPeriodPrintDate(periodStr, signatories?.customDateText);
   const printCityAndDate = `${resolvedCity}, ${printDateStr}`;
 
@@ -951,7 +1024,8 @@ export function computeOfficialPayslipData(params: {
     weeklyPeriodLabel,
     weeklyStartDate: weeklyCycle.startDate,
     weeklyEndDate: weeklyCycle.endDate,
-    sundayPayoutDate: weeklyCycle.sundayPayoutDate,
+    sundayPayoutDate: resolvedPartTimePayoutDate,
+    payoutDateLabel,
     periodCutOffLabel,
     printCityAndDate,
     workDaysCount,
@@ -1111,8 +1185,7 @@ export const OfficialPayslipDocument: React.FC<OfficialPayslipDocumentProps> = (
             {data.weeklyPeriodLabel}
           </p>
           <p className="text-[10px] font-semibold text-orange-800 mt-0.5">
-            Siklus Kerja Mingguan (Senin s/d Sabtu) • Jadwal Pencairan Setiap Hari Minggu
-            {data.sundayPayoutDate ? ` (${formatIndoDate(data.sundayPayoutDate)})` : ''}
+            Siklus Kerja Mingguan (Senin s/d Sabtu) • Tanggal Pencairan: <strong>{data.payoutDateLabel}</strong>
           </p>
         </div>
       ) : (
@@ -1120,6 +1193,10 @@ export const OfficialPayslipDocument: React.FC<OfficialPayslipDocumentProps> = (
           <h1 className="text-lg sm:text-xl print:text-lg font-black tracking-[0.25em] uppercase text-slate-950">
             SLIP GAJI
           </h1>
+          <p className="text-[11px] font-semibold text-slate-600 mt-0.5">
+            Periode Cut-Off: <strong>{data.periodCutOffLabel}</strong> • Tanggal Pencairan:{' '}
+            <strong className="text-emerald-800">{data.payoutDateLabel}</strong>
+          </p>
         </div>
       )}
 
@@ -1176,11 +1253,18 @@ export const OfficialPayslipDocument: React.FC<OfficialPayslipDocumentProps> = (
         <div className="space-y-1.5">
           <div className="grid grid-cols-[135px_12px_1fr] items-start">
             <span className="font-semibold text-slate-700">
-              {isPartTime ? 'Periode Mingguan' : 'Periode'}
+              {isPartTime ? 'Periode Mingguan' : 'Periode Cut-Off'}
             </span>
             <span className="text-slate-600">:</span>
             <span className={`font-bold ${isPartTime ? 'text-orange-900' : 'text-slate-950'}`}>
               {data.periodCutOffLabel}
+            </span>
+          </div>
+          <div className="grid grid-cols-[135px_12px_1fr] items-start">
+            <span className="font-semibold text-slate-700">Tanggal Pencairan</span>
+            <span className="text-slate-600">:</span>
+            <span className={`font-bold ${isPartTime ? 'text-orange-800' : 'text-emerald-800'}`}>
+              {data.payoutDateLabel}
             </span>
           </div>
           <div className="grid grid-cols-[135px_12px_1fr] items-start">

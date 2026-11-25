@@ -14,6 +14,7 @@ import {
   CheckCircle2,
   Clock,
   Loader2,
+  Keyboard,
 } from 'lucide-react';
 import { CompanyConfig, Employee } from '../types';
 import {
@@ -71,6 +72,7 @@ export const WebPinGatekeeper: React.FC<WebPinGatekeeperProps> = ({
   const [adminEmail, setAdminEmail] = useState<string>(OFFICIAL_ADMIN_EMAILS[0]);
   const [pinInput, setPinInput] = useState('');
   const [showPin, setShowPin] = useState(false);
+  const [showScreenKeypad, setShowScreenKeypad] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
@@ -267,304 +269,328 @@ export const WebPinGatekeeper: React.FC<WebPinGatekeeperProps> = ({
     return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   };
 
+  const TGI_LOGO_IMAGE_PATH = '/assets/aistudio/WhatsApp_Image_2026-11-25_at_09.41.19_a4e57460.jpeg';
+
   return (
-    <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-slate-950 flex flex-col items-center justify-center p-3 sm:p-6 relative">
-      {/* Subtle Ambient Background */}
-      <div className="pointer-events-none fixed inset-0 overflow-hidden">
-        <div className="absolute -top-24 -left-24 w-72 sm:w-96 h-72 sm:h-96 rounded-full bg-emerald-500/10 blur-3xl" />
-        <div className="absolute -bottom-24 -right-24 w-72 sm:w-96 h-72 sm:h-96 rounded-full bg-teal-500/10 blur-3xl" />
+    <div className="min-h-screen lg:h-screen lg:overflow-hidden w-full max-w-full overflow-x-hidden bg-[#121212] flex items-center justify-center p-4 relative">
+      {/* 1. Background Layar Penuh Proporsional + Lapisan Gelap Transparan (Overlay Hitam 50%) */}
+      <div className="pointer-events-none fixed inset-0 overflow-hidden z-0 bg-[#141414]">
+        {/* Tekstur gelap layar penuh dari gambar asli */}
+        <img
+          src={TGI_LOGO_IMAGE_PATH}
+          alt=""
+          aria-hidden="true"
+          className="absolute inset-0 w-full h-full object-cover object-center scale-110 blur-sm opacity-65 select-none"
+        />
+        {/* Gambar logo dengan ukuran proporsional (tidak terpotong/gepeng) di tengah layar belakang */}
+        <div className="absolute inset-0 flex items-center justify-center p-6">
+          <img
+            src={TGI_LOGO_IMAGE_PATH}
+            alt="TGI Tas Grosir Import Background"
+            className="max-w-full max-h-full w-auto h-auto object-contain opacity-45 select-none"
+          />
+        </div>
+        {/* Lapisan gelap transparan (overlay hitam 50%) & pendaran cahaya emas lembut */}
+        <div className="absolute inset-0 bg-black/50" />
+        <div className="absolute -top-28 -left-28 w-80 sm:w-96 h-80 sm:h-96 rounded-full bg-amber-500/10 blur-3xl" />
+        <div className="absolute -bottom-28 -right-28 w-80 sm:w-96 h-80 sm:h-96 rounded-full bg-yellow-500/10 blur-3xl" />
       </div>
 
-      <div className="relative z-10 w-full max-w-md mx-auto bg-slate-900/95 border border-slate-800 rounded-2xl sm:rounded-3xl shadow-2xl overflow-hidden backdrop-blur-xl">
-        {/* Top Header */}
-        <div className="bg-gradient-to-br from-emerald-950/90 via-slate-900 to-slate-900 p-4 sm:p-6 border-b border-slate-800 text-center">
-          <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center mx-auto mb-3 shadow-inner">
-            <ShieldCheck className="w-6 h-6 sm:w-7 sm:h-7 text-emerald-400" />
+      {/* 3. Kotak Form Login Compact Glassmorphism (max-w-md w-full p-5 sm:p-6 space-y-3) */}
+      <div className="relative z-10 max-w-md w-full mx-auto bg-black/60 backdrop-blur-md border border-amber-500/30 rounded-2xl p-5 sm:p-6 space-y-3 shadow-[0_25px_70px_rgba(0,0,0,0.85)] overflow-hidden">
+        {/* Top Header Kompak dengan Monogram Logo Emas TGI (w-14 h-14) */}
+        <div className="pb-3 border-b border-amber-500/20 text-center space-y-1.5">
+          <div className="w-14 h-14 rounded-xl bg-[#181818] border border-amber-400/40 flex items-center justify-center mx-auto shadow-[0_6px_24px_rgba(245,158,11,0.2)] overflow-hidden p-1">
+            <img
+              src={TGI_LOGO_IMAGE_PATH}
+              alt="Logo TGI Tas Grosir Import"
+              className="w-full h-full object-contain rounded-lg select-none"
+            />
           </div>
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 mb-1.5">
-            <Lock className="w-3 h-3" /> Gerbang Keamanan Terenkripsi
-          </span>
-          <h1 className="text-lg sm:text-xl font-black text-white tracking-tight break-words">
+          <div>
+            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider bg-amber-500/15 text-amber-300 border border-amber-400/30">
+              <Lock className="w-2.5 h-2.5 text-amber-400" /> Gerbang Keamanan Terenkripsi
+            </span>
+          </div>
+          <h1 className="text-base sm:text-lg font-extrabold bg-gradient-to-r from-amber-200 via-yellow-400 to-amber-200 bg-clip-text text-transparent tracking-tight break-words">
             {cleanCompanyName}
           </h1>
-          <p className="text-[11px] sm:text-xs text-slate-400 mt-1">
-            Verifikasi identitas sebelum mengakses data penggajian & HRIS
+          <p className="text-[11px] text-stone-300/80 leading-snug">
+            Verifikasi identitas sebelum mengakses data penggajian &amp; HRIS
           </p>
         </div>
 
         {/* Role Selector Tabs */}
-        <div className="p-3 sm:p-5 pb-0">
-          <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-950 rounded-xl border border-slate-800">
-            <button
-              type="button"
-              onClick={() => {
-                setLoginRole('employee');
-                setErrorMsg(null);
-                setSuccessMsg(null);
-                setPinInput('');
-              }}
-              className={`flex items-center justify-center gap-1.5 py-2.5 px-2 rounded-lg text-xs font-bold transition-all ${
-                loginRole === 'employee'
-                  ? 'bg-emerald-600 text-white shadow-md'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <UserCheck className="w-3.5 h-3.5 shrink-0" />
-              <span className="truncate">Portal Karyawan</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setLoginRole('admin');
-                setErrorMsg(null);
-                setSuccessMsg(null);
-                setPinInput('');
-              }}
-              className={`flex items-center justify-center gap-1.5 py-2.5 px-2 rounded-lg text-xs font-bold transition-all ${
-                loginRole === 'admin'
-                  ? 'bg-indigo-600 text-white shadow-md'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Building2 className="w-3.5 h-3.5 shrink-0" />
-              <span className="truncate">Admin HR / Finance</span>
-            </button>
-          </div>
+        <div className="grid grid-cols-2 gap-1.5 p-1 bg-black/55 rounded-xl border border-amber-500/25">
+          <button
+            type="button"
+            onClick={() => {
+              setLoginRole('employee');
+              setErrorMsg(null);
+              setSuccessMsg(null);
+              setPinInput('');
+            }}
+            className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              loginRole === 'employee'
+                ? 'bg-gradient-to-r from-amber-500 via-yellow-500 to-amber-600 text-stone-950 shadow-md shadow-amber-500/25'
+                : 'text-stone-400 hover:text-amber-200'
+            }`}
+          >
+            <UserCheck className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">Portal Karyawan</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setLoginRole('admin');
+              setErrorMsg(null);
+              setSuccessMsg(null);
+              setPinInput('');
+            }}
+            className={`flex items-center justify-center gap-1.5 py-2 px-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              loginRole === 'admin'
+                ? 'bg-gradient-to-r from-amber-500 via-yellow-500 to-amber-600 text-stone-950 shadow-md shadow-amber-500/25'
+                : 'text-stone-400 hover:text-amber-200'
+            }`}
+          >
+            <Building2 className="w-3.5 h-3.5 shrink-0" />
+            <span className="truncate">Admin HR / Finance</span>
+          </button>
         </div>
 
         {/* Form Body */}
         {isCheckingPinStatus ? (
-          <div className="p-8 sm:p-10 flex flex-col items-center justify-center text-center space-y-3">
-            <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center">
-              <Loader2 className="w-6 h-6 text-emerald-400 animate-spin" />
+          <div className="py-6 flex flex-col items-center justify-center text-center space-y-2.5">
+            <div className="w-10 h-10 rounded-xl bg-amber-500/15 border border-amber-400/35 flex items-center justify-center">
+              <Loader2 className="w-5 h-5 text-amber-400 animate-spin" />
             </div>
-            <div className="text-xs sm:text-sm font-bold text-white">
+            <div className="text-xs font-bold text-amber-100">
               Memeriksa Status PIN Keamanan...
             </div>
-            <p className="text-[11px] text-slate-400 max-w-xs leading-relaxed">
+            <p className="text-[11px] text-stone-400 max-w-xs leading-relaxed">
               Menghubungkan ke database Cloud Supabase untuk memverifikasi konfigurasi PIN perangkat.
             </p>
           </div>
         ) : (
-        <form onSubmit={handleVerify} className="p-4 sm:p-6 space-y-4">
-          {lockoutSeconds > 0 && (
-            <div className="p-3.5 rounded-xl bg-rose-950/90 border border-rose-500/50 flex items-start gap-3 text-rose-200 text-xs">
-              <Clock className="w-5 h-5 text-rose-400 shrink-0 mt-0.5 animate-pulse" />
-              <div className="space-y-1">
-                <div className="font-extrabold text-rose-300">
-                  Akses Diblokir Sementara (Anti Brute-Force)
+          <form onSubmit={handleVerify} className="space-y-3">
+            {lockoutSeconds > 0 && (
+              <div className="p-2.5 rounded-xl bg-rose-950/90 border border-rose-500/50 flex items-start gap-2.5 text-rose-200 text-xs">
+                <Clock className="w-4 h-4 text-rose-400 shrink-0 mt-0.5 animate-pulse" />
+                <div className="space-y-0.5">
+                  <div className="font-extrabold text-rose-300 text-[11px]">
+                    Akses Diblokir Sementara (Anti Brute-Force)
+                  </div>
+                  <p className="text-[10px] text-rose-200/90 leading-relaxed">
+                    Terdeteksi 5 kali percobaan PIN salah. Silakan tunggu{' '}
+                    <span className="font-mono font-black text-white bg-rose-800/80 px-1.5 py-0.5 rounded">
+                      {formatCountdown(lockoutSeconds)}
+                    </span>{' '}
+                    sebelum mencoba kembali.
+                  </p>
                 </div>
-                <p className="text-[11px] text-rose-200/90 leading-relaxed">
-                  Terdeteksi 5 kali percobaan PIN salah berturut-turut. Silakan tunggu{' '}
-                  <span className="font-mono font-black text-white bg-rose-800/80 px-1.5 py-0.5 rounded">
-                    {formatCountdown(lockoutSeconds)}
-                  </span>{' '}
-                  sebelum mencoba kembali.
+              </div>
+            )}
+
+            {loginRole === 'employee' ? (
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-amber-200/80 mb-1">
+                  NIK / ID Karyawan / Email Terdaftar
+                </label>
+                <div className="relative">
+                  <UserCheck className="w-3.5 h-3.5 text-amber-400/80 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    maxLength={100}
+                    disabled={lockoutSeconds > 0}
+                    value={employeeIdentifier}
+                    onChange={(e) => {
+                      setEmployeeIdentifier(e.target.value.slice(0, 100));
+                      setErrorMsg(null);
+                    }}
+                    placeholder="Contoh: TGI-2024-001 atau email@..."
+                    autoComplete="username"
+                    className="w-full pl-9 pr-3 py-2 bg-black/65 border border-amber-500/30 rounded-xl text-xs text-white placeholder-stone-500 focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400/40 transition-colors disabled:opacity-50"
+                  />
+                </div>
+              </div>
+            ) : (
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-amber-200/80 mb-1">
+                  Email Administrator Resmi
+                </label>
+                <div className="relative">
+                  <Mail className="w-3.5 h-3.5 text-amber-400/80 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <select
+                    disabled={lockoutSeconds > 0}
+                    value={adminEmail}
+                    onChange={(e) => {
+                      setAdminEmail(e.target.value);
+                      setErrorMsg(null);
+                    }}
+                    className="w-full pl-9 pr-3 py-2 bg-black/65 border border-amber-500/30 rounded-xl text-xs text-white focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400/40 transition-colors disabled:opacity-50"
+                  >
+                    {OFFICIAL_ADMIN_EMAILS.map((email) => (
+                      <option key={email} value={email} className="bg-stone-900 text-white">
+                        {email}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
+
+            {/* PIN / Password Input */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-[10px] font-bold uppercase tracking-wider text-amber-200/80 flex items-center gap-1">
+                  <KeyRound className="w-3 h-3 text-amber-400" />
+                  {isInitialAdminSetup && loginRole === 'admin'
+                    ? 'Buat PIN / Kata Sandi Admin Baru'
+                    : loginRole === 'admin'
+                    ? 'PIN / Kata Sandi Admin'
+                    : 'PIN Akses Karyawan'}
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setShowScreenKeypad((prev) => !prev)}
+                  className="inline-flex items-center gap-1 text-[10px] font-medium text-amber-300/80 hover:text-amber-200 transition-colors cursor-pointer"
+                >
+                  <Keyboard className="w-3 h-3 text-amber-400" />
+                  <span>{showScreenKeypad ? 'Sembunyikan Keypad' : 'Gunakan Keypad Layar'}</span>
+                </button>
+              </div>
+
+              <div className="relative">
+                <input
+                  ref={inputRef}
+                  type={showPin ? 'text' : 'password'}
+                  maxLength={32}
+                  disabled={lockoutSeconds > 0}
+                  value={pinInput}
+                  onChange={(e) => {
+                    setPinInput(e.target.value.slice(0, 32));
+                    setErrorMsg(null);
+                  }}
+                  placeholder={
+                    isInitialAdminSetup && loginRole === 'admin'
+                      ? 'Minimal 4 karakter / digit'
+                      : 'Masukkan PIN / Password'
+                  }
+                  autoComplete="current-password"
+                  className="w-full pl-3.5 pr-10 py-2.5 bg-black/65 border border-amber-500/30 rounded-xl text-center text-sm sm:text-base font-mono tracking-widest text-amber-100 placeholder:text-xs placeholder:tracking-normal placeholder:font-sans placeholder-stone-500 focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400/40 disabled:opacity-50"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPin((prev) => !prev)}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-amber-400/80 hover:text-amber-200 p-1 cursor-pointer"
+                  title={showPin ? 'Sembunyikan' : 'Tampilkan'}
+                >
+                  {showPin ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+            </div>
+
+            {/* Confirm PIN when initial setup */}
+            {isInitialAdminSetup && loginRole === 'admin' && (
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-amber-200/80 mb-1">
+                  Konfirmasi PIN / Kata Sandi Admin Baru
+                </label>
+                <input
+                  type={showPin ? 'text' : 'password'}
+                  maxLength={32}
+                  disabled={lockoutSeconds > 0}
+                  value={confirmNewPin}
+                  onChange={(e) => {
+                    setConfirmNewPin(e.target.value.slice(0, 32));
+                    setErrorMsg(null);
+                  }}
+                  placeholder="Ketik ulang PIN / Kata Sandi"
+                  className="w-full px-3.5 py-2 bg-black/65 border border-amber-500/30 rounded-xl text-center text-xs sm:text-sm font-mono tracking-widest text-amber-100 placeholder:text-xs placeholder:tracking-normal placeholder:font-sans placeholder-stone-500 focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400/40 disabled:opacity-50"
+                />
+                <p className="text-[10px] text-amber-300/85 mt-1 leading-snug">
+                  PIN/Kata Sandi di-hash SHA-256 &amp; disimpan terpusat ke Cloud Supabase.
                 </p>
               </div>
-            </div>
-          )}
+            )}
 
-          {loginRole === 'employee' ? (
-            <div>
-              <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
-                NIK / ID Karyawan / Email Terdaftar
-              </label>
-              <div className="relative">
-                <UserCheck className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  maxLength={100}
-                  disabled={lockoutSeconds > 0}
-                  value={employeeIdentifier}
-                  onChange={(e) => {
-                    setEmployeeIdentifier(e.target.value.slice(0, 100));
-                    setErrorMsg(null);
-                  }}
-                  placeholder="Contoh: TGI-2024-001 atau email@..."
-                  autoComplete="username"
-                  className="w-full pl-10 pr-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs sm:text-sm text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500 transition-colors disabled:opacity-50"
-                />
+            {/* Error / Success Alert */}
+            {errorMsg && (
+              <div className="p-2.5 rounded-xl bg-rose-500/15 border border-rose-500/35 flex items-start gap-2 text-rose-300 text-[11px]">
+                <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0 mt-0.5" />
+                <span className="leading-snug break-words">{errorMsg}</span>
               </div>
-              <p className="text-[10px] text-slate-500 mt-1">
-                Data karyawan tidak ditampilkan sebelum identitas & PIN diverifikasi oleh server.
-              </p>
-            </div>
-          ) : (
-            <div>
-              <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
-                Email Administrator Resmi
-              </label>
-              <div className="relative">
-                <Mail className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                <select
+            )}
+
+            {successMsg && (
+              <div className="p-2.5 rounded-xl bg-amber-500/15 border border-amber-400/35 flex items-start gap-2 text-amber-200 text-[11px]">
+                <CheckCircle2 className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+                <span className="leading-snug break-words">{successMsg}</span>
+              </div>
+            )}
+
+            {/* 2. Opsional Numpad Virtual (Disembunyikan Secara Default) */}
+            {showScreenKeypad && (
+              <div className="grid grid-cols-3 gap-1.5 pt-0.5">
+                {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((digit) => (
+                  <button
+                    key={digit}
+                    type="button"
+                    disabled={lockoutSeconds > 0}
+                    onClick={() => handleDigitClick(digit)}
+                    className="py-1.5 sm:py-2 rounded-lg bg-white/5 hover:bg-amber-500/20 active:scale-95 border border-amber-500/25 hover:border-amber-400/50 text-amber-50 font-bold text-xs sm:text-sm transition-all cursor-pointer disabled:opacity-40"
+                  >
+                    {digit}
+                  </button>
+                ))}
+                <button
+                  type="button"
                   disabled={lockoutSeconds > 0}
-                  value={adminEmail}
-                  onChange={(e) => {
-                    setAdminEmail(e.target.value);
-                    setErrorMsg(null);
-                  }}
-                  className="w-full pl-10 pr-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs sm:text-sm text-white focus:outline-none focus:border-indigo-500 transition-colors disabled:opacity-50"
+                  onClick={handleClear}
+                  className="py-1.5 sm:py-2 rounded-lg bg-black/50 hover:bg-rose-950/60 border border-rose-500/25 text-rose-300 font-bold text-[11px] transition-all cursor-pointer disabled:opacity-40"
                 >
-                  {OFFICIAL_ADMIN_EMAILS.map((email) => (
-                    <option key={email} value={email} className="bg-slate-900 text-white">
-                      {email}
-                    </option>
-                  ))}
-                </select>
+                  Reset
+                </button>
+                <button
+                  type="button"
+                  disabled={lockoutSeconds > 0}
+                  onClick={() => handleDigitClick('0')}
+                  className="py-1.5 sm:py-2 rounded-lg bg-white/5 hover:bg-amber-500/20 active:scale-95 border border-amber-500/25 hover:border-amber-400/50 text-amber-50 font-bold text-xs sm:text-sm transition-all cursor-pointer disabled:opacity-40"
+                >
+                  0
+                </button>
+                <button
+                  type="button"
+                  disabled={lockoutSeconds > 0}
+                  onClick={handleBackspace}
+                  className="py-1.5 sm:py-2 rounded-lg bg-black/50 hover:bg-amber-500/15 border border-amber-500/25 text-amber-300 flex items-center justify-center transition-all cursor-pointer disabled:opacity-40"
+                  title="Hapus 1 karakter"
+                >
+                  <Delete className="w-3.5 h-3.5" />
+                </button>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* PIN / Password Input */}
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
-                <KeyRound className="w-3.5 h-3.5 text-emerald-400" />
-                {isInitialAdminSetup && loginRole === 'admin'
-                  ? 'Buat PIN / Kata Sandi Admin Baru'
+            {/* Submit Button dengan Aksen Emas Mewah */}
+            <button
+              type="submit"
+              disabled={isVerifying || lockoutSeconds > 0}
+              className="w-full py-2.5 px-4 rounded-xl font-extrabold text-xs sm:text-sm text-stone-950 bg-gradient-to-r from-amber-400 via-yellow-500 to-amber-600 hover:from-amber-300 hover:via-yellow-400 hover:to-amber-500 shadow-lg shadow-amber-500/25 border border-amber-300/50 flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-50"
+            >
+              <span>
+                {lockoutSeconds > 0
+                  ? `Terkunci (${formatCountdown(lockoutSeconds)})`
+                  : isVerifying
+                  ? 'Memverifikasi Kredensial...'
+                  : isInitialAdminSetup && loginRole === 'admin'
+                  ? 'Simpan & Masuk Panel Admin'
                   : loginRole === 'admin'
-                  ? 'PIN / Kata Sandi Admin'
-                  : 'PIN Akses Karyawan'}
-              </label>
-              {isInitialAdminSetup && loginRole === 'admin' && (
-                <span className="text-[10px] font-semibold text-amber-400">Setup Awal</span>
-              )}
-            </div>
-
-            <div className="relative">
-              <input
-                ref={inputRef}
-                type={showPin ? 'text' : 'password'}
-                maxLength={32}
-                disabled={lockoutSeconds > 0}
-                value={pinInput}
-                onChange={(e) => {
-                  setPinInput(e.target.value.slice(0, 32));
-                  setErrorMsg(null);
-                }}
-                placeholder={
-                  isInitialAdminSetup && loginRole === 'admin'
-                    ? 'Minimal 4 karakter / digit'
-                    : 'Masukkan PIN / Password'
-                }
-                autoComplete="current-password"
-                className="w-full pl-4 pr-11 py-3 bg-slate-950 border border-slate-800 rounded-xl text-center text-base sm:text-lg font-mono tracking-widest text-white placeholder:text-xs placeholder:tracking-normal placeholder:font-sans placeholder-slate-600 focus:outline-none focus:border-emerald-500 disabled:opacity-50"
-              />
-              <button
-                type="button"
-                onClick={() => setShowPin((prev) => !prev)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white p-1"
-                title={showPin ? 'Sembunyikan' : 'Tampilkan'}
-              >
-                {showPin ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-          </div>
-
-          {/* Confirm PIN when initial setup */}
-          {isInitialAdminSetup && loginRole === 'admin' && (
-            <div>
-              <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
-                Konfirmasi PIN / Kata Sandi Admin Baru
-              </label>
-              <input
-                type={showPin ? 'text' : 'password'}
-                maxLength={32}
-                disabled={lockoutSeconds > 0}
-                value={confirmNewPin}
-                onChange={(e) => {
-                  setConfirmNewPin(e.target.value.slice(0, 32));
-                  setErrorMsg(null);
-                }}
-                placeholder="Ketik ulang PIN / Kata Sandi"
-                className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-center text-sm font-mono tracking-widest text-white placeholder:text-xs placeholder:tracking-normal placeholder:font-sans placeholder-slate-600 focus:outline-none focus:border-indigo-500 disabled:opacity-50"
-              />
-              <p className="text-[10px] text-amber-300/90 mt-1.5 leading-relaxed">
-                Sistem tidak menggunakan password bawaan (hardcode). PIN/Kata Sandi Anda akan di-hash dengan SHA-256 & disimpan ke fungsi RPC Supabase.
-              </p>
-            </div>
-          )}
-
-          {/* Error / Success Alert */}
-          {errorMsg && (
-            <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 flex items-start gap-2 text-rose-300 text-xs">
-              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-              <span className="leading-relaxed break-words">{errorMsg}</span>
-            </div>
-          )}
-
-          {successMsg && (
-            <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-start gap-2 text-emerald-300 text-xs">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-              <span className="leading-relaxed break-words">{successMsg}</span>
-            </div>
-          )}
-
-          {/* Responsive Numpad */}
-          <div className="grid grid-cols-3 gap-2 pt-1">
-            {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((digit) => (
-              <button
-                key={digit}
-                type="button"
-                disabled={lockoutSeconds > 0}
-                onClick={() => handleDigitClick(digit)}
-                className="py-2.5 sm:py-3 rounded-xl bg-slate-800/80 hover:bg-slate-800 active:scale-95 border border-slate-700/70 text-white font-bold text-sm sm:text-base transition-all disabled:opacity-40"
-              >
-                {digit}
-              </button>
-            ))}
-            <button
-              type="button"
-              disabled={lockoutSeconds > 0}
-              onClick={handleClear}
-              className="py-2.5 sm:py-3 rounded-xl bg-slate-900 hover:bg-rose-950/50 border border-slate-800 text-rose-400 font-bold text-xs transition-all disabled:opacity-40"
-            >
-              Reset
+                  ? 'Verifikasi & Masuk Panel Admin'
+                  : 'Verifikasi & Buka Portal Karyawan'}
+              </span>
+              <ArrowRight className="w-4 h-4 shrink-0" />
             </button>
-            <button
-              type="button"
-              disabled={lockoutSeconds > 0}
-              onClick={() => handleDigitClick('0')}
-              className="py-2.5 sm:py-3 rounded-xl bg-slate-800/80 hover:bg-slate-800 active:scale-95 border border-slate-700/70 text-white font-bold text-sm sm:text-base transition-all disabled:opacity-40"
-            >
-              0
-            </button>
-            <button
-              type="button"
-              disabled={lockoutSeconds > 0}
-              onClick={handleBackspace}
-              className="py-2.5 sm:py-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 flex items-center justify-center transition-all disabled:opacity-40"
-              title="Hapus 1 karakter"
-            >
-              <Delete className="w-4 h-4" />
-            </button>
-          </div>
-
-          {/* Submit Button */}
-          <button
-            type="submit"
-            disabled={isVerifying || lockoutSeconds > 0}
-            className={`w-full py-3 px-4 rounded-xl font-bold text-xs sm:text-sm text-white shadow-lg flex items-center justify-center gap-2 transition-all ${
-              loginRole === 'admin'
-                ? 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-600/20'
-                : 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-600/20'
-            } disabled:opacity-50`}
-          >
-            <span>
-              {lockoutSeconds > 0
-                ? `Terkunci (${formatCountdown(lockoutSeconds)})`
-                : isVerifying
-                ? 'Memverifikasi Kredensial...'
-                : isInitialAdminSetup && loginRole === 'admin'
-                ? 'Simpan & Masuk Panel Admin'
-                : loginRole === 'admin'
-                ? 'Verifikasi & Masuk Panel Admin'
-                : 'Verifikasi & Buka Portal Karyawan'}
-            </span>
-            <ArrowRight className="w-4 h-4 shrink-0" />
-          </button>
-        </form>
+          </form>
         )}
       </div>
     </div>

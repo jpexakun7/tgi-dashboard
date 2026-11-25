@@ -422,7 +422,7 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
       setAntiFakeAudit(audit);
       setGpsStatus('locked');
       setGpsErrorMessage(null);
-      setLastGpsUpdatedTime(`${getJakartaTimeString(new Date(), true)} WIB`);
+      setLastGpsUpdatedTime(getJakartaTimeString(new Date(), true).replace(/\s*WIB$/i, ''));
 
       if (dist <= OFFICE_REFERENCE_COORDS.maxRadiusMeters && !audit.isFakeDetected) {
         setBlockedAttemptAlert(null);
@@ -1193,142 +1193,150 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
         </div>
       </div>
 
-      {/* Main Grid: Left = Live Camera Viewfinder with Real-Time Clock & GPS HUD; Right = Controls, Geofence 25m & Anti-Fake GPS Shield */}
+      {/* Main Grid: Left = Clean Live Camera Viewfinder + Separated GPS Info Cards Below; Right = Controls, Geofence 25m & Anti-Fake GPS Shield */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-0">
-        {/* LEFT COLUMN (7 cols): LIVE CAMERA VIEWPORT + REAL-TIME CLOCK & GPS OVERLAY */}
-        <div className="lg:col-span-7 relative bg-black min-h-[380px] sm:min-h-[480px] flex flex-col justify-between overflow-hidden border-b lg:border-b-0 lg:border-r border-slate-800">
-          {/* Live Video Element */}
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            muted
-            className={`absolute inset-0 w-full h-full object-cover ${
-              facingMode === 'user' ? 'scale-x-[-1]' : ''
-            } ${isCameraActive ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
-          />
+        {/* LEFT COLUMN (7 cols): CLEAN LIVE CAMERA VIEWPORT + GPS CARDS BELOW VIDEO */}
+        <div className="lg:col-span-7 flex flex-col border-b lg:border-b-0 lg:border-r border-slate-800 bg-slate-950">
+          {/* 1. DEDICATED CAMERA PREVIEW BOX (Clean Face Viewport without GPS Card Overlays) */}
+          <div className="relative w-full bg-black aspect-[3/4] sm:aspect-[4/3] min-h-[340px] sm:min-h-[420px] overflow-hidden">
+            {/* Live Video Element */}
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+              className={`absolute inset-0 w-full h-full object-cover ${
+                facingMode === 'user' ? 'scale-x-[-1]' : ''
+              } ${isCameraActive ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+            />
 
-          {/* Fallback Visual Portrait when physical webcam is unavailable */}
-          {!isCameraActive && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-b from-slate-900 via-slate-900 to-emerald-950/80 p-4 sm:p-6">
-              <img
-                src={
-                  currentEmployee.avatarUrl ||
-                  'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=600&h=600&q=80'
-                }
-                alt={currentEmployee.fullName}
-                className="w-36 h-36 sm:w-52 sm:h-52 rounded-3xl object-cover ring-4 ring-emerald-500/40 shadow-2xl"
-              />
-              {cameraFallbackReason && (
-                <p className="text-[10px] sm:text-[11px] text-slate-300 text-center max-w-md mt-2.5 bg-slate-950/80 px-3 py-1.5 rounded-xl border border-slate-800">
-                  {cameraFallbackReason}
-                </p>
-              )}
+            {/* Fallback Visual Portrait when physical webcam is unavailable */}
+            {!isCameraActive && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-b from-slate-900 via-slate-900 to-emerald-950/80 p-4 sm:p-6">
+                <img
+                  src={
+                    currentEmployee.avatarUrl ||
+                    'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=600&h=600&q=80'
+                  }
+                  alt={currentEmployee.fullName}
+                  className="w-36 h-36 sm:w-52 sm:h-52 rounded-3xl object-cover ring-4 ring-emerald-500/40 shadow-2xl"
+                />
+                {cameraFallbackReason && (
+                  <p className="text-[10px] sm:text-[11px] text-slate-300 text-center max-w-md mt-2.5 bg-slate-950/80 px-3 py-1.5 rounded-xl border border-slate-800">
+                    {cameraFallbackReason}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Face Framing Reticle Guide */}
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+              <div
+                className={`w-48 h-60 sm:w-60 sm:h-72 rounded-3xl border-2 border-dashed relative ${
+                  canSubmitAttendance ? 'border-emerald-400/60' : 'border-rose-400/60'
+                }`}
+              >
+                <div
+                  className={`absolute -top-1 -left-1 w-6 h-6 border-t-4 border-l-4 rounded-tl-xl ${
+                    canSubmitAttendance ? 'border-emerald-400' : 'border-rose-400'
+                  }`}
+                />
+                <div
+                  className={`absolute -top-1 -right-1 w-6 h-6 border-t-4 border-r-4 rounded-tr-xl ${
+                    canSubmitAttendance ? 'border-emerald-400' : 'border-rose-400'
+                  }`}
+                />
+                <div
+                  className={`absolute -bottom-1 -left-1 w-6 h-6 border-b-4 border-l-4 rounded-bl-xl ${
+                    canSubmitAttendance ? 'border-emerald-400' : 'border-rose-400'
+                  }`}
+                />
+                <div
+                  className={`absolute -bottom-1 -right-1 w-6 h-6 border-b-4 border-r-4 rounded-br-xl ${
+                    canSubmitAttendance ? 'border-emerald-400' : 'border-rose-400'
+                  }`}
+                />
+              </div>
             </div>
-          )}
 
-          {/* Face Framing Reticle Guide */}
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-            <div
-              className={`w-44 h-56 sm:w-60 sm:h-72 rounded-3xl border-2 border-dashed relative ${
-                canSubmitAttendance ? 'border-emerald-400/60' : 'border-rose-400/60'
-              }`}
-            >
-              <div
-                className={`absolute -top-1 -left-1 w-6 h-6 border-t-4 border-l-4 rounded-tl-xl ${
-                  canSubmitAttendance ? 'border-emerald-400' : 'border-rose-400'
-                }`}
-              />
-              <div
-                className={`absolute -top-1 -right-1 w-6 h-6 border-t-4 border-r-4 rounded-tr-xl ${
-                  canSubmitAttendance ? 'border-emerald-400' : 'border-rose-400'
-                }`}
-              />
-              <div
-                className={`absolute -bottom-1 -left-1 w-6 h-6 border-b-4 border-l-4 rounded-bl-xl ${
-                  canSubmitAttendance ? 'border-emerald-400' : 'border-rose-400'
-                }`}
-              />
-              <div
-                className={`absolute -bottom-1 -right-1 w-6 h-6 border-b-4 border-r-4 rounded-br-xl ${
-                  canSubmitAttendance ? 'border-emerald-400' : 'border-rose-400'
-                }`}
-              />
+            {/* Small Top-Left Badge: LIVE KAMERA */}
+            <div className="absolute top-3 left-3 z-10 max-w-[calc(100%-1.5rem)]">
+              <div className="inline-flex items-center gap-1.5 bg-slate-950/75 backdrop-blur-md px-2.5 py-1 rounded-lg border border-white/15 shadow-sm max-w-full">
+                <Radio className="w-3 h-3 text-emerald-400 animate-pulse shrink-0" />
+                <span className="text-[10px] font-bold tracking-wide text-emerald-300 uppercase shrink-0">
+                  {isCameraActive ? 'LIVE KAMERA' : 'SENSOR WAJAH'}
+                </span>
+                <span className="text-slate-500 shrink-0">•</span>
+                <span className="text-[10px] font-mono text-white font-semibold truncate">
+                  {currentEmployee.fullName} ({currentEmployee.nik})
+                </span>
+              </div>
+            </div>
+
+            {/* Small Bottom-Left Watermark: Real-Time Clock & Date */}
+            <div className="absolute bottom-3 left-3 z-10 max-w-[calc(100%-1.5rem)] pointer-events-none">
+              <div className="bg-slate-950/75 backdrop-blur-md px-2.5 py-1.5 rounded-xl border border-white/15 shadow-sm">
+                <div className="flex items-center gap-1.5">
+                  <Clock className="w-3 h-3 text-emerald-400 shrink-0" />
+                  <span className="text-xs sm:text-sm font-mono font-extrabold text-white tracking-tight tabular-nums">
+                    {timeWithSecondsStr}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1 text-[10px] font-medium text-emerald-200 mt-0.5">
+                  <Calendar className="w-2.5 h-2.5 text-emerald-400 shrink-0" />
+                  <span className="truncate">{dayDateStr}</span>
+                </div>
+              </div>
             </div>
           </div>
 
-          {/* TOP HUD OVERLAY: LIVE STATUS + GEOFENCE 25M BADGE */}
-          <div className="relative z-10 p-3 sm:p-4 bg-gradient-to-b from-slate-950/90 via-slate-950/50 to-transparent flex flex-wrap items-center justify-between gap-1.5 sm:gap-2">
-            <div className="flex items-center gap-1.5 sm:gap-2 bg-slate-950/80 backdrop-blur-md px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-xl border border-white/15 min-w-0 max-w-full">
-              <Radio className="w-3.5 h-3.5 text-emerald-400 animate-pulse shrink-0" />
-              <span className="text-[10px] sm:text-[11px] font-bold tracking-wide text-emerald-300 uppercase shrink-0">
-                {isCameraActive ? 'LIVE KAMERA' : 'SENSOR WAJAH'}
-              </span>
-              <span className="text-slate-500 shrink-0">•</span>
-              <span className="text-[10px] sm:text-[11px] font-mono text-white font-semibold truncate">
-                {currentEmployee.fullName} ({currentEmployee.nik})
-              </span>
-            </div>
-
-            <div
-              className={`flex items-center gap-1.5 backdrop-blur-md px-2.5 sm:px-3 py-1 sm:py-1.5 rounded-xl border text-[10px] sm:text-[11px] font-bold ${
-                canSubmitAttendance
-                  ? 'bg-emerald-950/85 border-emerald-500/40 text-emerald-300'
-                  : 'bg-rose-950/90 border-rose-500/50 text-rose-300'
-              }`}
-            >
-              {canSubmitAttendance ? (
-                <>
-                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                  <span>RADIUS ≤25M & GPS VALID</span>
-                </>
-              ) : (
-                <>
-                  <Lock className="w-3.5 h-3.5 text-rose-400 shrink-0" />
-                  <span>
-                    {isFakeGpsDetected
+          {/* 2. SEPARATED GPS & GEOFENCE STATUS CARDS (Placed Below Camera Viewport so Face is Never Covered) */}
+          <div className="p-3.5 sm:p-4 bg-slate-950 border-t border-slate-800 space-y-2.5">
+            {/* Status Badge Row: RADIUS <=25M & GPS VALID + DALAM RADIUS KANTOR */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {/* Badge 1: Status Validasi Radius & GPS */}
+              <div
+                className={`p-2.5 sm:p-3 rounded-xl border flex items-center gap-2.5 ${
+                  canSubmitAttendance
+                    ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300'
+                    : 'bg-rose-950/70 border-rose-500/50 text-rose-300'
+                }`}
+              >
+                {canSubmitAttendance ? (
+                  <ShieldCheck className="w-5 h-5 text-emerald-400 shrink-0" />
+                ) : (
+                  <Lock className="w-5 h-5 text-rose-400 shrink-0" />
+                )}
+                <div className="min-w-0">
+                  <div className="text-[10px] uppercase tracking-wider font-semibold text-slate-400">
+                    Status Geofence & Kamera
+                  </div>
+                  <div className="text-xs font-extrabold truncate">
+                    {canSubmitAttendance
+                      ? 'RADIUS ≤25M & GPS VALID'
+                      : isFakeGpsDetected
                       ? 'FAKE GPS — ABSEN DIBLOKIR'
                       : distanceFromOffice !== null && distanceFromOffice > 25
                       ? `DI LUAR 25M (${distanceFromOffice}m)`
                       : 'MENUNGGU KUNCI GPS HP'}
-                  </span>
-                </>
-              )}
-            </div>
-          </div>
-
-          {/* BOTTOM HUD OVERLAY: REAL-TIME CLOCK, DATE & LIVE PHONE GPS LOCATION */}
-          <div className="relative z-10 p-3 sm:p-4 pt-8 bg-gradient-to-t from-slate-950 via-slate-950/90 to-transparent space-y-2">
-            {/* Real-Time Clock & Date Row */}
-            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-2 border-b border-white/15 pb-2">
-              <div className="min-w-0">
-                <div className="flex items-center gap-1.5 text-[10px] sm:text-[11px] font-semibold text-emerald-400 uppercase tracking-wider">
-                  <Clock className="w-3 h-3 sm:w-3.5 sm:h-3.5 shrink-0" />
-                  <span className="truncate">Jam & Tanggal Real-Time</span>
-                </div>
-                <div className="text-xl sm:text-3xl font-mono font-extrabold text-white tracking-tight mt-0.5 tabular-nums">
-                  {timeWithSecondsStr}
-                </div>
-                <div className="flex items-center gap-1.5 text-[11px] sm:text-xs font-semibold text-emerald-200 mt-0.5">
-                  <Calendar className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-emerald-400 shrink-0" />
-                  <span className="truncate">{dayDateStr}</span>
+                  </div>
                 </div>
               </div>
 
-              {/* GPS Coordinate & 25m Distance Pill */}
+              {/* Badge 2: Dalam Radius Kantor & Koordinat GPS */}
               <div
-                className={`backdrop-blur-md px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl border text-left sm:text-right min-w-0 ${
+                className={`p-2.5 sm:p-3 rounded-xl border min-w-0 ${
                   canSubmitAttendance
                     ? 'bg-slate-900/90 border-emerald-500/40'
-                    : 'bg-rose-950/85 border-rose-500/50'
+                    : 'bg-rose-950/60 border-rose-500/50'
                 }`}
               >
                 <div
-                  className={`flex items-center sm:justify-end gap-1 text-[10px] font-bold uppercase ${
+                  className={`flex items-center gap-1 text-[10px] font-bold uppercase ${
                     canSubmitAttendance ? 'text-emerald-400' : 'text-rose-300'
                   }`}
                 >
-                  <MapPin className="w-3 h-3 shrink-0" />
+                  <MapPin className="w-3.5 h-3.5 shrink-0" />
                   <span className="truncate">
                     {gpsStatus === 'locked'
                       ? isFakeGpsDetected
@@ -1346,11 +1354,11 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
                     ? `${gpsCoords.latitude.toFixed(7)}°, ${gpsCoords.longitude.toFixed(7)}°`
                     : 'Koordinat GPS Belum Terkunci'}
                 </div>
-                <div className="text-[10px] text-slate-200 font-mono tabular-nums">
+                <div className="text-[10px] text-slate-300 font-mono tabular-nums mt-0.5">
                   {gpsCoords && distanceFromOffice !== null ? (
                     <>
-                      Jarak ke Kantor: <strong>{distanceFromOffice}m</strong> (Maks:{' '}
-                      <strong>25m</strong>)
+                      Jarak ke Kantor: <strong className="text-white">{distanceFromOffice}m</strong> (Maks:{' '}
+                      <strong className="text-emerald-300">25m</strong>)
                     </>
                   ) : (
                     <span>Wajib radius ≤ 25m dari titik kantor</span>
@@ -1359,8 +1367,8 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
               </div>
             </div>
 
-            {/* Detailed Street Address from Phone GPS */}
-            <div className="bg-slate-900/90 backdrop-blur-md p-2.5 sm:p-3 rounded-xl border border-white/10 flex items-start gap-2">
+            {/* Card 3: Detail Lokasi GPS HP */}
+            <div className="bg-slate-900/90 p-2.5 sm:p-3 rounded-xl border border-slate-800 flex items-start gap-2.5">
               <MapPin className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center justify-between gap-1">
@@ -1369,7 +1377,7 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
                   </span>
                   {lastGpsUpdatedTime && (
                     <span className="text-[10px] font-mono text-slate-400 tabular-nums">
-                      Update: {lastGpsUpdatedTime} WIB
+                      Update: {lastGpsUpdatedTime.replace(/\s*WIB$/i, '')} WIB
                     </span>
                   )}
                 </div>

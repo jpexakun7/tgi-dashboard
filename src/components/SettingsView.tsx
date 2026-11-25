@@ -560,7 +560,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   });
 
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-6 bg-slate-50 min-h-screen">
+    <div className="p-3 sm:p-6 max-w-7xl w-full max-w-full overflow-x-hidden mx-auto space-y-6 bg-slate-50 min-h-screen">
       {/* Toast Notification */}
       {toastMessage && (
         <div className="fixed top-5 right-5 z-50 flex items-center gap-2.5 bg-slate-900 text-white px-4 py-3 rounded-xl shadow-xl text-xs font-semibold animate-fade-in border border-slate-700">
@@ -605,7 +605,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           2. "Matriks Granular RBAC (Operasi CRUD)"
           3. "Pengaturan Akun & Akses Pengguna"
           4. "Konfigurasi Umum Sistem & Payroll" */}
-      <div className="flex items-center gap-2 border-b border-slate-200 pb-px overflow-x-auto">
+      <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 pb-px overflow-x-auto max-w-full">
         <button
           type="button"
           onClick={() => setActiveSubTab('pin_security')}
@@ -769,7 +769,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
 
             {/* Quick Stats Banner */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 text-xs">
               <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
                 <span className="text-slate-500 block text-[11px]">Total Akun Terdaftar</span>
                 <span className="text-lg font-bold text-slate-900">{userAccounts.length} Pengguna</span>
@@ -836,7 +836,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
           {/* User Accounts Table */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-            <div className="overflow-x-auto">
+            <div className="w-full overflow-x-auto">
               <table className="w-full text-left text-xs border-collapse">
                 <thead>
                   <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold">
@@ -1062,7 +1062,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
               <div>
                 <label className="block text-slate-700 font-bold mb-1 text-emerald-800">
-                  Tanggal Pencairan Gaji (Payday)
+                  Tanggal Default Pencairan (Payday)
                 </label>
                 <input
                   type="number"
@@ -1078,8 +1078,101 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   className="w-full p-2.5 bg-emerald-50/60 border border-emerald-300 rounded-xl font-extrabold text-emerald-800 focus:border-emerald-500"
                 />
                 <span className="text-[10px] text-emerald-600 font-semibold mt-1 block">
-                  Default: Tanggal 28 setiap bulan
+                  Acuan Tanggal Default (Tidak memicu denda/warning jika bergeser)
                 </span>
+              </div>
+            </div>
+
+            {/* Pengaturan Jadwal Pencairan Gaji Bulanan Fleksibel */}
+            <div className="mt-4 pt-4 border-t border-slate-100 bg-emerald-50/40 p-4 rounded-xl border border-emerald-200/80 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <h4 className="text-xs font-extrabold text-emerald-950">
+                    Pengaturan Tanggal Pencairan Gaji Bulanan (Fleksibel &amp; Tanpa Warning Keterlambatan)
+                  </h4>
+                  <p className="text-[11px] text-emerald-800">
+                    Tanggal Cut-Off Absensi tetap di <strong>Tanggal {formData.cutOffEndDay || 25}</strong>, namun tanggal gajian dapat diatur manual per periode atau dipilih mode <strong>&ldquo;Fleksibel / Tidak Menentu&rdquo;</strong>.
+                  </p>
+                </div>
+                <span className="px-2.5 py-1 rounded-full bg-white border border-emerald-300 text-emerald-800 text-[10px] font-extrabold shrink-0">
+                  Cut-Off Tetap Tgl {formData.cutOffEndDay || 25}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                <div>
+                  <label className="block text-slate-700 font-bold mb-1">
+                    Mode Jadwal Pencairan Gaji Bulanan
+                  </label>
+                  <select
+                    value={formData.payrollPayoutMode || 'manual_date'}
+                    onChange={(e) => {
+                      const nextMode = e.target.value as 'fixed_day' | 'manual_date' | 'flexible';
+                      const nextPeriodDates = { ...(formData.periodPayoutDates || {}) };
+                      if (nextMode === 'flexible' && formData.currentPayrollPeriod) {
+                        nextPeriodDates[formData.currentPayrollPeriod] = 'FLEKSIBEL';
+                      }
+                      setFormData({
+                        ...formData,
+                        payrollPayoutMode: nextMode,
+                        periodPayoutDates: nextPeriodDates,
+                      });
+                    }}
+                    className="w-full p-2.5 bg-white border border-emerald-300 rounded-xl font-bold text-slate-900 focus:border-emerald-500 cursor-pointer"
+                  >
+                    <option value="manual_date">
+                      Tanggal Manual / Fleksibel per Periode (Pilih Tanggal Bebas)
+                    </option>
+                    <option value="flexible">
+                      Fleksibel / Tidak Menentu (Mengikuti Jadwal Pencairan Admin)
+                    </option>
+                    <option value="fixed_day">
+                      Tanggal Tetap Setiap Bulan (Tanggal {formData.payrollDisbursementDay || 28})
+                    </option>
+                  </select>
+                </div>
+
+                {(formData.payrollPayoutMode || 'manual_date') !== 'flexible' ? (
+                  <div>
+                    <label className="block text-slate-700 font-bold mb-1">
+                      Pilih Tanggal Pencairan Manual ({formData.currentPayrollPeriod})
+                    </label>
+                    <input
+                      type="date"
+                      value={
+                        (formData.periodPayoutDates?.[formData.currentPayrollPeriod] &&
+                        formData.periodPayoutDates[formData.currentPayrollPeriod] !== 'FLEKSIBEL'
+                          ? formData.periodPayoutDates[formData.currentPayrollPeriod]
+                          : formData.manualPayrollPayoutDate) || ''
+                      }
+                      onChange={(e) => {
+                        const chosen = e.target.value;
+                        setFormData({
+                          ...formData,
+                          payrollPayoutMode: 'manual_date',
+                          manualPayrollPayoutDate: chosen,
+                          periodPayoutDates: {
+                            ...(formData.periodPayoutDates || {}),
+                            [formData.currentPayrollPeriod]: chosen,
+                          },
+                        });
+                      }}
+                      className="w-full p-2.5 bg-white border border-emerald-300 rounded-xl font-bold text-emerald-900 focus:border-emerald-500"
+                    />
+                    <span className="text-[10px] text-emerald-700 mt-1 block">
+                      Tanggal ini akan langsung tampil pada Header Slip Gaji karyawan periode {formData.currentPayrollPeriod}.
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex flex-col justify-center p-3 rounded-xl bg-white/80 border border-emerald-200">
+                    <span className="text-[11px] font-extrabold text-emerald-900">
+                      ✓ Mode Pencairan: Fleksibel / Tidak Menentu
+                    </span>
+                    <span className="text-[10px] text-slate-600 mt-0.5">
+                      Sistem tidak membatasi tanggal pencairan dan tidak akan memunculkan peringatan keterlambatan bayar meskipun jadwal gajian bergeser.
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           </div>
