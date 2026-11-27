@@ -62,16 +62,16 @@ interface AuditLogsViewProps {
 }
 
 const CATEGORY_COLORS: Record<ActivityCategory, { bg: string; text: string; border: string }> = {
-  'Gaji & Payroll': { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200' },
+  'Gaji & Payroll': { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' },
   'Data Karyawan': { bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200' },
   'Hak Akses & Admin': { bg: 'bg-purple-50', text: 'text-purple-700', border: 'border-purple-200' },
   'Persetujuan & Klaim': { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' },
   'Inventaris & Aset': { bg: 'bg-indigo-50', text: 'text-indigo-700', border: 'border-indigo-200' },
   'Penilaian & KPI': { bg: 'bg-violet-50', text: 'text-violet-700', border: 'border-violet-200' },
   'Kasbon & Keuangan': { bg: 'bg-amber-50', text: 'text-amber-800', border: 'border-amber-300' },
-  'Notifikasi Sistem': { bg: 'bg-emerald-50', text: 'text-emerald-800', border: 'border-emerald-300' },
+  'Notifikasi Sistem': { bg: 'bg-amber-50', text: 'text-amber-800', border: 'border-amber-300' },
   'Pengaturan Sistem': { bg: 'bg-slate-100', text: 'text-slate-700', border: 'border-slate-300' },
-  'Autentikasi': { bg: 'bg-teal-50', text: 'text-teal-700', border: 'border-teal-200' },
+  'Autentikasi': { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' },
 };
 
 const SEVERITY_CONFIG: Record<
@@ -101,10 +101,10 @@ const SEVERITY_CONFIG: Record<
   },
   success: {
     label: 'Normal / Sukses',
-    badgeBg: 'bg-emerald-100',
-    badgeText: 'text-emerald-800 border-emerald-200',
+    badgeBg: 'bg-amber-100',
+    badgeText: 'text-amber-800 border-amber-200',
     icon: CheckCircle2,
-    dotColor: 'bg-emerald-500',
+    dotColor: 'bg-amber-500',
   },
 };
 
@@ -354,8 +354,8 @@ export const AuditLogsView: React.FC<AuditLogsViewProps> = ({
                 <h1 className="text-xl sm:text-2xl font-bold text-slate-900">
                   Log Aktivitas Sistem & Jejak Audit
                 </h1>
-                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                  <ShieldCheck className="w-3.5 h-3.5 text-amber-600" />
                   Audit Trail Terproteksi
                 </span>
               </div>
@@ -421,14 +421,14 @@ export const AuditLogsView: React.FC<AuditLogsViewProps> = ({
           </div>
         </div>
 
-        <div className="bg-white rounded-2xl p-5 border border-emerald-200 bg-emerald-50/20 shadow-xs flex items-center gap-4">
-          <div className="p-3 bg-emerald-100 text-emerald-700 rounded-xl">
+        <div className="bg-white rounded-2xl p-5 border border-amber-200 bg-amber-50/20 shadow-xs flex items-center gap-4">
+          <div className="p-3 bg-amber-100 text-amber-700 rounded-xl">
             <DollarSign className="w-6 h-6" />
           </div>
           <div>
-            <p className="text-xs font-semibold text-emerald-800 uppercase tracking-wider">Gaji & Payroll</p>
-            <h3 className="text-2xl font-bold text-emerald-900 mt-0.5">{stats.salaryCount}</h3>
-            <p className="text-xs text-emerald-600 mt-0.5">Kalkulasi & edit nominal</p>
+            <p className="text-xs font-semibold text-amber-800 uppercase tracking-wider">Gaji & Payroll</p>
+            <h3 className="text-2xl font-bold text-amber-900 mt-0.5">{stats.salaryCount}</h3>
+            <p className="text-xs text-amber-600 mt-0.5">Kalkulasi & edit nominal</p>
           </div>
         </div>
       </div>
@@ -694,7 +694,7 @@ export const AuditLogsView: React.FC<AuditLogsViewProps> = ({
                                 </div>
                               )}
                               {log.newValue && (
-                                <div className="text-[11px] text-emerald-800 bg-emerald-50/70 px-2 py-0.5 rounded-sm border border-emerald-100">
+                                <div className="text-[11px] text-amber-800 bg-amber-50/70 px-2 py-0.5 rounded-sm border border-amber-100">
                                   <span className="font-bold">Baru:</span> {log.newValue}
                                 </div>
                               )}
@@ -799,8 +799,8 @@ export const AuditLogsView: React.FC<AuditLogsViewProps> = ({
                             </div>
                           )}
                           {log.newValue && (
-                            <div className="bg-emerald-50/50 p-2 rounded-sm border-l-2 border-emerald-500">
-                              <span className="font-bold text-emerald-800">Nilai Sesudah (Baru):</span>
+                            <div className="bg-amber-50/50 p-2 rounded-sm border-l-2 border-amber-500">
+                              <span className="font-bold text-amber-800">Nilai Sesudah (Baru):</span>
                               <p className="text-slate-700 mt-0.5">{log.newValue}</p>
                             </div>
                           )}
@@ -920,8 +920,8 @@ export const AuditLogsView: React.FC<AuditLogsViewProps> = ({
                       {selectedLogDetail.oldValue || 'Tidak ada catatan'}
                     </p>
                   </div>
-                  <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl">
-                    <span className="text-xs font-bold text-emerald-800 flex items-center gap-1 mb-1">
+                  <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl">
+                    <span className="text-xs font-bold text-amber-800 flex items-center gap-1 mb-1">
                       Nilai Sesudah Modifikasi (Updated)
                     </span>
                     <p className="text-xs font-medium text-slate-800">
@@ -969,7 +969,7 @@ export const AuditLogsView: React.FC<AuditLogsViewProps> = ({
 
             {/* Anti-tamper verification note */}
             <div className="flex items-center gap-2 p-2.5 bg-slate-100 rounded-xl text-slate-500 text-[11px]">
-              <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+              <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0" />
               <span>
                 Catatan ini telah terarsip secara permanen (append-only) dan diverifikasi oleh sistem audit internal Tas Grosir Import.
               </span>

@@ -552,7 +552,7 @@ export const LiveStreamSessionModal: React.FC<LiveStreamSessionModalProps> = ({
           <div className="bg-slate-900 text-slate-100 rounded-xl p-4 border border-slate-700 space-y-2.5 text-xs">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <Database className="w-4 h-4 text-emerald-400" />
+                <Database className="w-4 h-4 text-amber-400" />
                 <span className="font-bold text-white">
                   Skrip Migrasi SQL Supabase (tgi_employees &amp; tgi_livestream_sessions)
                 </span>
@@ -560,7 +560,7 @@ export const LiveStreamSessionModal: React.FC<LiveStreamSessionModalProps> = ({
               <button
                 type="button"
                 onClick={handleCopySql}
-                className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] inline-flex items-center gap-1.5 cursor-pointer"
+                className="px-3 py-1 rounded-lg bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold font-bold text-[11px] inline-flex items-center gap-1.5 cursor-pointer"
               >
                 {copiedSql ? (
                   <>
@@ -575,7 +575,7 @@ export const LiveStreamSessionModal: React.FC<LiveStreamSessionModalProps> = ({
                 )}
               </button>
             </div>
-            <pre className="p-3 bg-slate-950 rounded-lg border border-slate-800 text-[11px] font-mono text-emerald-300 overflow-x-auto leading-relaxed">
+            <pre className="p-3 bg-slate-950 rounded-lg border border-slate-800 text-[11px] font-mono text-amber-300 overflow-x-auto leading-relaxed">
               {TGI_LIVESTREAM_SQL_MIGRATION}
             </pre>
           </div>
@@ -623,22 +623,22 @@ export const LiveStreamSessionModal: React.FC<LiveStreamSessionModalProps> = ({
             <span className="font-mono font-extrabold text-white text-sm block mt-0.5">
               +{formatRupiah(liveSummary.totalCommission)}
             </span>
-            <span className="text-[10px] text-emerald-200 font-semibold">
+            <span className="text-[10px] text-amber-200 font-semibold">
               Sinkron Real-Time Payroll
             </span>
           </div>
         </div>
 
         {localBanner && (
-          <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-semibold flex items-center justify-between gap-2">
+          <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs font-semibold flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <CheckCircle2 className="w-4 h-4 text-amber-600 shrink-0" />
               <span>{localBanner}</span>
             </div>
             <button
               type="button"
               onClick={() => setLocalBanner(null)}
-              className="text-emerald-700 hover:text-emerald-950 font-bold text-xs cursor-pointer"
+              className="text-amber-700 hover:text-amber-950 font-bold text-xs cursor-pointer"
             >
               Tutup
             </button>
@@ -1097,15 +1097,15 @@ export const LiveStreamSessionModal: React.FC<LiveStreamSessionModalProps> = ({
           <div className="bg-slate-900 text-white p-4 rounded-xl space-y-3">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-700 pb-2.5">
               <div className="flex items-center gap-2">
-                <span className="w-5 h-5 rounded-full bg-emerald-500 text-slate-950 font-extrabold inline-flex items-center justify-center text-[11px]">
+                <span className="w-5 h-5 rounded-full bg-amber-500 text-slate-950 font-extrabold inline-flex items-center justify-center text-[11px]">
                   4
                 </span>
-                <Calculator className="w-4 h-4 text-emerald-400" />
+                <Calculator className="w-4 h-4 text-amber-400" />
                 <span className="font-bold text-xs sm:text-sm">
                   Kalkulasi Otomatis &amp; Sinkronisasi Real-Time ke Slip Gaji
                 </span>
               </div>
-              <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-[10px] font-bold">
+              <span className="px-2.5 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/40 text-amber-300 text-[10px] font-bold">
                 Komponen: &ldquo;Insentif / Komisi Penjualan&rdquo;
               </span>
             </div>
@@ -1135,11 +1135,11 @@ export const LiveStreamSessionModal: React.FC<LiveStreamSessionModalProps> = ({
                   = {formatRupiah(totalSessionCommission)}
                 </span>
               </div>
-              <div className="bg-emerald-950/80 p-2.5 rounded-lg border border-emerald-500/50">
-                <span className="text-[10px] text-emerald-200 block font-semibold">
+              <div className="bg-amber-950/80 p-2.5 rounded-lg border border-amber-500/50">
+                <span className="text-[10px] text-amber-200 block font-semibold">
                   Akumulasi di Slip Gaji ({currentPeriod})
                 </span>
-                <span className="font-mono font-extrabold text-emerald-300 text-base block mt-0.5">
+                <span className="font-mono font-extrabold text-amber-300 text-base block mt-0.5">
                   {formatRupiah(projectedMonthlyCommission)}
                 </span>
               </div>
@@ -1149,7 +1149,7 @@ export const LiveStreamSessionModal: React.FC<LiveStreamSessionModalProps> = ({
               <span className="text-[11px] text-slate-300">
                 Rumus: <strong>({formatRupiah(cleanOmset)} × {cleanPct}%)</strong> +{' '}
                 <strong>({cleanPcs} Pcs × {formatRupiah(cleanPerPcs)})</strong> ={' '}
-                <strong className="text-emerald-300">{formatRupiah(totalSessionCommission)}</strong>
+                <strong className="text-amber-300">{formatRupiah(totalSessionCommission)}</strong>
               </span>
               <button
                 type="submit"
@@ -1298,7 +1298,7 @@ export const LiveStreamSessionModal: React.FC<LiveStreamSessionModalProps> = ({
                       <td className="py-2.5 px-3 text-right font-mono text-pink-700 text-sm">
                         +{formatRupiah(liveSummary.totalCommission)}
                       </td>
-                      <td className="py-2.5 px-3 text-center text-[10px] text-emerald-700">
+                      <td className="py-2.5 px-3 text-center text-[10px] text-amber-700">
                         Sinkron Slip Gaji
                       </td>
                     </tr>

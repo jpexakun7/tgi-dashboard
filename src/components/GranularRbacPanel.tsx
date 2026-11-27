@@ -100,7 +100,7 @@ export const PERMISSION_ACTIONS: {
   color: string;
 }[] = [
   { key: 'view', label: 'View (Lihat)', desc: 'Melihat & membaca data dalam modul', color: 'bg-blue-50 text-blue-700 border-blue-200' },
-  { key: 'create', label: 'Create (Tambah)', desc: 'Membuat atau mengajukan data baru', color: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  { key: 'create', label: 'Create (Tambah)', desc: 'Membuat atau mengajukan data baru', color: 'bg-amber-50 text-amber-700 border-amber-200' },
   { key: 'edit', label: 'Edit (Ubah)', desc: 'Mengubah atau memperbarui data yang ada', color: 'bg-amber-50 text-amber-700 border-amber-200' },
   { key: 'delete', label: 'Delete (Hapus)', desc: 'Menghapus atau membatalkan rekaman data', color: 'bg-rose-50 text-rose-700 border-rose-200' },
   { key: 'approve', label: 'Approve (Setujui)', desc: 'Menyetujui atau menolak permohonan staf', color: 'bg-purple-50 text-purple-700 border-purple-200' },
@@ -162,7 +162,7 @@ export const DEFAULT_GRANULAR_ROLES: GranularRolePermission[] = [
     roleId: 'finance_admin',
     roleName: 'Finance / Payroll Admin',
     description: 'Menangani kalkulasi gaji karyawan, PPh 21 TER, BPJS, klaim reimbursement, pencairan kasbon darurat, dan ekspor laporan.',
-    badgeColor: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+    badgeColor: 'bg-amber-100 text-amber-800 border-amber-200',
     userCount: 3,
     modulePermissions: {
       employees: { view: true, create: false, edit: false, delete: false, approve: false, export: true },
@@ -563,7 +563,7 @@ export function GranularRbacPanel({
       {/* Toast Notification */}
       {toastMessage && (
         <div className="fixed top-5 right-5 z-50 flex items-center gap-2.5 bg-slate-900 text-white px-4 py-3 rounded-xl shadow-xl text-xs font-semibold animate-fade-in border border-slate-700">
-          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" />
           <span>{toastMessage}</span>
         </div>
       )}
@@ -1077,7 +1077,7 @@ export function GranularRbacPanel({
                 <div className="grid grid-cols-3 gap-2">
                   {[
                     { label: 'Indigo', val: 'bg-indigo-100 text-indigo-800 border-indigo-200' },
-                    { label: 'Emerald', val: 'bg-emerald-100 text-emerald-800 border-emerald-200' },
+                    { label: 'Emerald', val: 'bg-amber-100 text-amber-800 border-amber-200' },
                     { label: 'Amber', val: 'bg-amber-100 text-amber-800 border-amber-200' },
                     { label: 'Rose', val: 'bg-rose-100 text-rose-800 border-rose-200' },
                     { label: 'Cyan', val: 'bg-cyan-100 text-cyan-800 border-cyan-200' },

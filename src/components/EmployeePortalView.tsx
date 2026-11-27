@@ -124,6 +124,7 @@ import {
   getMonthlyCutoffDateRange,
   isPayrollPeriodPastCutoff,
   filterOvertimeRequestsForPeriod,
+  getEmployeeBranch,
 } from '../utils/formatters';
 import { OfficialPayslipDocument, computeOfficialPayslipData } from './PayslipModal';
 import { formatWhatsAppPhone } from '../utils/notificationHelper';
@@ -963,22 +964,43 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
     [myCashAdvances]
   );
 
-  const maxCashAdvancePlafon = currentEmployee.baseSalary;
+  // Plafon Maksimum Kasbon Mandiri Portal Karyawan = Maksimal Rp 500.000 dikurangi sisa pinjaman aktif
+  const MAX_PORTAL_CASH_ADVANCE_LIMIT = 500000;
+  const maxCashAdvancePlafon = Math.max(0, MAX_PORTAL_CASH_ADVANCE_LIMIT - activeCashAdvanceBalance);
+
+  // Jadwal Buka & Tutup Pengajuan Kasbon Mandiri: Hanya Tanggal 15 s/d 23 setiap bulan
+  const currentCashAdvanceDayOfMonth = useMemo(() => {
+    const parsedDay = Number((todayDateStr || '').split('-')[2]);
+    return !isNaN(parsedDay) && parsedDay >= 1 && parsedDay <= 31
+      ? parsedDay
+      : new Date().getDate();
+  }, [todayDateStr]);
+  const isCashAdvanceWindowOpen =
+    currentCashAdvanceDayOfMonth >= 15 && currentCashAdvanceDayOfMonth <= 23;
 
   const handleSubmitCashAdvance = (e: React.FormEvent) => {
     e.preventDefault();
     setCashAdvanceError(null);
 
-    const safeAmount = Math.max(0, Math.round(Number(cashAdvanceAmount) || 0));
+    if (!isCashAdvanceWindowOpen) {
+      setCashAdvanceError(
+        'Pengajuan Kasbon dibuka setiap tanggal 15 dan ditutup paling lambat tanggal 23 setiap bulannya.'
+      );
+      return;
+    }
+
+    const safeAmount = Math.max(0, Number(cashAdvanceAmount) || 0);
     const safeReason = sanitizeSafeText(cashAdvanceReason, 300);
 
     if (safeAmount <= 0) {
       setCashAdvanceError('Nominal pengajuan kasbon harus lebih dari Rp 0.');
       return;
     }
-    if (safeAmount > maxCashAdvancePlafon) {
+    if (safeAmount > MAX_PORTAL_CASH_ADVANCE_LIMIT || safeAmount > maxCashAdvancePlafon) {
       setCashAdvanceError(
-        `Nominal kasbon melebihi plafon maksimum gaji pokok Anda (${formatRupiah(maxCashAdvancePlafon)}).`
+        activeCashAdvanceBalance > 0
+          ? `Nominal kasbon melebihi sisa plafon maksimum Anda sebesar ${formatRupiah(maxCashAdvancePlafon)} (Batas plafon Rp 500.000 dikurangi sisa pinjaman aktif ${formatRupiah(activeCashAdvanceBalance)}).`
+          : `Nominal kasbon tidak boleh melebihi batas maksimal plafon ${formatRupiah(MAX_PORTAL_CASH_ADVANCE_LIMIT)}.`
       );
       return;
     }
@@ -1001,7 +1023,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
         amount: safeAmount,
         reason: safeReason,
         tenorMonths: safeTenor,
-        monthlyInstallment: Math.round(safeAmount / safeTenor),
+        monthlyInstallment: Number((safeAmount / safeTenor).toFixed(2)),
       });
     }
 
@@ -2182,6 +2204,10 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 <span className="px-2.5 py-0.5 rounded-full text-[10px] sm:text-xs font-semibold bg-white/15 text-stone-100 border border-amber-400/30 backdrop-blur-xs">
                   {currentEmployee.employmentStatus}
                 </span>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] sm:text-xs font-extrabold bg-neutral-900/90 text-amber-300 border border-amber-500/45 inline-flex items-center gap-1 shadow-2xs">
+                  <MapPin className="w-3 h-3 text-amber-400" />
+                  <span>Cabang: {getEmployeeBranch(currentEmployee)}</span>
+                </span>
                 <span className="px-2.5 py-0.5 rounded-full text-[10px] sm:text-xs font-extrabold bg-amber-400 text-stone-950 border border-amber-200 shadow-2xs">
                   Tarif Gaji: {formatRupiah(myHourlyRate)} / jam (Std {myStandardDailyHours} Jam/Hari)
                 </span>
@@ -2225,6 +2251,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 (currentEmployee.department || '').trim().toLowerCase()
                   ? currentEmployee.role
                   : `${currentEmployee.role} (${currentEmployee.department})`}
+                {' '}• Cabang: <span className="font-bold text-amber-300">{getEmployeeBranch(currentEmployee)}</span>
               </p>
               <div className="mt-2.5 flex flex-wrap items-center gap-2">
                 <button
@@ -2269,7 +2296,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                       ? 'bg-rose-500 text-white border-rose-300 hover:bg-rose-600'
                       : myContractInfo.daysRemaining !== null && myContractInfo.daysRemaining <= 30
                       ? 'bg-amber-400 text-slate-950 border-amber-200 hover:bg-amber-300'
-                      : 'bg-emerald-500/35 text-emerald-50 border-emerald-300/60 hover:bg-emerald-500/45'
+                      : 'bg-amber-500/35 text-amber-50 border-amber-300/60 hover:bg-amber-500/45'
                   }`}
                   title="Indikator Kontrak PKWT: Hijau (> 30 hari), Kuning (≤ 30 hari), Merah (≤ 7 hari)"
                 >
@@ -2281,7 +2308,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                         ? 'bg-white animate-ping'
                         : myContractInfo.daysRemaining !== null && myContractInfo.daysRemaining <= 30
                         ? 'bg-slate-950'
-                        : 'bg-emerald-300'
+                        : 'bg-amber-300'
                     }`}
                   />
                   <FileText className="w-3.5 h-3.5 shrink-0" />
@@ -2517,9 +2544,9 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
             ) : (
               <button
                 onClick={() => setActivePortalTab('payroll')}
-                className="px-3.5 py-1.5 bg-white text-emerald-900 rounded-xl text-xs font-bold hover:bg-emerald-50 transition-colors shadow-xs cursor-pointer flex items-center gap-1.5"
+                className="px-3.5 py-1.5 bg-white text-amber-900 rounded-xl text-xs font-bold hover:bg-amber-50 transition-colors shadow-xs cursor-pointer flex items-center gap-1.5"
               >
-                <Sparkles className="w-3.5 h-3.5 text-emerald-700" />
+                <Sparkles className="w-3.5 h-3.5 text-amber-700" />
                 <span>Cek Bonus Slip Gaji</span>
               </button>
             )}
@@ -2533,7 +2560,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
           {myUnreadBonuses.map((bonus) => (
             <div
               key={bonus.id}
-              className="bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 rounded-2xl p-4 text-white shadow-lg border border-emerald-400/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in"
+              className="bg-gradient-to-br from-neutral-950 via-stone-900 to-neutral-900 border border-amber-500/35 rounded-2xl p-4 text-white shadow-lg border border-amber-400/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in"
             >
               <div className="flex items-start sm:items-center gap-3 min-w-0">
                 <div className="p-2.5 bg-white/20 rounded-xl shrink-0 backdrop-blur-xs border border-white/25">
@@ -2544,7 +2571,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                     <span className="text-[10px] font-extrabold uppercase tracking-wider bg-amber-300 text-slate-950 px-2 py-0.5 rounded-md">
                       Bonus &amp; Apresiasi Baru ({formatYearMonthToIndo(bonus.period_month)})
                     </span>
-                    <span className="text-[11px] text-emerald-100 font-medium">
+                    <span className="text-[11px] text-amber-100 font-medium">
                       Diberikan: {formatIndoDate(bonus.date_awarded)}
                     </span>
                   </div>
@@ -2564,9 +2591,9 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 <button
                   type="button"
                   onClick={() => handleMarkBonusRead(bonus.id)}
-                  className="px-3.5 py-1.5 bg-white text-emerald-900 hover:bg-emerald-50 rounded-xl text-xs font-extrabold transition-colors shadow-xs cursor-pointer flex items-center gap-1.5"
+                  className="px-3.5 py-1.5 bg-white text-amber-900 hover:bg-amber-50 rounded-xl text-xs font-extrabold transition-colors shadow-xs cursor-pointer flex items-center gap-1.5"
                 >
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  <CheckCircle2 className="w-3.5 h-3.5 text-amber-600" />
                   <span>Tandai Sudah Dibaca</span>
                 </button>
               </div>
@@ -2578,7 +2605,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       {/* Mobile Active Section Header Bar (<768px) — Replaces Horizontal Scroll Tabs on Phones */}
       <div className="md:hidden bg-white rounded-2xl px-3.5 py-2.5 border border-slate-200 shadow-2xs flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
-          <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+          <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
           <span className="text-xs font-bold text-slate-800 truncate">
             {portalTabLabels[activePortalTab]}
           </span>
@@ -2588,7 +2615,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
           onClick={() => setIsMobileMenuSheetOpen(true)}
           className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold cursor-pointer shrink-0"
         >
-          <LayoutGrid className="w-3.5 h-3.5 text-emerald-600" />
+          <LayoutGrid className="w-3.5 h-3.5 text-amber-600" />
           <span>Semua Menu</span>
         </button>
       </div>
@@ -2599,7 +2626,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
           onClick={() => setActivePortalTab('home')}
           className={`flex items-center gap-2 px-3.5 py-2.5 text-xs sm:text-sm font-semibold rounded-xl whitespace-nowrap transition-all cursor-pointer ${
             activePortalTab === 'home'
-              ? 'bg-emerald-600 text-white shadow-xs'
+              ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 font-bold shadow-xs'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
           }`}
         >
@@ -2611,14 +2638,14 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
           onClick={() => setActivePortalTab('attendance')}
           className={`flex items-center gap-2 px-3.5 py-2.5 text-xs sm:text-sm font-semibold rounded-xl whitespace-nowrap transition-all cursor-pointer ${
             activePortalTab === 'attendance'
-              ? 'bg-emerald-600 text-white shadow-xs'
+              ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 font-bold shadow-xs'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
           }`}
         >
           <Camera className="w-4 h-4" />
           Kamera Absen & GPS
           {todayAttendance ? (
-            <span className="w-2 h-2 rounded-full bg-emerald-300 ring-1 ring-white" title="Sudah Absen Hari Ini" />
+            <span className="w-2 h-2 rounded-full bg-amber-300 ring-1 ring-white" title="Sudah Absen Hari Ini" />
           ) : (
             <span className="w-2 h-2 rounded-full bg-amber-400" title="Belum Absen Hari Ini" />
           )}
@@ -2628,7 +2655,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
           onClick={() => setActivePortalTab('payroll')}
           className={`flex items-center gap-2 px-3.5 py-2.5 text-xs sm:text-sm font-semibold rounded-xl whitespace-nowrap transition-all cursor-pointer ${
             activePortalTab === 'payroll'
-              ? 'bg-emerald-600 text-white shadow-xs'
+              ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 font-bold shadow-xs'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
           }`}
         >
@@ -2640,9 +2667,9 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
           onClick={() => setActivePortalTab('my_bonuses')}
           className={`flex items-center gap-2 px-3.5 py-2.5 text-xs sm:text-sm font-semibold rounded-xl whitespace-nowrap transition-all cursor-pointer ${
             activePortalTab === 'my_bonuses'
-              ? 'bg-emerald-600 text-white shadow-xs'
+              ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 font-bold shadow-xs'
               : myUnreadBonuses.length > 0
-              ? 'text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300'
+              ? 'text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-300'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
           }`}
         >
@@ -2678,7 +2705,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
           onClick={() => setActivePortalTab('leave')}
           className={`flex items-center gap-2 px-3.5 py-2.5 text-xs sm:text-sm font-semibold rounded-xl whitespace-nowrap transition-all cursor-pointer ${
             activePortalTab === 'leave'
-              ? 'bg-emerald-600 text-white shadow-xs'
+              ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 font-bold shadow-xs'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
           }`}
         >
@@ -2693,7 +2720,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
           onClick={() => setActivePortalTab('claims')}
           className={`flex items-center gap-2 px-3.5 py-2.5 text-xs sm:text-sm font-semibold rounded-xl whitespace-nowrap transition-all cursor-pointer ${
             activePortalTab === 'claims'
-              ? 'bg-emerald-600 text-white shadow-xs'
+              ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 font-bold shadow-xs'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
           }`}
         >
@@ -2705,7 +2732,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
           onClick={() => setActivePortalTab('cash_advance')}
           className={`flex items-center gap-2 px-3.5 py-2.5 text-xs sm:text-sm font-semibold rounded-xl whitespace-nowrap transition-all cursor-pointer ${
             activePortalTab === 'cash_advance'
-              ? 'bg-emerald-600 text-white shadow-xs'
+              ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 font-bold shadow-xs'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
           }`}
         >
@@ -2720,7 +2747,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
           onClick={() => setActivePortalTab('assets')}
           className={`flex items-center gap-2 px-3.5 py-2.5 text-xs sm:text-sm font-semibold rounded-xl whitespace-nowrap transition-all cursor-pointer ${
             activePortalTab === 'assets'
-              ? 'bg-emerald-600 text-white shadow-xs'
+              ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 font-bold shadow-xs'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
           }`}
         >
@@ -2732,7 +2759,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
           onClick={() => setActivePortalTab('performance')}
           className={`flex items-center gap-2 px-3.5 py-2.5 text-xs sm:text-sm font-semibold rounded-xl whitespace-nowrap transition-all cursor-pointer ${
             activePortalTab === 'performance'
-              ? 'bg-emerald-600 text-white shadow-xs'
+              ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 font-bold shadow-xs'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
           }`}
         >
@@ -2747,7 +2774,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
           onClick={() => setActivePortalTab('profile')}
           className={`flex items-center gap-2 px-3.5 py-2.5 text-xs sm:text-sm font-semibold rounded-xl whitespace-nowrap transition-all cursor-pointer ${
             activePortalTab === 'profile'
-              ? 'bg-emerald-600 text-white shadow-xs'
+              ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 font-bold shadow-xs'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
           }`}
         >
@@ -2763,8 +2790,8 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
           <div className="bg-slate-900 rounded-2xl p-4 sm:p-5 text-white border border-slate-800 shadow-md">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div className="space-y-1.5">
-                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-[11px] font-bold">
-                  <MapPin className="w-3.5 h-3.5 text-emerald-400" />
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/20 border border-amber-500/30 text-amber-300 text-[11px] font-bold">
+                  <MapPin className="w-3.5 h-3.5 text-amber-400" />
                   <span>Geofence Radius ≤ 25m Kantor & Anti-Fake GPS</span>
                 </div>
                 <h3 className="text-base sm:text-lg font-extrabold text-white">
@@ -2775,7 +2802,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                     : 'Anda Belum Absen Masuk Hari Ini'}
                 </h3>
                 <p className="text-xs text-slate-300">
-                  Jadwal Shift: <strong className="text-emerald-400">{myShift.name}</strong> (
+                  Jadwal Shift: <strong className="text-amber-400">{myShift.name}</strong> (
                   <span className="font-mono tabular-nums">
                     {myShift.checkInTime} – {myShift.checkOutTime} WIB
                   </span>
@@ -2787,7 +2814,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 <button
                   type="button"
                   onClick={() => setActivePortalTab('attendance')}
-                  className="min-h-[46px] px-4 py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white text-xs sm:text-sm font-extrabold flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/25 cursor-pointer transition-all"
+                  className="min-h-[46px] px-4 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold text-xs sm:text-sm font-extrabold flex items-center justify-center gap-2 shadow-lg shadow-amber-600/25 cursor-pointer transition-all"
                 >
                   <Camera className="w-4 h-4 shrink-0" />
                   <span>
@@ -2809,7 +2836,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
               className={`rounded-2xl p-4 sm:p-5 text-white shadow-sm flex flex-col justify-between ${
                 isPartTimeEmployee
                   ? 'bg-gradient-to-br from-orange-600 to-amber-700'
-                  : 'bg-gradient-to-br from-emerald-600 to-teal-700'
+                  : 'bg-gradient-to-br from-neutral-950 via-stone-900 to-neutral-900 border border-amber-500/35'
               }`}
             >
               <div>
@@ -2843,7 +2870,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   className={`flex-1 min-h-[38px] py-2 px-3 rounded-xl bg-white text-xs font-bold transition-colors cursor-pointer text-center ${
                     isPartTimeEmployee
                       ? 'text-orange-900 hover:bg-orange-50'
-                      : 'text-emerald-900 hover:bg-emerald-50'
+                      : 'text-amber-900 hover:bg-amber-50'
                   }`}
                 >
                   {isPartTimeEmployee ? 'Slip Mingguan' : 'Rincian Gaji'}
@@ -2908,7 +2935,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                       {myLeaveRequests.filter((l) => l.status === 'Menunggu Persetujuan').length} pengajuan menunggu HR
                     </p>
                   </div>
-                  <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl shrink-0">
+                  <div className="p-2.5 bg-amber-50 text-amber-600 rounded-xl shrink-0">
                     <CalendarDays className="w-5 h-5" />
                   </div>
                 </div>
@@ -2916,7 +2943,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   <button
                     type="button"
                     onClick={() => setActivePortalTab('leave')}
-                    className="w-full min-h-[38px] py-2 px-3 rounded-xl bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 text-slate-700 text-xs font-bold transition-colors cursor-pointer"
+                    className="w-full min-h-[38px] py-2 px-3 rounded-xl bg-slate-100 hover:bg-amber-50 hover:text-amber-700 text-slate-700 text-xs font-bold transition-colors cursor-pointer"
                   >
                     Ajukan Cuti / Izin Baru →
                   </button>
@@ -2937,7 +2964,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   </div>
                   <p className="text-xs text-slate-500 mt-1">
                     Total Lembur Disetujui:{' '}
-                    <strong className="text-emerald-700">
+                    <strong className="text-amber-700">
                       {formatRupiah(
                         myOvertimeRequests
                           .filter((o) => o.status === 'Disetujui')
@@ -3012,7 +3039,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   label: 'Kamera Absen',
                   sub: 'Wajah & GPS ≤25m',
                   icon: Camera,
-                  color: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+                  color: 'bg-amber-50 text-amber-700 border-amber-200',
                 },
                 {
                   id: 'payroll' as const,
@@ -3023,7 +3050,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   icon: WalletCards,
                   color: isPartTimeEmployee
                     ? 'bg-orange-50 text-orange-800 border-orange-200'
-                    : 'bg-teal-50 text-teal-700 border-teal-200',
+                    : 'bg-amber-50 text-amber-700 border-amber-200',
                 },
                 ...(canAccessLiveCommissionPanel
                   ? [
@@ -3092,13 +3119,13 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                     key={item.id}
                     type="button"
                     onClick={() => setActivePortalTab(item.id)}
-                    className="min-h-[68px] p-3 rounded-xl border border-slate-200 hover:border-emerald-400 hover:bg-emerald-50/30 transition-all flex items-center gap-3 text-left cursor-pointer group"
+                    className="min-h-[68px] p-3 rounded-xl border border-slate-200 hover:border-amber-400 hover:bg-amber-50/30 transition-all flex items-center gap-3 text-left cursor-pointer group"
                   >
                     <div className={`p-2.5 rounded-xl border shrink-0 ${item.color}`}>
                       <IconComp className="w-4 h-4 sm:w-5 sm:h-5" />
                     </div>
                     <div className="min-w-0">
-                      <div className="text-xs font-bold text-slate-900 group-hover:text-emerald-800 truncate">
+                      <div className="text-xs font-bold text-slate-900 group-hover:text-amber-800 truncate">
                         {item.label}
                       </div>
                       <div className="text-[10px] text-slate-500 truncate mt-0.5">{item.sub}</div>
@@ -3120,7 +3147,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
               <div>
                 <div className="flex items-center gap-2 flex-wrap">
                   <h3 className="text-sm sm:text-base font-bold text-slate-900 flex items-center gap-2">
-                    <History className="w-4 h-4 text-emerald-600" />
+                    <History className="w-4 h-4 text-amber-600" />
                     <span>Riwayat Slip Gaji &amp; Absensi per Periode Cut-Off</span>
                   </h3>
                   {isSelectedPortalPeriodLocked ? (
@@ -3129,8 +3156,8 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                       Periode Terkunci (Arsip)
                     </span>
                   ) : (
-                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
-                      <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                      <CheckCircle2 className="w-3 h-3 text-amber-600" />
                       Periode Aktif Berjalan (Cut-off Tgl {companyConfig.cutOffEndDay || 25})
                     </span>
                   )}
@@ -3142,7 +3169,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
 
               <div className="flex flex-wrap items-center gap-2 shrink-0">
                 <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-300 rounded-xl px-3 py-2">
-                  <Calendar className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <Calendar className="w-4 h-4 text-amber-600 shrink-0" />
                   <span className="text-xs font-semibold text-slate-600">Pilih Periode:</span>
                   <select
                     value={effectiveSelectedPeriod}
@@ -3176,7 +3203,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   <button
                     type="button"
                     onClick={() => setSelectedPortalPayrollPeriod(companyConfig.currentPayrollPeriod)}
-                    className="px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold cursor-pointer transition-colors"
+                    className="px-3 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold text-xs font-bold cursor-pointer transition-colors"
                   >
                     Kembali ke Periode Aktif ({companyConfig.currentPayrollPeriod})
                   </button>
@@ -3214,7 +3241,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                     onClick={() => setSelectedPortalPayrollPeriod(periodOpt)}
                     className={`p-3 rounded-xl border transition-all cursor-pointer flex flex-col justify-between gap-2 ${
                       isSelected
-                        ? 'bg-emerald-50/80 border-emerald-500 ring-2 ring-emerald-500/20'
+                        ? 'bg-amber-50/80 border-amber-500 ring-2 ring-amber-500/20'
                         : 'bg-slate-50/70 hover:bg-slate-100/80 border-slate-200'
                     }`}
                   >
@@ -3229,7 +3256,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                             Arsip
                           </span>
                         ) : (
-                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 border border-emerald-300 text-[9px] font-bold shrink-0">
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-300 text-[9px] font-bold shrink-0">
                             Aktif
                           </span>
                         )}
@@ -3239,7 +3266,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                       </span>
                     </div>
                     <div className="flex items-center justify-between pt-1.5 border-t border-slate-200/70">
-                      <span className="text-xs font-extrabold text-emerald-700 font-mono">
+                      <span className="text-xs font-extrabold text-amber-700 font-mono">
                         {recForOpt ? formatRupiah(recForOpt.takeHomePay) : '-'}
                       </span>
                       {recForOpt && (
@@ -3250,7 +3277,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                             setSelectedPortalPayrollPeriod(periodOpt);
                             onOpenPayslip(recForOpt);
                           }}
-                          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-white hover:bg-emerald-600 hover:text-white text-slate-700 border border-slate-300 text-[10px] font-bold transition-colors cursor-pointer"
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-white hover:bg-amber-500 hover:text-neutral-950 text-slate-700 border border-slate-300 text-[10px] font-bold transition-colors cursor-pointer"
                         >
                           <Printer className="w-3 h-3" />
                           <span>Cetak PDF</span>
@@ -3270,7 +3297,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
               className={`rounded-2xl p-5 text-white shadow-sm flex flex-col justify-between ${
                 isPartTimeEmployee
                   ? 'bg-gradient-to-br from-orange-600 to-amber-700'
-                  : 'bg-gradient-to-br from-emerald-500 to-teal-700'
+                  : 'bg-gradient-to-br from-neutral-950 via-stone-900 to-neutral-900 border border-amber-500/35'
               }`}
             >
               <div>
@@ -3301,12 +3328,12 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                     className={`w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-white text-xs font-bold transition-colors shadow-xs cursor-pointer ${
                       isPartTimeEmployee
                         ? 'text-orange-900 hover:bg-orange-50'
-                        : 'text-emerald-800 hover:bg-emerald-50'
+                        : 'text-amber-800 hover:bg-amber-50'
                     }`}
                   >
                     <Download
                       className={`w-3.5 h-3.5 ${
-                        isPartTimeEmployee ? 'text-orange-600' : 'text-emerald-600'
+                        isPartTimeEmployee ? 'text-orange-600' : 'text-amber-600'
                       }`}
                     />
                     {isPartTimeEmployee
@@ -3330,7 +3357,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                     className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
                       isPartTimeEmployee
                         ? 'bg-orange-50 text-orange-900 border-orange-200'
-                        : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                        : 'bg-amber-50 text-amber-800 border-amber-200'
                     }`}
                   >
                     {formatRupiah(myHourlyRate)} / jam
@@ -3350,7 +3377,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   {isPartTimeEmployee ? 'Upah Kerja' : 'Gaji Pokok'} ({myTotalActualWorkHours} Jam ×{' '}
                   {formatRupiah(myHourlyRate)}/jam):
                 </span>
-                <span className="font-bold text-emerald-700">{formatCurrency(baseSal)}</span>
+                <span className="font-bold text-amber-700">{formatCurrency(baseSal)}</span>
               </div>
             </div>
 
@@ -3373,7 +3400,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 <span>Jadwal Pencairan:</span>
                 <span
                   className={`font-semibold ${
-                    isPartTimeEmployee ? 'text-orange-700' : 'text-emerald-600'
+                    isPartTimeEmployee ? 'text-orange-700' : 'text-amber-600'
                   }`}
                 >
                   {officialPayslipData.payoutDateLabel}
@@ -3421,7 +3448,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   className={`inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded-xl text-white transition-colors shadow-xs cursor-pointer ${
                     isPartTimeEmployee
                       ? 'bg-orange-600 hover:bg-orange-700'
-                      : 'bg-emerald-600 hover:bg-emerald-700'
+                      : 'bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold'
                   }`}
                 >
                   <Printer className="w-3.5 h-3.5" />
@@ -3440,53 +3467,53 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
             </div>
 
             {/* Rincian Transparan Gaji Harian & Bulanan Berbasis Jam Kerja Riil */}
-            <div className="p-4 bg-emerald-50/50 rounded-2xl border border-emerald-200 space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-emerald-200/80 pb-3">
+            <div className="p-4 bg-amber-50/50 rounded-2xl border border-amber-200 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-amber-200/80 pb-3">
                 <div>
-                  <h4 className="text-xs sm:text-sm font-extrabold text-emerald-950 flex items-center gap-1.5">
-                    <Clock className="w-4 h-4 text-emerald-600" />
+                  <h4 className="text-xs sm:text-sm font-extrabold text-amber-950 flex items-center gap-1.5">
+                    <Clock className="w-4 h-4 text-amber-600" />
                     <span>Transparansi Kalkulasi Gaji Per Jam &amp; Jam Kerja Harian Riil</span>
                   </h4>
-                  <p className="text-[11px] text-emerald-800 mt-0.5">
+                  <p className="text-[11px] text-amber-800 mt-0.5">
                     Jam kerja standar adalah <strong>{myStandardDailyHours} jam/hari</strong>. Gaji Harian dihitung dari <strong>Jam Kerja Aktual Hari Tersebut × Tarif Per Jam ({formatRupiah(myHourlyRate)}/jam)</strong>.
                   </p>
                 </div>
-                <span className="px-3 py-1 rounded-xl bg-white border border-emerald-300 text-emerald-900 text-xs font-extrabold shrink-0">
+                <span className="px-3 py-1 rounded-xl bg-white border border-amber-300 text-amber-900 text-xs font-extrabold shrink-0">
                   Tarif Anda: {formatRupiah(myHourlyRate)} / jam
                 </span>
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-                <div className="bg-white p-3 rounded-xl border border-emerald-200">
+                <div className="bg-white p-3 rounded-xl border border-amber-200">
                   <span className="text-[10px] text-slate-500 block">Tarif Gaji Per Jam</span>
-                  <span className="font-extrabold text-emerald-700 text-sm block mt-0.5">
+                  <span className="font-extrabold text-amber-700 text-sm block mt-0.5">
                     {formatRupiah(myHourlyRate)} / jam
                   </span>
                 </div>
-                <div className="bg-white p-3 rounded-xl border border-emerald-200">
+                <div className="bg-white p-3 rounded-xl border border-amber-200">
                   <span className="text-[10px] text-slate-500 block">Gaji Harian ({myStandardDailyHours} Jam)</span>
                   <span className="font-bold text-slate-900 text-sm block mt-0.5">
                     {formatRupiah(myDailySalary)} / hari
                   </span>
                 </div>
-                <div className="bg-white p-3 rounded-xl border border-emerald-200">
+                <div className="bg-white p-3 rounded-xl border border-amber-200">
                   <span className="text-[10px] text-slate-500 block">Akumulasi Jam Kerja Riil</span>
                   <span className="font-extrabold text-indigo-700 text-sm block mt-0.5">
                     {myTotalActualWorkHours} Jam ({myPresentDaysCount} Hari)
                   </span>
                 </div>
-                <div className="bg-white p-3 rounded-xl border border-emerald-200">
+                <div className="bg-white p-3 rounded-xl border border-amber-200">
                   <span className="text-[10px] text-slate-500 block">Total Gaji Jam Kerja</span>
-                  <span className="font-extrabold text-emerald-800 text-sm block mt-0.5">
+                  <span className="font-extrabold text-amber-800 text-sm block mt-0.5">
                     {formatRupiah(baseSal)}
                   </span>
                 </div>
               </div>
 
               {myDailyWorkBreakdown.length > 0 ? (
-                <div className="overflow-x-auto bg-white rounded-xl border border-emerald-200">
+                <div className="overflow-x-auto bg-white rounded-xl border border-amber-200">
                   <table className="w-full text-xs text-left">
-                    <thead className="bg-emerald-900/5 text-slate-700 font-bold border-b border-emerald-200">
+                    <thead className="bg-amber-900/5 text-slate-700 font-bold border-b border-amber-200">
                       <tr>
                         <th className="py-2.5 px-3">Tanggal Masuk</th>
                         <th className="py-2.5 px-3">Jam Masuk – Pulang</th>
@@ -3511,7 +3538,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                         return (
                           <tr
                             key={item.date}
-                            className={`hover:bg-emerald-50/40 ${
+                            className={`hover:bg-amber-50/40 ${
                               isNotClockedOut ? 'bg-rose-50/40' : ''
                             }`}
                           >
@@ -3554,14 +3581,14 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                             <td className="py-2 px-3 font-mono text-slate-600">
                               × {formatRupiah(myHourlyRate)}/jam
                             </td>
-                            <td className="py-2 px-3 text-right font-bold text-emerald-800">
+                            <td className="py-2 px-3 text-right font-bold text-amber-800">
                               {formatRupiah(item.dailyWage)}
                             </td>
                           </tr>
                         );
                       })}
                     </tbody>
-                    <tfoot className="bg-emerald-50/90 font-bold text-slate-900 border-t border-emerald-200">
+                    <tfoot className="bg-amber-50/90 font-bold text-slate-900 border-t border-amber-200">
                       <tr>
                         <td colSpan={2} className="py-2.5 px-3">
                           Total Akumulasi ({myPresentDaysCount} Hari Kehadiran)
@@ -3572,7 +3599,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                         <td className="py-2.5 px-3 font-mono text-slate-700">
                           × {formatRupiah(myHourlyRate)}/jam
                         </td>
-                        <td className="py-2.5 px-3 text-right text-emerald-800 text-sm">
+                        <td className="py-2.5 px-3 text-right text-amber-800 text-sm">
                           {formatRupiah(baseSal)}
                         </td>
                       </tr>
@@ -3580,7 +3607,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   </table>
                 </div>
               ) : (
-                <div className="p-3 bg-white rounded-xl border border-emerald-200 text-xs text-slate-500 text-center">
+                <div className="p-3 bg-white rounded-xl border border-amber-200 text-xs text-slate-500 text-center">
                   Belum ada log jam kerja hadir pada periode ini. Gaji harian dan bulanan akan otomatis bertambah sesuai jam kerja aktual saat Anda melakukan presensi.
                 </div>
               )}
@@ -3589,7 +3616,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
             {/* Legal Information Note */}
             <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-slate-500 text-xs flex items-center justify-between flex-wrap gap-2">
               <span className="flex items-center gap-1.5">
-                <Info className="w-4 h-4 text-emerald-600 shrink-0" />
+                <Info className="w-4 h-4 text-amber-600 shrink-0" />
                 Rekening pencairan: <strong>{currentEmployee.bankName}</strong> ({currentEmployee.bankAccountNumber} a.n {currentEmployee.bankAccountHolder})
               </span>
               <span className="text-slate-400">
@@ -3604,8 +3631,8 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       {activePortalTab === 'attendance' && (
         <div className="space-y-6">
           {Boolean(attendanceNotice) && (
-            <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-emerald-800 text-xs font-semibold flex items-center gap-2.5 animate-in fade-in">
-              <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+            <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl text-amber-800 text-xs font-semibold flex items-center gap-2.5 animate-in fade-in">
+              <CheckCircle2 className="w-5 h-5 text-amber-600 shrink-0" />
               <span>{attendanceNotice}</span>
             </div>
           )}
@@ -3615,7 +3642,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div>
                 <div className="flex items-center gap-2 text-xs text-slate-500 font-mono">
-                  <span className="font-bold text-emerald-700">{myShift.code}</span>
+                  <span className="font-bold text-amber-700">{myShift.code}</span>
                   <span aria-hidden="true">·</span>
                   <span>Jadwal Kerja Aktif Anda</span>
                   {myShift.location && (
@@ -3637,7 +3664,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
               <div className="grid grid-cols-3 gap-3 bg-slate-50 p-3.5 rounded-xl border border-slate-200 text-xs shrink-0">
                 <div>
                   <span className="text-slate-500 block text-[10px]">Jam Masuk Shift</span>
-                  <span className="font-mono font-bold text-emerald-700 text-sm">
+                  <span className="font-mono font-bold text-amber-700 text-sm">
                     {myShift.checkInTime} WIB
                   </span>
                 </div>
@@ -3664,7 +3691,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
           <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-xs space-y-5">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-5">
               <div>
-                <div className="flex items-center gap-2 text-xs text-emerald-700 font-semibold">
+                <div className="flex items-center gap-2 text-xs text-amber-700 font-semibold">
                   <MapPin className="w-3.5 h-3.5" />
                   <span>Presensi Mengikuti Jadwal {myShift.name} ({myShift.checkInTime} – {myShift.checkOutTime} WIB)</span>
                 </div>
@@ -3678,9 +3705,9 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
 
               <div className="flex items-center gap-2">
                 {todayAttendance ? (
-                  <div className="px-3.5 py-2 bg-emerald-50 border border-emerald-200 rounded-xl text-xs">
+                  <div className="px-3.5 py-2 bg-amber-50 border border-amber-200 rounded-xl text-xs">
                     <span className="text-slate-500 block text-[10px]">Status Hari Ini:</span>
-                    <span className="font-bold text-emerald-800">
+                    <span className="font-bold text-amber-800">
                       {todayAttendance.status} ({todayAttendance.checkIn}
                       {todayAttendance.checkOut ? ` - ${todayAttendance.checkOut}` : ''})
                     </span>
@@ -3703,12 +3730,12 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                         type="checkbox"
                         checked={useCustomClockTime}
                         onChange={(e) => setUseCustomClockTime(e.target.checked)}
-                        className="rounded text-emerald-600 focus:ring-emerald-500"
+                        className="rounded text-amber-600 focus:ring-amber-500"
                       />
                       <span>[Khusus Admin] Gunakan Simulasi Jam Absen Manual Mengikuti Shift</span>
                     </label>
 
-                    <span className="text-[11px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-md">
+                    <span className="text-[11px] font-medium text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-0.5 rounded-md">
                       {isAdminSimulationActive
                         ? 'Mode Uji Admin Aktif: Simulasi jam masuk & pulang'
                         : 'Mode Jam Real-Time Perangkat Aktif'}
@@ -3746,7 +3773,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                             setCustomClockInTime(myShift.checkInTime);
                             setCustomClockOutTime(myShift.checkOutTime);
                           }}
-                          className="px-2.5 py-2 bg-white hover:bg-emerald-50 text-emerald-700 border border-slate-200 rounded-lg text-[11px] font-semibold cursor-pointer"
+                          className="px-2.5 py-2 bg-white hover:bg-amber-50 text-amber-700 border border-slate-200 rounded-lg text-[11px] font-semibold cursor-pointer"
                         >
                           Sesuai Shift ({myShift.checkInTime} - {myShift.checkOutTime})
                         </button>
@@ -3769,7 +3796,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
               ) : (
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
-                    <Lock className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                    <Lock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
                     <span>Jam Absen Real-Time Terkunci Otomatis (Anti-Manipulasi Jam Masuk/Pulang)</span>
                   </div>
                   <span className="text-[11px] text-slate-500">
@@ -3784,7 +3811,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   <span className="text-slate-500">Evaluasi terhadap {myShift.code}:</span>
                   <span
                     className={`font-bold ${
-                      shiftEvalPreview.lateMinutes > 0 ? 'text-amber-700' : 'text-emerald-700'
+                      shiftEvalPreview.lateMinutes > 0 ? 'text-amber-700' : 'text-amber-700'
                     }`}
                   >
                     {shiftEvalPreview.status}
@@ -3810,6 +3837,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 customClockOutTime={customClockOutTime}
                 clockInNotes={clockInNotes}
                 overtimeRequests={myOvertimeRequests}
+                officeBranches={companyConfig.officeBranches}
                 onChangeNotes={setClockInNotes}
                 onSubmitAttendance={(record, mode) => {
                   // Optimistic real-time update agar tabel riwayat presensi, durasi jam kerja aktual (sesuai target harian 5/6/9 jam), dan Slip Gaji langsung terupdate seketika
@@ -3832,6 +3860,10 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                         facePhotoOut: record.facePhotoOut || record.checkOutPhotoSnapshot || prevRec.facePhotoOut || prevRec.checkOutPhotoSnapshot,
                         locationCoords: record.locationCoords || prevRec.locationCoords,
                         locationAddress: record.locationAddress || prevRec.locationAddress,
+                        branchId: record.branchId || prevRec.branchId,
+                        branchName: record.branchName || prevRec.branchName,
+                        checkOutBranchId: record.checkOutBranchId || prevRec.checkOutBranchId,
+                        checkOutBranchName: record.checkOutBranchName || prevRec.checkOutBranchName,
                         checkOutLocationCoords:
                           record.checkOutLocationCoords || prevRec.checkOutLocationCoords,
                         checkOutLocationAddress:
@@ -3871,11 +3903,16 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                     });
                   }
 
+                  const recordedBranchLabel =
+                    mode === 'check_out'
+                      ? record.checkOutBranchName || record.branchName
+                      : record.branchName;
+
                   if (mode === 'check_in') {
                     setAttendanceNotice(
                       `Berhasil Absen Masuk dengan Foto Wajah & GPS HP pukul ${record.checkIn} WIB (${
                         record.checkInFullTimestamp || ''
-                      }) di ${record.locationAddress || myShift.location} → Status: ${record.status}${
+                      }) di Cabang ${recordedBranchLabel || record.locationAddress || myShift.location} → Status: ${record.status}${
                         record.lateMinutes > 0 ? ` (Terlambat ${record.lateMinutes} menit)` : ''
                       }${isPartTimeEmployee ? ' • Tersinkron ke Log Presensi & Slip Gaji Part-Time!' : '!'}`
                     );
@@ -3883,7 +3920,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                     setAttendanceNotice(
                       `Berhasil Absen Pulang dengan Foto Wajah & GPS HP pukul ${record.checkOut} WIB (${
                         record.checkOutFullTimestamp || ''
-                      }) • Jam Kerja Aktual: ${record.workHours} Jam (Maks. ${myStandardDailyHours} Jam/Hari)${
+                      }) di Cabang ${recordedBranchLabel || record.checkOutLocationAddress || myShift.location} • Jam Kerja Aktual: ${record.workHours} Jam (Maks. ${myStandardDailyHours} Jam/Hari)${
                         isPartTimeEmployee ? ' • Tersinkron ke Log Presensi & Slip Gaji Part-Time!' : '!'
                       }`
                     );
@@ -3899,7 +3936,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
               <div>
                 <div className="flex items-center gap-2 flex-wrap">
                   <h3 className="text-sm font-bold text-slate-900">
-                    Riwayat Presensi, Foto Wajah &amp; Titik Lokasi GPS Saya ({effectiveSelectedPeriod})
+                    Riwayat Presensi, Foto Wajah &amp; Titik Lokasi Cabang GPS Saya ({effectiveSelectedPeriod})
                   </h3>
                   {isSelectedPortalPeriodLocked ? (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300">
@@ -3907,7 +3944,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                       Periode Terkunci (Arsip)
                     </span>
                   ) : (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-800 border border-amber-200">
                       Periode Aktif Berjalan
                     </span>
                   )}
@@ -3920,7 +3957,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
 
               <div className="flex flex-wrap items-center gap-2 shrink-0">
                 <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-300 rounded-xl px-3 py-1.5">
-                  <Calendar className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  <Calendar className="w-3.5 h-3.5 text-amber-600 shrink-0" />
                   <span className="text-[11px] font-semibold text-slate-600">Periode Absensi:</span>
                   <select
                     value={effectiveSelectedPeriod}
@@ -3953,9 +3990,9 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 <button
                   type="button"
                   onClick={() => setActivePortalTab('payroll')}
-                  className="px-3 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs font-bold cursor-pointer inline-flex items-center gap-1.5"
+                  className="px-3 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-bold cursor-pointer inline-flex items-center gap-1.5"
                 >
-                  <WalletCards className="w-3.5 h-3.5 text-emerald-600" />
+                  <WalletCards className="w-3.5 h-3.5 text-amber-600" />
                   <span>Buka Slip Gaji ({effectiveSelectedPeriod})</span>
                 </button>
               </div>
@@ -3974,6 +4011,11 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                     const schedOut = att.scheduledCheckOut || myShift.checkOutTime;
                     const shiftLabel = att.shiftName || myShift.name;
                     const photoToShow = att.facePhotoSnapshot || att.checkOutPhotoSnapshot;
+                    const detectedBranchName =
+                      att.branchName ||
+                      (att.locationAddress?.startsWith('[')
+                        ? att.locationAddress.slice(1, att.locationAddress.indexOf(']'))
+                        : undefined);
                     return (
                       <div key={att.id} className="p-4 space-y-3 hover:bg-slate-50/70">
                         {/* Top Row: Date + Status Badge */}
@@ -3983,7 +4025,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                               {formatIndoDate(att.date)}
                             </span>
                             {att.checkInFullTimestamp && (
-                              <span className="text-[10px] font-mono text-emerald-700 block mt-0.5 tabular-nums">
+                              <span className="text-[10px] font-mono text-amber-700 block mt-0.5 tabular-nums">
                                 {att.checkInFullTimestamp}
                               </span>
                             )}
@@ -3991,7 +4033,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                           <span
                             className={`px-2 py-0.5 rounded-md text-[10px] font-bold shrink-0 ${
                               att.status === 'Hadir Tepat Waktu'
-                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                ? 'bg-amber-50 text-amber-700 border border-amber-200'
                                 : att.status === 'Terlambat'
                                 ? 'bg-amber-50 text-amber-700 border border-amber-200'
                                 : 'bg-blue-50 text-blue-700 border border-blue-200'
@@ -4013,9 +4055,9 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                               <img
                                 src={photoToShow}
                                 alt="Foto Absen"
-                                className="w-14 h-14 rounded-xl object-cover border border-emerald-300 shadow-2xs"
+                                className="w-14 h-14 rounded-xl object-cover border border-amber-300 shadow-2xs"
                               />
-                              <span className="absolute bottom-0.5 right-0.5 bg-emerald-600 text-white text-[9px] font-bold px-1 rounded">
+                              <span className="absolute bottom-0.5 right-0.5 bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 font-bold text-[9px] font-bold px-1 rounded">
                                 Foto
                               </span>
                             </button>
@@ -4033,7 +4075,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                               </span>
                             </div>
                             <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 font-mono text-[11px] tabular-nums">
-                              <span className="text-emerald-700 font-bold">
+                              <span className="text-amber-700 font-bold">
                                 Masuk: {att.checkIn || '-'}
                               </span>
                               <span className="text-indigo-700 font-bold">
@@ -4044,18 +4086,24 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                               <button
                                 type="button"
                                 onClick={() => setPreviewAttendanceRecord(att)}
-                                className="text-[11px] font-bold text-emerald-700 underline cursor-pointer"
+                                className="text-[11px] font-bold text-amber-700 underline cursor-pointer"
                               >
-                                Lihat Bukti Foto & Watermark GPS →
+                                Lihat Bukti Foto &amp; Watermark GPS →
                               </button>
                             )}
                           </div>
                         </div>
 
-                        {/* Bottom Row: GPS Location & Distance */}
-                        <div className="text-[11px] text-slate-600 space-y-0.5">
+                        {/* Bottom Row: Branch Badge + GPS Location & Distance */}
+                        <div className="text-[11px] text-slate-600 space-y-1">
+                          {detectedBranchName && (
+                            <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-neutral-900 text-amber-300 border border-amber-500/40 text-[10px] font-extrabold">
+                              <MapPin className="w-3 h-3 text-amber-400 shrink-0" />
+                              <span>Cabang: {detectedBranchName}</span>
+                            </div>
+                          )}
                           <div className="flex items-start gap-1.5">
-                            <MapPin className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                            <MapPin className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
                             <span className="font-medium text-slate-800 break-words">
                               {att.locationAddress || att.notes || '-'}
                             </span>
@@ -4064,7 +4112,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                             <div className="pl-5 text-[10px] font-mono text-slate-500 tabular-nums break-all">
                               GPS: {att.locationCoords.latitude.toFixed(6)},{' '}
                               {att.locationCoords.longitude.toFixed(6)}
-                              {att.distanceMeters !== undefined ? ` (${att.distanceMeters}m ≤ 25m)` : ''}
+                              {att.distanceMeters !== undefined ? ` (Jarak: ${att.distanceMeters}m)` : ''}
                             </div>
                           )}
                         </div>
@@ -4078,12 +4126,12 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   <table className="w-full text-left border-collapse text-xs">
                     <thead>
                       <tr className="bg-slate-50 text-slate-500 border-b border-slate-200 uppercase text-[10px] font-bold">
-                        <th className="py-3 px-4">Tanggal & Jam Real-Time</th>
+                        <th className="py-3 px-4">Tanggal &amp; Jam Real-Time</th>
                         <th className="py-3 px-4">Bukti Foto Wajah</th>
                         <th className="py-3 px-4">Jadwal Shift</th>
                         <th className="py-3 px-4">Jam Masuk / Pulang</th>
                         <th className="py-3 px-4">Status Evaluasi Shift</th>
-                        <th className="py-3 px-4">Detail Lokasi GPS HP</th>
+                        <th className="py-3 px-4">Lokasi Cabang &amp; Detail GPS HP</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -4092,6 +4140,11 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                         const schedOut = att.scheduledCheckOut || myShift.checkOutTime;
                         const shiftLabel = att.shiftName || myShift.name;
                         const photoToShow = att.facePhotoSnapshot || att.checkOutPhotoSnapshot;
+                        const detectedBranchName =
+                          att.branchName ||
+                          (att.locationAddress?.startsWith('[')
+                            ? att.locationAddress.slice(1, att.locationAddress.indexOf(']'))
+                            : undefined);
                         return (
                           <tr key={att.id} className="hover:bg-slate-50/80">
                             <td className="py-3 px-4 whitespace-nowrap">
@@ -4099,7 +4152,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                                 {formatIndoDate(att.date)}
                               </span>
                               {att.checkInFullTimestamp && (
-                                <span className="text-[10px] font-mono text-emerald-700 block mt-0.5 tabular-nums">
+                                <span className="text-[10px] font-mono text-amber-700 block mt-0.5 tabular-nums">
                                   {att.checkInFullTimestamp}
                                 </span>
                               )}
@@ -4114,11 +4167,11 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                                   <img
                                     src={photoToShow}
                                     alt="Foto Absen"
-                                    className="w-12 h-10 rounded-lg object-cover border border-emerald-300 shadow-2xs group-hover:ring-2 group-hover:ring-emerald-500 transition-all"
+                                    className="w-12 h-10 rounded-lg object-cover border border-amber-300 shadow-2xs group-hover:ring-2 group-hover:ring-amber-500 transition-all"
                                   />
                                   <div>
-                                    <span className="text-[11px] font-bold text-emerald-700 group-hover:underline block">
-                                      Lihat Foto & GPS
+                                    <span className="text-[11px] font-bold text-amber-700 group-hover:underline block">
+                                      Lihat Foto &amp; GPS
                                     </span>
                                     <span className="text-[10px] text-slate-400 block">
                                       Watermark Real-Time
@@ -4138,13 +4191,13 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                               </span>
                             </td>
                             <td className="py-3 px-4 font-mono tabular-nums">
-                              <span className="text-emerald-700 font-bold">
+                              <span className="text-amber-700 font-bold">
                                 Masuk: {att.checkIn || '-'}
                               </span>
                               <span className="block text-indigo-700 font-bold text-[11px]">
                                 Pulang: {att.checkOut || '-'} ({att.workHours} jam)
                               </span>
-                              <span className="block text-[10px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5 mt-0.5">
+                              <span className="block text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 mt-0.5">
                                 Gaji Hari Ini: {formatRupiah(Math.round((Number(att.workHours) || 0) * myHourlyRate))}
                               </span>
                             </td>
@@ -4152,7 +4205,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                               <span
                                 className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
                                   att.status === 'Hadir Tepat Waktu'
-                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                    ? 'bg-amber-50 text-amber-700 border border-amber-200'
                                     : att.status === 'Terlambat'
                                     ? 'bg-amber-50 text-amber-700 border border-amber-200'
                                     : 'bg-blue-50 text-blue-700 border border-blue-200'
@@ -4167,7 +4220,13 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                                 </span>
                               )}
                             </td>
-                            <td className="py-3 px-4 max-w-xs">
+                            <td className="py-3 px-4 max-w-xs space-y-1">
+                              {detectedBranchName && (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-neutral-900 text-amber-300 border border-amber-500/40 text-[10px] font-extrabold">
+                                  <MapPin className="w-3 h-3 text-amber-400 shrink-0" />
+                                  <span>Cabang: {detectedBranchName}</span>
+                                </span>
+                              )}
                               <div className="text-[11px] font-medium text-slate-800 line-clamp-2">
                                 {att.locationAddress || att.notes || '-'}
                               </div>
@@ -4175,7 +4234,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                                 <div className="text-[10px] font-mono text-slate-500 mt-0.5 tabular-nums">
                                   GPS: {att.locationCoords.latitude.toFixed(6)},{' '}
                                   {att.locationCoords.longitude.toFixed(6)}
-                                  {att.distanceMeters !== undefined ? ` (${att.distanceMeters}m ≤ 25m)` : ''}
+                                  {att.distanceMeters !== undefined ? ` (${att.distanceMeters}m)` : ''}
                                 </div>
                               )}
                             </td>
@@ -4196,8 +4255,8 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 <div className="px-5 py-4 bg-slate-900 text-white flex items-center justify-between">
                   <div>
                     <h4 className="text-sm font-bold flex items-center gap-2">
-                      <Camera className="w-4 h-4 text-emerald-400" />
-                      <span>Bukti Foto Wajah & Lokasi GPS Real-Time ({formatIndoDate(previewAttendanceRecord.date)})</span>
+                      <Camera className="w-4 h-4 text-amber-400" />
+                      <span>Bukti Foto Wajah &amp; Lokasi GPS Real-Time ({formatIndoDate(previewAttendanceRecord.date)})</span>
                     </h4>
                     <p className="text-[11px] text-slate-300 mt-0.5">
                       {currentEmployee.fullName} ({currentEmployee.nik}) • {previewAttendanceRecord.shiftName || myShift.name}
@@ -4216,7 +4275,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     {previewAttendanceRecord.facePhotoSnapshot && (
                       <div className="space-y-1.5">
-                        <span className="text-xs font-bold text-emerald-800 block">
+                        <span className="text-xs font-bold text-amber-800 block">
                           Foto Absen Masuk ({previewAttendanceRecord.checkIn} WIB)
                         </span>
                         <img
@@ -4247,20 +4306,33 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                         {previewAttendanceRecord.checkInFullTimestamp || `${previewAttendanceRecord.date} • ${previewAttendanceRecord.checkIn} WIB`}
                       </span>
                     </div>
+                    {(previewAttendanceRecord.branchName ||
+                      previewAttendanceRecord.locationAddress?.startsWith('[')) && (
+                      <div className="flex flex-wrap justify-between gap-2">
+                        <span className="text-slate-500">Cabang Terverifikasi:</span>
+                        <span className="font-extrabold text-amber-800">
+                          {previewAttendanceRecord.branchName ||
+                            previewAttendanceRecord.locationAddress?.slice(
+                              1,
+                              previewAttendanceRecord.locationAddress.indexOf(']')
+                            )}
+                        </span>
+                      </div>
+                    )}
                     {previewAttendanceRecord.locationCoords && (
                       <div className="flex flex-wrap justify-between gap-2">
                         <span className="text-slate-500">Titik Koordinat GPS HP:</span>
-                        <span className="font-mono font-bold text-emerald-700">
+                        <span className="font-mono font-bold text-amber-700">
                           Lat {previewAttendanceRecord.locationCoords.latitude.toFixed(6)}°, Long{' '}
                           {previewAttendanceRecord.locationCoords.longitude.toFixed(6)}°
                           {previewAttendanceRecord.distanceMeters !== undefined
-                            ? ` (Jarak: ${previewAttendanceRecord.distanceMeters}m / Maks 25m)`
+                            ? ` (Jarak: ${previewAttendanceRecord.distanceMeters}m)`
                             : ''}
                         </span>
                       </div>
                     )}
                     <div className="pt-1 border-t border-slate-200/80">
-                      <span className="text-slate-500 block mb-0.5">Detail Alamat Lokasi GPS HP:</span>
+                      <span className="text-slate-500 block mb-0.5">Detail Alamat &amp; Cabang Lokasi GPS HP:</span>
                       <span className="font-semibold text-slate-900 block">
                         {previewAttendanceRecord.locationAddress || previewAttendanceRecord.notes || '-'}
                       </span>
@@ -4279,7 +4351,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
           {/* Quota & Summary Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs flex items-center gap-4">
-              <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl">
+              <div className="p-3 bg-amber-50 text-amber-600 rounded-xl">
                 <CalendarDays className="w-6 h-6" />
               </div>
               <div>
@@ -4287,7 +4359,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 <h3 className="text-2xl font-bold text-slate-900 mt-0.5 tabular-nums">
                   {currentEmployee.remainingLeaveDays} <span className="text-sm font-normal text-slate-400">Hari</span>
                 </h3>
-                <p className="text-xs text-emerald-600 mt-0.5">Dari hak 12 hari/tahun</p>
+                <p className="text-xs text-amber-600 mt-0.5">Dari hak 12 hari/tahun</p>
               </div>
             </div>
 
@@ -4331,7 +4403,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
               </div>
               <button
                 onClick={() => setIsLeaveModalOpen(true)}
-                className="min-h-[42px] inline-flex items-center justify-center gap-2 px-4 py-2 text-xs sm:text-sm font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-xs transition-colors w-full sm:w-auto cursor-pointer"
+                className="min-h-[42px] inline-flex items-center justify-center gap-2 px-4 py-2 text-xs sm:text-sm font-bold bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold rounded-xl shadow-xs transition-colors w-full sm:w-auto cursor-pointer"
               >
                 <Plus className="w-4 h-4" />
                 Buat Pengajuan Cuti Baru
@@ -4355,17 +4427,17 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 </span>
               </div>
 
-              <div className="flex items-center justify-between p-3 bg-emerald-50/90 border border-emerald-200 rounded-xl">
+              <div className="flex items-center justify-between p-3 bg-amber-50/90 border border-amber-200 rounded-xl">
                 <div className="flex items-center gap-2.5">
-                  <div className="p-2 rounded-lg bg-emerald-100 text-emerald-700 border border-emerald-300">
+                  <div className="p-2 rounded-lg bg-amber-100 text-amber-700 border border-amber-300">
                     <CheckCircle2 className="w-4 h-4" />
                   </div>
                   <div>
-                    <span className="text-[11px] font-bold text-emerald-900 block">Disetujui HRD</span>
-                    <span className="text-[10px] text-emerald-700">Izin/Cuti resmi tercatat</span>
+                    <span className="text-[11px] font-bold text-amber-900 block">Disetujui HRD</span>
+                    <span className="text-[10px] text-amber-700">Izin/Cuti resmi tercatat</span>
                   </div>
                 </div>
-                <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-emerald-200/80 text-emerald-950 border border-emerald-300">
+                <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-amber-200/80 text-amber-950 border border-amber-300">
                   {myLeaveRequests.filter((l) => l.status === 'Disetujui').length} Pengajuan
                 </span>
               </div>
@@ -4405,14 +4477,14 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                       <span
                         className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold shrink-0 ${
                           leave.status === 'Disetujui'
-                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                            ? 'bg-amber-100 text-amber-800 border border-amber-300'
                             : leave.status === 'Ditolak'
                             ? 'bg-rose-100 text-rose-800 border border-rose-300'
                             : 'bg-amber-100 text-amber-900 border border-amber-300'
                         }`}
                       >
                         {leave.status === 'Disetujui' ? (
-                          <CheckCircle2 className="w-3 h-3 text-emerald-700" />
+                          <CheckCircle2 className="w-3 h-3 text-amber-700" />
                         ) : leave.status === 'Ditolak' ? (
                           <X className="w-3 h-3 text-rose-700" />
                         ) : (
@@ -4516,14 +4588,14 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                           <span
                             className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold ${
                               leave.status === 'Disetujui'
-                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                ? 'bg-amber-100 text-amber-800 border border-amber-300'
                                 : leave.status === 'Ditolak'
                                 ? 'bg-rose-100 text-rose-800 border border-rose-300'
                                 : 'bg-amber-100 text-amber-900 border border-amber-300'
                             }`}
                           >
                             {leave.status === 'Disetujui' ? (
-                              <CheckCircle2 className="w-3 h-3 text-emerald-700" />
+                              <CheckCircle2 className="w-3 h-3 text-amber-700" />
                             ) : leave.status === 'Ditolak' ? (
                               <X className="w-3 h-3 text-rose-700" />
                             ) : (
@@ -4554,7 +4626,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
               onClick={() => setClaimsSubTab('overtime')}
               className={`flex-1 py-2 text-xs sm:text-sm font-bold rounded-lg transition-all cursor-pointer ${
                 claimsSubTab === 'overtime'
-                  ? 'bg-white text-emerald-800 shadow-xs'
+                  ? 'bg-white text-amber-800 shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
@@ -4564,7 +4636,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
               onClick={() => setClaimsSubTab('reimbursement')}
               className={`flex-1 py-2 text-xs sm:text-sm font-bold rounded-lg transition-all cursor-pointer ${
                 claimsSubTab === 'reimbursement'
-                  ? 'bg-white text-emerald-800 shadow-xs'
+                  ? 'bg-white text-amber-800 shadow-xs'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
@@ -4610,17 +4682,17 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   </span>
                 </div>
 
-                <div className="flex items-center justify-between p-3 bg-emerald-50/90 border border-emerald-200 rounded-xl">
+                <div className="flex items-center justify-between p-3 bg-amber-50/90 border border-amber-200 rounded-xl">
                   <div className="flex items-center gap-2.5">
-                    <div className="p-2 rounded-lg bg-emerald-100 text-emerald-700 border border-emerald-300">
+                    <div className="p-2 rounded-lg bg-amber-100 text-amber-700 border border-amber-300">
                       <CheckCircle2 className="w-4 h-4" />
                     </div>
                     <div>
-                      <span className="text-[11px] font-bold text-emerald-900 block">Disetujui</span>
-                      <span className="text-[10px] text-emerald-700">Masuk ke Slip Gaji</span>
+                      <span className="text-[11px] font-bold text-amber-900 block">Disetujui</span>
+                      <span className="text-[10px] text-amber-700">Masuk ke Slip Gaji</span>
                     </div>
                   </div>
-                  <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-emerald-200/80 text-emerald-950 border border-emerald-300">
+                  <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-amber-200/80 text-amber-950 border border-amber-300">
                     {myOvertimeRequests.filter((o) => o.status === 'Disetujui').length} Klaim
                   </span>
                 </div>
@@ -4661,7 +4733,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 </div>
                 <div>
                   <span className="text-indigo-700 block text-[11px]">Total Upah Lembur Disetujui:</span>
-                  <span className="font-bold text-emerald-700 text-sm">
+                  <span className="font-bold text-amber-700 text-sm">
                     {formatRupiah(
                       myOvertimeRequests
                         .filter((o) => o.status === 'Disetujui')
@@ -4715,7 +4787,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                               {ot.taskDescription}
                             </td>
                             <td className="py-3 px-3 whitespace-nowrap">
-                              <span className="font-bold text-emerald-700 block">
+                              <span className="font-bold text-amber-700 block">
                                 {formatCurrency(ot.calculatedPay)}
                               </span>
                               <span className="text-[10px] font-mono text-slate-400">
@@ -4726,14 +4798,14 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                               <span
                                 className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold ${
                                   ot.status === 'Disetujui'
-                                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                    ? 'bg-amber-100 text-amber-800 border border-amber-300'
                                     : ot.status === 'Ditolak'
                                     ? 'bg-rose-100 text-rose-800 border border-rose-300'
                                     : 'bg-amber-100 text-amber-900 border border-amber-300'
                                 }`}
                               >
                                 {ot.status === 'Disetujui' ? (
-                                  <CheckCircle2 className="w-3 h-3 text-emerald-700" />
+                                  <CheckCircle2 className="w-3 h-3 text-amber-700" />
                                 ) : ot.status === 'Ditolak' ? (
                                   <X className="w-3 h-3 text-rose-700" />
                                 ) : (
@@ -4788,17 +4860,17 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   </span>
                 </div>
 
-                <div className="flex items-center justify-between p-3 bg-emerald-50/90 border border-emerald-200 rounded-xl">
+                <div className="flex items-center justify-between p-3 bg-amber-50/90 border border-amber-200 rounded-xl">
                   <div className="flex items-center gap-2.5">
-                    <div className="p-2 rounded-lg bg-emerald-100 text-emerald-700 border border-emerald-300">
+                    <div className="p-2 rounded-lg bg-amber-100 text-amber-700 border border-amber-300">
                       <CheckCircle2 className="w-4 h-4" />
                     </div>
                     <div>
-                      <span className="text-[11px] font-bold text-emerald-900 block">Disetujui / Dibayarkan</span>
-                      <span className="text-[10px] text-emerald-700">Klaim terverifikasi</span>
+                      <span className="text-[11px] font-bold text-amber-900 block">Disetujui / Dibayarkan</span>
+                      <span className="text-[10px] text-amber-700">Klaim terverifikasi</span>
                     </div>
                   </div>
-                  <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-emerald-200/80 text-emerald-950 border border-emerald-300">
+                  <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-amber-200/80 text-amber-950 border border-amber-300">
                     {
                       myReimbursements.filter(
                         (r) => r.status === 'Disetujui' || r.status === 'Dibayarkan'
@@ -4878,14 +4950,14 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                             <span
                               className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold ${
                                 rmb.status === 'Dibayarkan' || rmb.status === 'Disetujui'
-                                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                                  ? 'bg-amber-100 text-amber-800 border border-amber-300'
                                   : rmb.status === 'Ditolak'
                                   ? 'bg-rose-100 text-rose-800 border border-rose-300'
                                   : 'bg-amber-100 text-amber-900 border border-amber-300'
                               }`}
                             >
                               {rmb.status === 'Dibayarkan' || rmb.status === 'Disetujui' ? (
-                                <CheckCircle2 className="w-3 h-3 text-emerald-700" />
+                                <CheckCircle2 className="w-3 h-3 text-amber-700" />
                               ) : rmb.status === 'Ditolak' ? (
                                 <X className="w-3 h-3 text-rose-700" />
                               ) : (
@@ -4908,16 +4980,64 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       {/* TAB: PENGAJUAN KASBON & CICILAN POTONG GAJI */}
       {activePortalTab === 'cash_advance' && (
         <div className="space-y-6 animate-in fade-in-50">
+          {/* Info / Warning Banner Jadwal Pengajuan Kasbon (Tanggal 15 s/d 23) */}
+          <div
+            className={`p-4 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs ${
+              isCashAdvanceWindowOpen
+                ? 'bg-neutral-900 border-amber-500/40 text-amber-100'
+                : 'bg-amber-50 border-amber-300 text-amber-950'
+            }`}
+          >
+            <div className="flex items-start sm:items-center gap-3">
+              <div
+                className={`p-2 rounded-xl shrink-0 border ${
+                  isCashAdvanceWindowOpen
+                    ? 'bg-amber-500/20 border-amber-500/40 text-amber-400'
+                    : 'bg-amber-100 border-amber-300 text-amber-700'
+                }`}
+              >
+                <AlertCircle className="w-5 h-5" />
+              </div>
+              <div>
+                <p
+                  className={`text-xs sm:text-sm font-extrabold ${
+                    isCashAdvanceWindowOpen ? 'text-amber-300' : 'text-amber-900'
+                  }`}
+                >
+                  Pengajuan Kasbon dibuka setiap tanggal 15 dan ditutup paling lambat tanggal 23 setiap bulannya.
+                </p>
+                <p
+                  className={`text-[11px] mt-0.5 ${
+                    isCashAdvanceWindowOpen ? 'text-stone-300' : 'text-amber-800'
+                  }`}
+                >
+                  {isCashAdvanceWindowOpen
+                    ? `Status Hari Ini (Tanggal ${currentCashAdvanceDayOfMonth}): Periode pengajuan kasbon sedang DIBUKA. Plafon maksimal pengajuan Rp 500.000.`
+                    : `Status Hari Ini (Tanggal ${currentCashAdvanceDayOfMonth}): Periode pengajuan kasbon sedang DITUTUP. Silakan ajukan kembali pada tanggal 15–23.`}
+                </p>
+              </div>
+            </div>
+            <span
+              className={`px-3 py-1 rounded-lg text-[11px] font-extrabold uppercase tracking-wider shrink-0 self-start sm:self-center border ${
+                isCashAdvanceWindowOpen
+                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                  : 'bg-amber-200/80 text-amber-900 border-amber-400'
+              }`}
+            >
+              {isCashAdvanceWindowOpen ? 'Periode Buka (15–23)' : 'Periode Tutup'}
+            </span>
+          </div>
+
           {cashAdvanceSuccessMsg && (
-            <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-emerald-900 text-xs font-semibold flex items-center justify-between shadow-xs">
+            <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl text-amber-900 text-xs font-semibold flex items-center justify-between shadow-xs">
               <div className="flex items-center gap-2.5">
-                <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                <CheckCircle2 className="w-5 h-5 text-amber-600 shrink-0" />
                 <span>{cashAdvanceSuccessMsg}</span>
               </div>
               <button
                 type="button"
                 onClick={() => setCashAdvanceSuccessMsg(null)}
-                className="text-emerald-700 hover:text-emerald-950 font-bold cursor-pointer"
+                className="text-amber-700 hover:text-amber-950 font-bold cursor-pointer"
               >
                 ✕
               </button>
@@ -4926,32 +5046,49 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
 
           {/* 3 Summary Cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-gradient-to-br from-amber-500 to-orange-600 rounded-2xl p-5 text-white shadow-sm flex flex-col justify-between">
+            <div className="bg-gradient-to-br from-neutral-950 via-stone-900 to-neutral-900 border border-amber-500/35 rounded-2xl p-5 text-white shadow-sm flex flex-col justify-between">
               <div>
-                <span className="text-xs font-bold uppercase tracking-wider text-amber-100">
+                <span className="text-xs font-bold uppercase tracking-wider text-amber-300">
                   Plafon Maksimum Kasbon Anda
                 </span>
-                <h3 className="text-2xl font-extrabold mt-1">
+                <h3 className="text-2xl font-extrabold text-amber-400 mt-1">
                   {formatRupiah(maxCashAdvancePlafon)}
                 </h3>
-                <p className="text-xs text-amber-100 mt-1">
-                  Maksimal 100% dari Gaji Pokok ({currentEmployee.role})
+                <p className="text-xs text-stone-300 mt-1">
+                  Maksimal Rp 500.000 per periode (dikurangi sisa pinjaman aktif)
                 </p>
               </div>
-              <div className="mt-4 pt-3 border-t border-white/20">
+              <div className="mt-4 pt-3 border-t border-amber-500/20">
                 <button
                   type="button"
+                  disabled={!isCashAdvanceWindowOpen || maxCashAdvancePlafon <= 0}
                   onClick={() => {
-                    setCashAdvanceAmount(Math.min(1500000, maxCashAdvancePlafon));
-                    setCashAdvanceTenor(3);
+                    if (!isCashAdvanceWindowOpen) return;
+                    setCashAdvanceAmount(Math.min(500000, maxCashAdvancePlafon));
+                    setCashAdvanceTenor(1);
                     setCashAdvanceReason('');
                     setCashAdvanceError(null);
                     setIsCashAdvanceModalOpen(true);
                   }}
-                  className="w-full py-2 px-3 bg-white text-amber-900 hover:bg-amber-50 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+                  title={
+                    !isCashAdvanceWindowOpen
+                      ? 'Pengajuan Kasbon dibuka setiap tanggal 15 dan ditutup paling lambat tanggal 23 setiap bulannya.'
+                      : maxCashAdvancePlafon <= 0
+                        ? 'Sisa plafon kasbon Anda Rp 0 (batas maksimal Rp 500.000 terpakai).'
+                        : 'Ajukan Pinjaman Kasbon Baru'
+                  }
+                  className={`w-full py-2 px-3 rounded-xl text-xs font-extrabold flex items-center justify-center gap-1.5 shadow-xs transition-colors ${
+                    !isCashAdvanceWindowOpen || maxCashAdvancePlafon <= 0
+                      ? 'bg-neutral-800 text-stone-500 border border-neutral-700 cursor-not-allowed opacity-75'
+                      : 'bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-neutral-950 cursor-pointer'
+                  }`}
                 >
-                  <Plus className="w-4 h-4 text-amber-700" />
-                  <span>Ajukan Pinjaman Kasbon Baru</span>
+                  <Plus className="w-4 h-4" />
+                  <span>
+                    {!isCashAdvanceWindowOpen
+                      ? 'Pengajuan Tutup (Buka Tgl 15–23)'
+                      : 'Ajukan Pinjaman Kasbon Baru'}
+                  </span>
                 </button>
               </div>
             </div>
@@ -4981,7 +5118,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
                   Potongan Cicilan Bulan Ini ({companyConfig.currentPayrollPeriod})
                 </span>
-                <h3 className="text-2xl font-bold text-emerald-700 mt-1">
+                <h3 className="text-2xl font-bold text-amber-700 mt-1">
                   {formatRupiah(
                     myCashAdvances
                       .filter((c) => c.status === 'disbursed')
@@ -5020,14 +5157,25 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
               </div>
               <button
                 type="button"
+                disabled={!isCashAdvanceWindowOpen || maxCashAdvancePlafon <= 0}
                 onClick={() => {
-                  setCashAdvanceAmount(Math.min(1500000, maxCashAdvancePlafon));
-                  setCashAdvanceTenor(3);
+                  if (!isCashAdvanceWindowOpen) return;
+                  setCashAdvanceAmount(Math.min(500000, maxCashAdvancePlafon));
+                  setCashAdvanceTenor(1);
                   setCashAdvanceReason('');
                   setCashAdvanceError(null);
                   setIsCashAdvanceModalOpen(true);
                 }}
-                className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer self-start sm:self-auto"
+                title={
+                  !isCashAdvanceWindowOpen
+                    ? 'Pengajuan Kasbon dibuka setiap tanggal 15 dan ditutup paling lambat tanggal 23 setiap bulannya.'
+                    : 'Ajukan Kasbon Baru'
+                }
+                className={`px-4 py-2 rounded-xl text-xs font-extrabold inline-flex items-center gap-1.5 shadow-xs transition-colors self-start sm:self-auto ${
+                  !isCashAdvanceWindowOpen || maxCashAdvancePlafon <= 0
+                    ? 'bg-slate-200 text-slate-500 border border-slate-300 cursor-not-allowed'
+                    : 'bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-neutral-950 cursor-pointer'
+                }`}
               >
                 <Plus className="w-4 h-4" />
                 <span>Ajukan Kasbon Baru</span>
@@ -5051,17 +5199,17 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 </span>
               </div>
 
-              <div className="flex items-center justify-between p-3 bg-emerald-50/90 border border-emerald-200 rounded-xl">
+              <div className="flex items-center justify-between p-3 bg-amber-50/90 border border-amber-200 rounded-xl">
                 <div className="flex items-center gap-2.5">
-                  <div className="p-2 rounded-lg bg-emerald-100 text-emerald-700 border border-emerald-300">
+                  <div className="p-2 rounded-lg bg-amber-100 text-amber-700 border border-amber-300">
                     <CheckCircle2 className="w-4 h-4" />
                   </div>
                   <div>
-                    <span className="text-[11px] font-bold text-emerald-900 block">Disetujui / Dicairkan</span>
-                    <span className="text-[10px] text-emerald-700">Aktif atau Lunas</span>
+                    <span className="text-[11px] font-bold text-amber-900 block">Disetujui / Dicairkan</span>
+                    <span className="text-[10px] text-amber-700">Aktif atau Lunas</span>
                   </div>
                 </div>
-                <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-emerald-200/80 text-emerald-950 border border-emerald-300">
+                <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-amber-200/80 text-amber-950 border border-amber-300">
                   {
                     myCashAdvances.filter(
                       (c) => c.status === 'approved' || c.status === 'disbursed' || c.status === 'paid'
@@ -5111,21 +5259,21 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                       : ca.status === 'approved'
                       ? {
                           label: 'Disetujui HRD (Menunggu Pencairan Transfer)',
-                          cls: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+                          cls: 'bg-amber-100 text-amber-800 border-amber-300',
                           isApproved: true,
                           isRejected: false,
                         }
                       : ca.status === 'disbursed'
                       ? {
                           label: 'Disetujui & Aktif Dicairkan (Sedang Dicicil)',
-                          cls: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+                          cls: 'bg-amber-100 text-amber-800 border-amber-300',
                           isApproved: true,
                           isRejected: false,
                         }
                       : ca.status === 'paid'
                       ? {
                           label: 'Disetujui & Lunas',
-                          cls: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+                          cls: 'bg-amber-100 text-amber-800 border-amber-300',
                           isApproved: true,
                           isRejected: false,
                         }
@@ -5151,7 +5299,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                               className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${statusInfo.cls}`}
                             >
                               {statusInfo.isApproved ? (
-                                <CheckCircle2 className="w-3 h-3 text-emerald-700" />
+                                <CheckCircle2 className="w-3 h-3 text-amber-700" />
                               ) : statusInfo.isRejected ? (
                                 <X className="w-3 h-3 text-rose-700" />
                               ) : (
@@ -5185,7 +5333,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
                         <div className="p-3 bg-white rounded-xl border border-slate-200">
                           <span className="text-slate-400 text-[11px] block">Sudah Terpotong Gaji:</span>
-                          <span className="font-bold text-emerald-700 text-sm">
+                          <span className="font-bold text-amber-700 text-sm">
                             {formatRupiah(ca.totalPaid)}
                           </span>
                         </div>
@@ -5221,7 +5369,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                                 key={inst.installmentNumber}
                                 className={`p-2.5 rounded-xl border text-xs flex items-center justify-between ${
                                   inst.status === 'deducted'
-                                    ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900'
+                                    ? 'bg-amber-50/70 border-amber-200 text-amber-900'
                                     : 'bg-white border-slate-200 text-slate-700'
                                 }`}
                               >
@@ -5236,7 +5384,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                                 <span
                                   className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
                                     inst.status === 'deducted'
-                                      ? 'bg-emerald-600 text-white'
+                                      ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 font-bold'
                                       : 'bg-slate-100 text-slate-600'
                                   }`}
                                 >
@@ -5296,18 +5444,21 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   <span className="text-[11px] text-amber-800 block">
                     Pemohon Kasbon: <strong>{currentEmployee.fullName}</strong> ({currentEmployee.nik})
                   </span>
-                  <span className="text-[11px] text-amber-900 font-bold">
-                    Plafon Maksimum Kasbon: {formatRupiah(maxCashAdvancePlafon)}
+                  <span className="text-[11px] text-amber-900 font-bold block">
+                    Sisa Plafon Maksimum Kasbon: {formatRupiah(maxCashAdvancePlafon)} (Maks. Rp 500.000)
+                  </span>
+                  <span className="text-[10px] text-amber-700 block mt-0.5">
+                    Jadwal Pengajuan: Tanggal 15 s/d 23 setiap bulan
                   </span>
                 </div>
-                <span className="text-[10px] font-bold bg-white px-2.5 py-1 rounded-lg border border-amber-300 text-amber-800">
+                <span className="text-[10px] font-bold bg-white px-2.5 py-1 rounded-lg border border-amber-300 text-amber-800 shrink-0">
                   Bunga 0%
                 </span>
               </div>
 
               <div>
                 <label className="block font-bold text-slate-700 mb-1">
-                  Nominal Pinjaman Kasbon (Rp) *
+                  Nominal Pinjaman Kasbon (Rp — Maksimal {formatRupiah(maxCashAdvancePlafon)}) *
                 </label>
                 <input
                   type="number"
@@ -5320,7 +5471,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   className="w-full p-2.5 bg-slate-50 border border-slate-300 rounded-xl font-mono text-sm font-extrabold text-slate-900 focus:outline-hidden focus:border-amber-600"
                 />
                 <div className="flex flex-wrap gap-1.5 mt-2">
-                  {[500000, 1000000, 2000000, 3000000, Math.round(maxCashAdvancePlafon * 0.5)]
+                  {[100000, 200000, 250000, 300000, 500000]
                     .filter((v, idx, arr) => v <= maxCashAdvancePlafon && arr.indexOf(v) === idx)
                     .map((preset) => (
                       <button
@@ -5329,7 +5480,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                         onClick={() => setCashAdvanceAmount(preset)}
                         className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border cursor-pointer transition-colors ${
                           cashAdvanceAmount === preset
-                            ? 'bg-amber-600 text-white border-amber-600'
+                            ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 border-amber-500 font-bold'
                             : 'bg-slate-100 text-slate-700 border-slate-200 hover:bg-amber-50'
                         }`}
                       >
@@ -5351,7 +5502,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                       onClick={() => setCashAdvanceTenor(t)}
                       className={`py-2.5 px-3 rounded-xl font-bold text-xs border transition-all cursor-pointer ${
                         cashAdvanceTenor === t
-                          ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+                          ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 border-amber-500 shadow-xs'
                           : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
                       }`}
                     >
@@ -5371,7 +5522,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   </span>
                 </div>
                 <span className="text-base font-black text-indigo-900">
-                  {formatRupiah(Math.round(cashAdvanceAmount / cashAdvanceTenor))} / bln
+                  {formatRupiah(Number((cashAdvanceAmount / cashAdvanceTenor).toFixed(2)))} / bln
                 </span>
               </div>
 
@@ -5399,7 +5550,8 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5"
+                  disabled={!isCashAdvanceWindowOpen || maxCashAdvancePlafon <= 0}
+                  className="px-5 py-2 text-xs font-bold bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 disabled:opacity-50 text-neutral-950 rounded-xl shadow-xs cursor-pointer flex items-center gap-1.5"
                 >
                   <HandCoins className="w-4 h-4" />
                   <span>Kirim Pengajuan Kasbon</span>
@@ -5416,7 +5568,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
           {/* Summary Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs flex items-center gap-4">
-              <div className="p-3 bg-teal-50 text-teal-700 rounded-xl">
+              <div className="p-3 bg-amber-50 text-amber-700 rounded-xl">
                 <Boxes className="w-6 h-6" />
               </div>
               <div>
@@ -5426,12 +5578,12 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 <h3 className="text-2xl font-bold text-slate-900 mt-0.5">
                   {myAssets.length} <span className="text-sm font-normal text-slate-400">Unit</span>
                 </h3>
-                <p className="text-xs text-teal-600 mt-0.5">Tanggung jawab dinas aktif</p>
+                <p className="text-xs text-amber-600 mt-0.5">Tanggung jawab dinas aktif</p>
               </div>
             </div>
 
             <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-xs flex items-center gap-4">
-              <div className="p-3 bg-emerald-50 text-emerald-700 rounded-xl">
+              <div className="p-3 bg-amber-50 text-amber-700 rounded-xl">
                 <DollarSign className="w-6 h-6" />
               </div>
               <div>
@@ -5441,7 +5593,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 <h3 className="text-xl font-bold text-slate-900 mt-0.5">
                   {formatRupiah(myAssets.reduce((sum, a) => sum + (a.purchaseCost || 0), 0))}
                 </h3>
-                <p className="text-xs text-emerald-600 mt-0.5">Inventaris Tas Grosir Import</p>
+                <p className="text-xs text-amber-600 mt-0.5">Inventaris Tas Grosir Import</p>
               </div>
             </div>
 
@@ -5473,7 +5625,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   Harap jaga dan rawat inventaris perusahaan yang diamanahkan kepada Anda dengan sebaik-baiknya
                 </p>
               </div>
-              <span className="text-xs font-semibold px-3 py-1 bg-teal-50 text-teal-800 rounded-lg border border-teal-200 self-start sm:self-auto">
+              <span className="text-xs font-semibold px-3 py-1 bg-amber-50 text-amber-800 rounded-lg border border-amber-200 self-start sm:self-auto">
                 {myAssets.length} Aset Terdaftar atas Nama Anda
               </span>
             </div>
@@ -5493,11 +5645,11 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 {myAssets.map((asset) => (
                   <div
                     key={asset.id}
-                    className="p-5 rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-slate-50/60 shadow-xs space-y-3 relative group hover:border-teal-300 transition-all"
+                    className="p-5 rounded-2xl border border-slate-200 bg-gradient-to-br from-white to-slate-50/60 shadow-xs space-y-3 relative group hover:border-amber-300 transition-all"
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="space-y-1">
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-teal-50 text-teal-700 border border-teal-200">
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-50 text-amber-700 border border-amber-200">
                           {asset.category}
                         </span>
                         <h4 className="text-sm font-bold text-slate-900 mt-1 leading-snug">
@@ -5512,7 +5664,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                       <span
                         className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${
                           asset.condition === 'Baik'
-                            ? 'bg-emerald-100 text-emerald-800'
+                            ? 'bg-amber-100 text-amber-800'
                             : asset.condition === 'Perlu Perbaikan'
                             ? 'bg-amber-100 text-amber-800'
                             : 'bg-rose-100 text-rose-800'
@@ -5558,7 +5710,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                     )}
 
                     <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
-                      <span className="flex items-center gap-1 text-[11px] text-emerald-600">
+                      <span className="flex items-center gap-1 text-[11px] text-amber-600">
                         <ShieldCheck className="w-3.5 h-3.5" />
                         Terdaftar resmi di HR & IT TGI
                       </span>
@@ -5669,8 +5821,8 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                         </div>
                         <div className="pl-3 border-l border-slate-200 text-center">
                           <span className={`inline-block px-3 py-1 rounded-full text-xs font-bold border ${
-                            rev.grade === 'A+' ? 'bg-emerald-100 text-emerald-800 border-emerald-300' :
-                            rev.grade === 'A' ? 'bg-teal-100 text-teal-800 border-teal-300' :
+                            rev.grade === 'A+' ? 'bg-amber-100 text-amber-800 border-amber-300' :
+                            rev.grade === 'A' ? 'bg-amber-100 text-amber-800 border-amber-300' :
                             rev.grade === 'B+' ? 'bg-blue-100 text-blue-800 border-blue-300' :
                             rev.grade === 'B' ? 'bg-amber-100 text-amber-800 border-amber-300' :
                             'bg-rose-100 text-rose-800 border-rose-300'
@@ -5699,11 +5851,11 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                       <div className="p-3 bg-white rounded-xl border border-slate-200">
                         <div className="flex justify-between items-center text-[11px] text-slate-500 mb-1">
                           <span>Kedisiplinan (20%)</span>
-                          <span className="font-bold text-teal-700">{rev.disciplineScore}</span>
+                          <span className="font-bold text-amber-700">{rev.disciplineScore}</span>
                         </div>
                         <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
                           <div
-                            className="h-full bg-teal-600 rounded-full"
+                            className="h-full bg-amber-600 rounded-full"
                             style={{ width: `${Math.min(100, rev.disciplineScore)}%` }}
                           />
                         </div>
@@ -5739,9 +5891,9 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                     {/* Feedback & Catatan Tertulis Atasan */}
                     <div className="space-y-2.5 text-xs">
                       {rev.strengthsNotes && (
-                        <div className="p-3 bg-emerald-50/70 border border-emerald-200/80 rounded-xl">
-                          <span className="font-bold text-emerald-900 flex items-center gap-1.5 text-xs">
-                            <ThumbsUp className="w-3.5 h-3.5 text-emerald-700" />
+                        <div className="p-3 bg-amber-50/70 border border-amber-200/80 rounded-xl">
+                          <span className="font-bold text-amber-900 flex items-center gap-1.5 text-xs">
+                            <ThumbsUp className="w-3.5 h-3.5 text-amber-700" />
                             Kelebihan & Prestasi Anda
                           </span>
                           <p className="text-slate-700 mt-1 text-[11px] leading-relaxed">
@@ -5776,18 +5928,18 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                     </div>
 
                     {/* Bonus Insentif Kinerja Terintegrasi */}
-                    <div className="p-3.5 bg-emerald-50 rounded-xl border border-emerald-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs">
+                    <div className="p-3.5 bg-amber-50 rounded-xl border border-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs">
                       <div>
-                        <span className="text-[11px] font-semibold text-emerald-900 block">
+                        <span className="text-[11px] font-semibold text-amber-900 block">
                           Bonus Insentif Kinerja untuk Periode Ini:
                         </span>
-                        <span className="text-base font-extrabold text-emerald-800">
+                        <span className="text-base font-extrabold text-amber-800">
                           {formatRupiah(rev.recommendedBonus)}
                         </span>
                       </div>
                       <div>
                         {rev.isBonusAppliedToPayroll ? (
-                          <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-600 text-white rounded-full font-bold text-xs shadow-2xs">
+                          <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 font-bold rounded-full font-bold text-xs shadow-2xs">
                             <CheckCircle2 className="w-3.5 h-3.5" />
                             Telah Dicairkan / Disinkronkan ke Slip Gaji ({rev.payrollPeriodApplied || rev.period})
                           </span>
@@ -5820,23 +5972,23 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
               </p>
             </div>
             {profileSuccessMsg && (
-              <span className="inline-flex items-center gap-1 px-3 py-1 bg-emerald-50 text-emerald-700 text-xs font-semibold rounded-lg border border-emerald-200">
-                <Check className="w-3.5 h-3.5 text-emerald-600" />
+              <span className="inline-flex items-center gap-1 px-3 py-1 bg-amber-50 text-amber-700 text-xs font-semibold rounded-lg border border-amber-200">
+                <Check className="w-3.5 h-3.5 text-amber-600" />
                 Data berhasil diperbarui &amp; tersinkronisasi ke Admin!
               </span>
             )}
           </div>
 
           {profileUploadBanner && (
-            <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 flex items-center justify-between gap-3 text-xs animate-in fade-in">
+            <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 flex items-center justify-between gap-3 text-xs animate-in fade-in">
               <div className="flex items-center gap-2.5">
-                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <CheckCircle2 className="w-4 h-4 text-amber-600 shrink-0" />
                 <span className="font-bold">{profileUploadBanner}</span>
               </div>
               <button
                 type="button"
                 onClick={() => setProfileUploadBanner(null)}
-                className="text-emerald-700 hover:text-emerald-950 p-1 cursor-pointer"
+                className="text-amber-700 hover:text-amber-950 p-1 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -5861,15 +6013,15 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
 
           <form onSubmit={handleSaveProfile} className="space-y-6">
             {/* SEKSI 1: PHOTO PROFIL & IDENTITAS PAJAK (NIK KTP 16 DIGIT + NPWP) */}
-            <div className="p-4 sm:p-5 bg-gradient-to-br from-emerald-50/70 via-white to-indigo-50/50 rounded-2xl border border-emerald-200/80 space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-emerald-200/60 pb-3">
+            <div className="p-4 sm:p-5 bg-gradient-to-br from-amber-50/70 via-white to-indigo-50/50 rounded-2xl border border-amber-200/80 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-amber-200/60 pb-3">
                 <div>
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-extrabold text-slate-900">
-                      <ImageIcon className="w-4 h-4 text-emerald-600" />
+                      <ImageIcon className="w-4 h-4 text-amber-600" />
                       Photo Profil, Nomor NIK KTP (16 Digit) &amp; Nomor NPWP Pajak
                     </span>
-                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-600 text-white shadow-2xs">
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 font-bold shadow-2xs">
                       Sinkron Otomatis ke Portal Admin HR &amp; PPh 21
                     </span>
                   </div>
@@ -5877,8 +6029,8 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                     Unggah Photo Profil Anda dan lengkapi Nomor NIK KTP 16 digit beserta Nomor NPWP (mendukung format 15/16 digit &amp; pemadanan NIK-NPWP Coretax DJP).
                   </p>
                 </div>
-                <div className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-800 bg-emerald-100/80 px-3 py-1.5 rounded-xl border border-emerald-200 shrink-0">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                <div className="flex items-center gap-1.5 text-[11px] font-bold text-amber-800 bg-amber-100/80 px-3 py-1.5 rounded-xl border border-amber-200 shrink-0">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-amber-600" />
                   <span>
                     NIK KTP: {isFormKtpNumberValid ? 'Valid (16 Digit)' : 'Belum Lengkap'} • NPWP:{' '}
                     {formNpwpStatus.isValid ? 'Terdaftar' : 'Belum Diisi'}
@@ -5891,7 +6043,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 <div className="p-4 bg-slate-900 rounded-2xl text-white space-y-3 border border-slate-700 shadow-lg">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <Camera className="w-4 h-4 text-emerald-400 animate-pulse" />
+                      <Camera className="w-4 h-4 text-amber-400 animate-pulse" />
                       <span className="text-xs font-bold">
                         Kamera Aktif: Ambil Photo Profil Wajah
                       </span>
@@ -5905,7 +6057,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                     </button>
                   </div>
 
-                  <div className="relative mx-auto overflow-hidden rounded-xl bg-black border-2 border-emerald-500/60 flex items-center justify-center w-full max-w-[260px] aspect-square">
+                  <div className="relative mx-auto overflow-hidden rounded-xl bg-black border-2 border-amber-500/60 flex items-center justify-center w-full max-w-[260px] aspect-square">
                     <video
                       ref={docCameraVideoRef}
                       autoPlay
@@ -5913,14 +6065,14 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                       muted
                       className="w-full h-full object-cover scale-x-[-1]"
                     />
-                    <div className="absolute inset-4 border-2 border-dashed border-emerald-400/80 rounded-full pointer-events-none" />
+                    <div className="absolute inset-4 border-2 border-dashed border-amber-400/80 rounded-full pointer-events-none" />
                   </div>
 
                   <div className="flex items-center justify-center gap-2.5">
                     <button
                       type="button"
                       onClick={captureDocCameraPhoto}
-                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 shadow-md cursor-pointer"
+                      className="px-4 py-2 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold rounded-xl text-xs font-extrabold flex items-center gap-1.5 shadow-md cursor-pointer"
                     >
                       <Camera className="w-4 h-4" />
                       <span>Jepret &amp; Simpan Photo Profil</span>
@@ -5942,7 +6094,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 <div className="bg-white rounded-xl p-4 border border-slate-200 shadow-2xs flex flex-col justify-between space-y-3.5">
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex items-center gap-2">
-                      <span className="w-6 h-6 rounded-lg bg-emerald-600 text-white font-extrabold text-xs flex items-center justify-center shrink-0">
+                      <span className="w-6 h-6 rounded-lg bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 font-bold font-extrabold text-xs flex items-center justify-center shrink-0">
                         1
                       </span>
                       <div>
@@ -5954,7 +6106,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                         </p>
                       </div>
                     </div>
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200 shrink-0">
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200 shrink-0">
                       ✓ Terintegrasi Admin
                     </span>
                   </div>
@@ -5979,7 +6131,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                             downloadFileName: `Foto-Profil-${currentEmployee.nik}.jpg`,
                           })
                         }
-                        className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl object-cover ring-2 ring-emerald-500 shadow-md cursor-pointer"
+                        className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl object-cover ring-2 ring-amber-500 shadow-md cursor-pointer"
                       />
                       <button
                         type="button"
@@ -6012,7 +6164,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                       </p>
 
                       <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 pt-1">
-                        <label className="min-h-[36px] inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold cursor-pointer shadow-2xs transition-colors">
+                        <label className="min-h-[36px] inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold rounded-xl text-xs font-bold cursor-pointer shadow-2xs transition-colors">
                           <Upload className="w-3.5 h-3.5" />
                           <span>
                             {isProcessingProfilePhoto ? 'Mengunggah...' : 'Upload Photo Profil'}
@@ -6035,7 +6187,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                           }
                           className="min-h-[36px] inline-flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 rounded-xl text-xs font-semibold cursor-pointer transition-colors"
                         >
-                          <Camera className="w-3.5 h-3.5 text-emerald-600" />
+                          <Camera className="w-3.5 h-3.5 text-amber-600" />
                           <span>
                             {activeDocCameraMode === 'profile' ? 'Tutup Kamera' : 'Kamera Selfie'}
                           </span>
@@ -6064,7 +6216,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                     <span
                       className={`px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${
                         isFormKtpNumberValid
-                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                          ? 'bg-amber-100 text-amber-800 border border-amber-200'
                           : 'bg-rose-100 text-rose-800 border border-rose-200'
                       }`}
                     >
@@ -6083,7 +6235,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                         <span
                           className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
                             isFormKtpNumberValid
-                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                              ? 'bg-amber-100 text-amber-800 border border-amber-200'
                               : 'bg-rose-100 text-rose-800 border border-rose-200'
                           }`}
                         >
@@ -6113,7 +6265,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                           placeholder="Ketik 16 digit angka NIK sesuai KTP (Contoh: 3171012345670001)"
                           className={`flex-1 px-3 py-2 text-xs font-mono font-bold bg-white border rounded-xl focus:outline-hidden ${
                             isFormKtpNumberValid
-                              ? 'border-emerald-400 text-slate-900 focus:ring-2 focus:ring-emerald-500/20'
+                              ? 'border-amber-400 text-slate-900 focus:ring-2 focus:ring-amber-500/20'
                               : 'border-amber-400 text-slate-900 focus:ring-2 focus:ring-rose-500/20'
                           }`}
                         />
@@ -6133,7 +6285,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                                 );
                                 setTimeout(() => setProfileUploadBanner(null), 4500);
                               }}
-                              className="min-h-[36px] px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold cursor-pointer shrink-0 flex items-center justify-center gap-1"
+                              className="min-h-[36px] px-3 py-1.5 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold rounded-xl text-xs font-bold cursor-pointer shrink-0 flex items-center justify-center gap-1"
                             >
                               <Check className="w-3.5 h-3.5" />
                               <span>Simpan NIK</span>
@@ -6210,7 +6362,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                       <div className="flex items-center justify-between text-[11px]">
                         <span
                           className={`font-semibold ${
-                            formNpwpStatus.isValid ? 'text-emerald-700' : 'text-amber-700'
+                            formNpwpStatus.isValid ? 'text-amber-700' : 'text-amber-700'
                           }`}
                         >
                           Status Pajak: {formNpwpStatus.label}
@@ -6243,7 +6395,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                             ? 'bg-rose-100 text-rose-800 border-rose-300'
                             : contractValidity.daysRemaining !== null && contractValidity.daysRemaining <= 30
                             ? 'bg-amber-100 text-amber-900 border-amber-300'
-                            : 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                            : 'bg-amber-100 text-amber-800 border-amber-300'
                         }`}
                       >
                         <span
@@ -6254,7 +6406,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                               ? 'bg-rose-600 animate-ping'
                               : contractValidity.daysRemaining !== null && contractValidity.daysRemaining <= 30
                               ? 'bg-amber-600'
-                              : 'bg-emerald-600'
+                              : 'bg-amber-600'
                           }`}
                         />
                         <span>{contractValidity.badgeText}</span>
@@ -6295,9 +6447,9 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                         currentEmployee.contractDocumentName ||
                         `Kontrak-Kerja-${currentEmployee.nik}.jpg`
                       }
-                      className="min-h-[36px] inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs font-bold transition-colors"
+                      className="min-h-[36px] inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-bold transition-colors"
                     >
-                      <Download className="w-3.5 h-3.5 text-emerald-600" />
+                      <Download className="w-3.5 h-3.5 text-amber-600" />
                       <span>Unduh Kontrak</span>
                     </a>
                   </div>
@@ -6341,7 +6493,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                         ? 'text-rose-700'
                         : contractValidity.daysRemaining !== null && contractValidity.daysRemaining <= 30
                         ? 'text-amber-700'
-                        : 'text-emerald-700'
+                        : 'text-amber-700'
                     }`}
                   >
                     {contractValidity.isPermanent
@@ -6365,7 +6517,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                       ? 'bg-rose-50 border-rose-300'
                       : contractValidity.daysRemaining !== null && contractValidity.daysRemaining <= 30
                       ? 'bg-amber-50 border-amber-300'
-                      : 'bg-emerald-50/80 border-emerald-300'
+                      : 'bg-amber-50/80 border-amber-300'
                   }`}
                 >
                   <span className="text-[11px] text-slate-600 block">Indikator Masa Aktif Kontrak</span>
@@ -6377,7 +6529,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                         ? 'text-rose-800'
                         : contractValidity.daysRemaining !== null && contractValidity.daysRemaining <= 30
                         ? 'text-amber-900'
-                        : 'text-emerald-800'
+                        : 'text-amber-800'
                     }`}
                   >
                     {contractValidity.badgeText}
@@ -6390,7 +6542,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                             ? 'bg-rose-600'
                             : contractValidity.daysRemaining <= 30
                             ? 'bg-amber-500'
-                            : 'bg-emerald-600'
+                            : 'bg-amber-600'
                         }`}
                         style={{ width: `${contractValidity.progressPercent}%` }}
                       />
@@ -6398,7 +6550,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   )}
                   <div className="flex items-center gap-2 mt-2 text-[9px] font-bold text-slate-500 flex-wrap">
                     <span className="inline-flex items-center gap-1">
-                      <span className="w-2 h-2 rounded-full bg-emerald-500" /> Hijau &gt;30 hr
+                      <span className="w-2 h-2 rounded-full bg-amber-500" /> Hijau &gt;30 hr
                     </span>
                     <span className="inline-flex items-center gap-1">
                       <span className="w-2 h-2 rounded-full bg-amber-500" /> Kuning ≤30 hr
@@ -6436,12 +6588,25 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   <span className="font-semibold text-slate-800">{currentEmployee.department}</span>
                 </div>
                 <div>
+                  <span className="text-slate-400 block text-[11px]">Cabang / Lokasi Kerja:</span>
+                  <span
+                    className={`inline-flex items-center gap-1 mt-0.5 px-2.5 py-0.5 rounded-md text-[11px] font-extrabold border ${
+                      getEmployeeBranch(currentEmployee) === 'Green Lake City'
+                        ? 'bg-amber-50 text-amber-900 border-amber-300'
+                        : 'bg-neutral-900 text-amber-300 border-amber-500/40'
+                    }`}
+                  >
+                    <MapPin className="w-3 h-3" />
+                    <span>{getEmployeeBranch(currentEmployee)}</span>
+                  </span>
+                </div>
+                <div>
                   <span className="text-slate-400 block text-[11px]">Posisi / Jabatan:</span>
                   <span className="font-semibold text-slate-800">{currentEmployee.role}</span>
                 </div>
                 <div>
                   <span className="text-slate-400 block text-[11px]">Status Ikatan Kerja:</span>
-                  <span className="font-semibold text-emerald-700">{currentEmployee.employmentStatus}</span>
+                  <span className="font-semibold text-amber-700">{currentEmployee.employmentStatus}</span>
                 </div>
                 <div>
                   <span className="text-slate-400 block text-[11px]">Nomor NPWP Terdaftar:</span>
@@ -6455,13 +6620,13 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   <span className="text-slate-400 block text-[11px]">No. BPJS Ketenagakerjaan:</span>
                   <span className="font-mono text-slate-700">{currentEmployee.bpjsKetenagakerjaanNo || '-'}</span>
                 </div>
-                <div className="p-2 bg-emerald-50 border border-emerald-200 rounded-lg">
-                  <span className="text-emerald-800 font-semibold block text-[10px]">Tarif Gaji Per Jam:</span>
-                  <span className="font-extrabold text-emerald-700 text-xs">
+                <div className="p-2 bg-amber-50 border border-amber-200 rounded-lg">
+                  <span className="text-amber-800 font-semibold block text-[10px]">Tarif Gaji Per Jam:</span>
+                  <span className="font-extrabold text-amber-700 text-xs">
                     {formatRupiah(myHourlyRate)} / jam
                   </span>
                 </div>
-                <div className="p-2 bg-emerald-50/60 border border-emerald-200 rounded-lg">
+                <div className="p-2 bg-amber-50/60 border border-amber-200 rounded-lg">
                   <span className="text-slate-600 font-semibold block text-[10px]">Gaji Harian (Std {myStandardDailyHours} Jam):</span>
                   <span className="font-bold text-slate-900 text-xs">
                     {formatRupiah(myDailySalary)} / hari
@@ -6476,7 +6641,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
               <div className="space-y-3.5">
                 <div className="flex items-center justify-between gap-2">
                   <h4 className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
-                    <Phone className="w-4 h-4 text-emerald-600" />
+                    <Phone className="w-4 h-4 text-amber-600" />
                     Informasi Kontak WhatsApp &amp; Email Notifikasi
                   </h4>
                   {(profileForm.phone !== currentEmployee.phone ||
@@ -6499,7 +6664,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                         );
                         setTimeout(() => setProfileUploadBanner(null), 4500);
                       }}
-                      className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer shadow-2xs"
+                      className="px-2.5 py-1 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold rounded-lg text-[11px] font-bold inline-flex items-center gap-1 cursor-pointer shadow-2xs"
                     >
                       <Check className="w-3 h-3" />
                       <span>Simpan WA &amp; Email</span>
@@ -6512,7 +6677,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                     <label className="block font-medium text-slate-600">
                       Nomor Telepon / WhatsApp Aktif
                     </label>
-                    <span className="text-[10px] font-mono font-bold text-green-700 bg-green-50 px-2 py-0.5 rounded border border-green-200">
+                    <span className="text-[10px] font-mono font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
                       Format WA: {formatWhatsAppPhone(profileForm.phone) ? `+${formatWhatsAppPhone(profileForm.phone)}` : 'Belum diisi'}
                     </span>
                   </div>
@@ -6654,7 +6819,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
             <div className="flex justify-end pt-3 border-t border-slate-100">
               <button
                 type="submit"
-                className="inline-flex items-center gap-2 px-5 py-2.5 text-xs sm:text-sm font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-xs transition-colors cursor-pointer"
+                className="inline-flex items-center gap-2 px-5 py-2.5 text-xs sm:text-sm font-bold bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold rounded-xl shadow-xs transition-colors cursor-pointer"
               >
                 <Save className="w-4 h-4" />
                 Simpan Perubahan Data Profil
@@ -6666,7 +6831,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
           <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-xs space-y-5">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4">
               <div className="flex items-start gap-3">
-                <div className="p-2.5 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">
+                <div className="p-2.5 rounded-xl bg-amber-50 text-amber-700 border border-amber-200 shrink-0">
                   <KeyRound className="w-5 h-5" />
                 </div>
                 <div>
@@ -6674,7 +6839,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                     <h3 className="text-base font-bold text-slate-900">
                       Ubah Kata Sandi / Password Mandiri
                     </h3>
-                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
                       Tersinkronisasi ke Supabase Auth
                     </span>
                   </div>
@@ -6704,15 +6869,15 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
             </div>
 
             {passwordChangeSuccess && (
-              <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-semibold flex items-center justify-between gap-2 animate-in fade-in">
+              <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs font-semibold flex items-center justify-between gap-2 animate-in fade-in">
                 <div className="flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <CheckCircle2 className="w-4 h-4 text-amber-600 shrink-0" />
                   <span>{passwordChangeSuccess}</span>
                 </div>
                 <button
                   type="button"
                   onClick={() => setPasswordChangeSuccess(null)}
-                  className="text-emerald-700 hover:text-emerald-900 font-bold cursor-pointer"
+                  className="text-amber-700 hover:text-amber-900 font-bold cursor-pointer"
                 >
                   ✕
                 </button>
@@ -6750,7 +6915,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                         setPasswordForm({ ...passwordForm, currentPassword: e.target.value })
                       }
                       placeholder="Masukkan password saat ini"
-                      className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-emerald-500 focus:outline-hidden font-mono"
+                      className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-amber-500 focus:outline-hidden font-mono"
                     />
                   </div>
                   <span className="text-[10px] text-slate-400 mt-1 block">
@@ -6772,7 +6937,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                         setPasswordForm({ ...passwordForm, newPassword: e.target.value })
                       }
                       placeholder="Minimal 6 karakter / angka"
-                      className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-emerald-500 focus:outline-hidden font-mono"
+                      className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-amber-500 focus:outline-hidden font-mono"
                     />
                   </div>
                   <span className="text-[10px] text-slate-400 mt-1 block">
@@ -6794,7 +6959,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                         setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })
                       }
                       placeholder="Ulangi kata sandi baru"
-                      className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-emerald-500 focus:outline-hidden font-mono"
+                      className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:border-amber-500 focus:outline-hidden font-mono"
                     />
                   </div>
                   <span className="text-[10px] text-slate-400 mt-1 block">
@@ -6805,7 +6970,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
 
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-slate-100">
                 <div className="flex items-center gap-2 text-[11px] text-slate-500">
-                  <Lock className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                  <Lock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
                   <span>
                     Perubahan password langsung berlaku untuk login Portal Karyawan berikutnya dan disinkronkan ke Supabase.
                   </span>
@@ -6815,7 +6980,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   disabled={isUpdatingPassword}
                   className="inline-flex items-center justify-center gap-2 px-5 py-2.5 text-xs sm:text-sm font-bold bg-slate-900 hover:bg-slate-800 disabled:opacity-60 text-white rounded-xl shadow-xs transition-colors cursor-pointer shrink-0"
                 >
-                  <KeyRound className="w-4 h-4 text-emerald-400" />
+                  <KeyRound className="w-4 h-4 text-amber-400" />
                   <span>
                     {isUpdatingPassword ? 'Memperbarui Kata Sandi...' : 'Perbarui Kata Sandi Mandiri'}
                   </span>
@@ -6832,7 +6997,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
           <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in-50 zoom-in-95">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2.5">
-                <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl">
+                <div className="p-2 bg-amber-50 text-amber-600 rounded-xl">
                   <CalendarDays className="w-5 h-5" />
                 </div>
                 <h3 className="text-base font-bold text-slate-900">Form Pengajuan Cuti & Izin</h3>
@@ -6869,7 +7034,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   ))}
                 </select>
                 {leaveForm.type === 'Cuti Tahunan' && (
-                  <p className="text-[11px] text-emerald-600 mt-1">
+                  <p className="text-[11px] text-amber-600 mt-1">
                     Sisa jatah cuti tahunan Anda: <strong>{currentEmployee.remainingLeaveDays} hari</strong>
                   </p>
                 )}
@@ -6946,7 +7111,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                         <p className="text-xs font-bold text-slate-800 truncate">
                           {leaveForm.attachmentName || 'Bukti-Cuti-Izin.jpg'}
                         </p>
-                        <p className="text-[10px] text-emerald-700 font-semibold">
+                        <p className="text-[10px] text-amber-700 font-semibold">
                           ✓ Gambar telah dikompresi &amp; siap dikirim ke Admin HR
                         </p>
                       </div>
@@ -6984,8 +7149,8 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                     </div>
                   </div>
                 ) : (
-                  <label className="flex flex-col items-center justify-center p-3.5 border-2 border-dashed border-slate-300 hover:border-emerald-500 rounded-xl bg-slate-50 hover:bg-emerald-50/40 cursor-pointer transition-colors">
-                    <Upload className="w-5 h-5 text-emerald-600 mb-1" />
+                  <label className="flex flex-col items-center justify-center p-3.5 border-2 border-dashed border-slate-300 hover:border-amber-500 rounded-xl bg-slate-50 hover:bg-amber-50/40 cursor-pointer transition-colors">
+                    <Upload className="w-5 h-5 text-amber-600 mb-1" />
                     <span className="text-xs font-bold text-slate-700">
                       {isCompressingLeaveAttachment
                         ? 'Mengompresi gambar bukti...'
@@ -7016,7 +7181,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 <button
                   type="submit"
                   disabled={isCompressingLeaveAttachment}
-                  className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-xs disabled:opacity-50"
+                  className="px-4 py-2 text-xs font-bold text-neutral-950 font-semibold bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 rounded-xl shadow-xs disabled:opacity-50"
                 >
                   Kirim Permohonan Cuti
                 </button>
@@ -7352,15 +7517,15 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
               />
             </div>
             <div className="flex items-center justify-between gap-2 pt-1 flex-wrap">
-              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-amber-700">
+                <CheckCircle2 className="w-3.5 h-3.5 text-amber-600" />
                 Tersinkronisasi dengan Portal Admin HR
               </span>
               <div className="flex items-center gap-2">
                 <a
                   href={previewDocumentModal.imageUrl}
                   download={previewDocumentModal.downloadFileName || 'Dokumen-Karyawan.jpg'}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl transition-colors"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold rounded-xl transition-colors"
                 >
                   <Download className="w-3.5 h-3.5" />
                   <span>Unduh File</span>
@@ -7436,13 +7601,13 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 }}
                 className="space-y-3"
               >
-                <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between">
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-center justify-between">
                   <div>
-                    <div className="text-xs font-bold text-emerald-950">
+                    <div className="text-xs font-bold text-amber-950">
                       {pendingSwitchEmp.fullName}
                     </div>
-                    <div className="text-[11px] text-emerald-700 font-mono">
-                      {pendingSwitchEmp.nik} • {pendingSwitchEmp.department}
+                    <div className="text-[11px] text-amber-700 font-mono">
+                      {pendingSwitchEmp.nik} • {pendingSwitchEmp.department} • {getEmployeeBranch(pendingSwitchEmp)}
                     </div>
                   </div>
                   <button
@@ -7452,7 +7617,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                       setSwitchPinInput('');
                       setSwitchPinError(null);
                     }}
-                    className="text-[11px] font-bold text-emerald-700 hover:underline cursor-pointer"
+                    className="text-[11px] font-bold text-amber-700 hover:underline cursor-pointer"
                   >
                     Ubah Pilihan
                   </button>
@@ -7472,7 +7637,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                     placeholder="Masukkan PIN khusus akun karyawan ini"
                     autoFocus
                     maxLength={12}
-                    className="w-full px-3 py-2.5 text-center font-mono text-base font-bold tracking-widest bg-slate-50 border border-slate-300 rounded-xl focus:outline-hidden focus:border-emerald-600"
+                    className="w-full px-3 py-2.5 text-center font-mono text-base font-bold tracking-widest bg-slate-50 border border-slate-300 rounded-xl focus:outline-hidden focus:border-amber-600"
                   />
                 </div>
 
@@ -7496,7 +7661,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   </button>
                   <button
                     type="submit"
-                    className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl shadow-xs cursor-pointer"
+                    className="px-4 py-2 text-xs font-bold text-neutral-950 font-semibold bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 rounded-xl shadow-xs cursor-pointer"
                   >
                     Verifikasi & Buka Akun
                   </button>
@@ -7509,7 +7674,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   value={profileSearchQuery}
                   onChange={(e) => setProfileSearchQuery(e.target.value)}
                   placeholder="Cari nama atau NIK Anda..."
-                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                  className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500"
                 />
 
                 <div className="max-h-64 overflow-y-auto divide-y divide-slate-100 border border-slate-100 rounded-xl">
@@ -7532,22 +7697,34 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                           setSwitchPinInput('');
                           setSwitchPinError(null);
                         }}
-                        className={`w-full p-3 text-left flex items-center justify-between hover:bg-emerald-50 transition-colors cursor-pointer ${
-                          emp.id === currentEmployee.id ? 'bg-emerald-50/70' : ''
+                        className={`w-full p-3 text-left flex items-center justify-between hover:bg-amber-50 transition-colors cursor-pointer ${
+                          emp.id === currentEmployee.id ? 'bg-amber-50/70' : ''
                         }`}
                       >
                         <div>
                           <div className="text-xs font-bold text-slate-900">{emp.fullName}</div>
-                          <div className="text-[11px] text-slate-500">
-                            {emp.nik} •{' '}
-                            {(emp.role || '').trim().toLowerCase() ===
-                            (emp.department || '').trim().toLowerCase()
-                              ? emp.role
-                              : `${emp.role} (${emp.department})`}
+                          <div className="text-[11px] text-slate-500 flex items-center gap-1.5 flex-wrap mt-0.5">
+                            <span>
+                              {emp.nik} •{' '}
+                              {(emp.role || '').trim().toLowerCase() ===
+                              (emp.department || '').trim().toLowerCase()
+                                ? emp.role
+                                : `${emp.role} (${emp.department})`}
+                            </span>
+                            <span
+                              className={`inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[10px] font-bold border ${
+                                getEmployeeBranch(emp) === 'Green Lake City'
+                                  ? 'bg-amber-50 text-amber-900 border-amber-300'
+                                  : 'bg-neutral-900 text-amber-300 border-amber-500/35'
+                              }`}
+                            >
+                              <MapPin className="w-2.5 h-2.5" />
+                              <span>{getEmployeeBranch(emp)}</span>
+                            </span>
                           </div>
                         </div>
                         {emp.id === currentEmployee.id ? (
-                          <span className="text-[10px] font-bold bg-emerald-600 text-white px-2 py-0.5 rounded-full">
+                          <span className="text-[10px] font-bold bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 font-bold px-2 py-0.5 rounded-full">
                             Aktif
                           </span>
                         ) : (
@@ -7708,7 +7885,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   onClick={onSwitchToAdminMode}
                   className="px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold inline-flex items-center gap-2 shrink-0 cursor-pointer shadow-xs"
                 >
-                  <Shield className="w-4 h-4 text-emerald-400" />
+                  <Shield className="w-4 h-4 text-amber-400" />
                   <span>Kelola Omset di Panel Admin</span>
                 </button>
               )}
@@ -7725,7 +7902,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                     Daftar sesi live streaming (Host &amp; Co-Host) dari TikTok Shop / Shopee Live yang telah diinput oleh Admin untuk perhitungan Insentif / Komisi Penjualan bulan ini
                   </p>
                 </div>
-                <span className="px-3 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-bold self-start sm:self-center">
+                <span className="px-3 py-1 rounded-full bg-amber-50 text-amber-800 border border-amber-200 text-xs font-bold self-start sm:self-center">
                   {myLiveSalesSummary.sessionsCount} Sesi Terverifikasi
                 </span>
               </div>
@@ -7824,8 +8001,8 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                               </span>
                             </td>
                             <td className="py-3 px-4 text-center">
-                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-bold">
-                                <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-50 text-amber-800 border border-amber-200 text-[10px] font-bold">
+                                <CheckCircle2 className="w-3 h-3 text-amber-600" />
                                 <span>Diinput Admin</span>
                               </span>
                             </td>
@@ -7847,7 +8024,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                         <td className="py-3 px-4 text-right font-mono text-pink-700 text-sm">
                           +{formatRupiah(salesCommissionPay)}
                         </td>
-                        <td className="py-3 px-4 text-center text-[10px] text-emerald-700">
+                        <td className="py-3 px-4 text-center text-[10px] text-amber-700">
                           Sinkron Slip Gaji
                         </td>
                       </tr>
@@ -7863,22 +8040,22 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
       {/* TAB BONUS SAYA (RIWAYAT BONUS & APRESIASI KARYAWAN) */}
       {activePortalTab === 'my_bonuses' && (
         <div className="space-y-6">
-          <div className="bg-gradient-to-r from-emerald-800 via-teal-800 to-slate-900 rounded-2xl p-5 sm:p-6 text-white shadow-lg border border-emerald-600/30">
+          <div className="bg-gradient-to-br from-neutral-950 via-stone-900 to-neutral-900 border border-amber-500/35 rounded-2xl p-5 sm:p-6 text-white shadow-lg border border-amber-600/30">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div className="space-y-1">
-                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-emerald-500/20 border border-emerald-400/30 text-emerald-200 text-xs font-bold uppercase tracking-wider">
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-amber-500/20 border border-amber-400/30 text-amber-200 text-xs font-bold uppercase tracking-wider">
                   <Sparkles className="w-3.5 h-3.5 text-amber-300" />
                   <span>Panel Bonus &amp; Apresiasi Karyawan</span>
                 </div>
                 <h2 className="text-lg sm:text-xl font-extrabold">
                   Riwayat Bonus Saya — {currentEmployee.fullName} ({currentEmployee.nik})
                 </h2>
-                <p className="text-xs text-emerald-100/80">
+                <p className="text-xs text-amber-100/80">
                   Seluruh bonus apresiasi yang diberikan oleh HR / Finance otomatis ditambahkan ke Slip Gaji pada periode bulan terkait.
                 </p>
               </div>
               <div className="bg-white/10 backdrop-blur-xs rounded-xl px-4 py-3 border border-white/15 shrink-0">
-                <span className="text-[11px] text-emerald-200 uppercase font-bold block">
+                <span className="text-[11px] text-amber-200 uppercase font-bold block">
                   Total Akumulasi Bonus Diterima
                 </span>
                 <span className="text-xl font-extrabold text-white font-mono mt-0.5 block">
@@ -7886,7 +8063,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                     myBonuses.reduce((sum, b) => sum + Math.max(0, Number(b.amount) || 0), 0)
                   )}
                 </span>
-                <span className="text-[11px] text-emerald-200/80">
+                <span className="text-[11px] text-amber-200/80">
                   {myBonuses.length} pencatatan bonus • {myUnreadBonuses.length} belum dibaca
                 </span>
               </div>
@@ -7907,7 +8084,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                 <button
                   type="button"
                   onClick={() => onOpenPayslip(effectivePayRecord)}
-                  className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                  className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold text-xs font-bold flex items-center gap-1.5 cursor-pointer"
                 >
                   <WalletCards className="w-3.5 h-3.5" />
                   <span>Cek di Slip Gaji</span>
@@ -7931,12 +8108,12 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                   <div
                     key={bonus.id}
                     className={`p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-colors ${
-                      bonus.is_read ? 'bg-white hover:bg-slate-50/70' : 'bg-emerald-50/60'
+                      bonus.is_read ? 'bg-white hover:bg-slate-50/70' : 'bg-amber-50/60'
                     }`}
                   >
                     <div className="space-y-1.5">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="px-2.5 py-0.5 rounded-md bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs font-bold">
+                        <span className="px-2.5 py-0.5 rounded-md bg-amber-100 text-amber-800 border border-amber-200 text-xs font-bold">
                           Periode Gaji: {formatYearMonthToIndo(bonus.period_month)} ({bonus.period_month})
                         </span>
                         <span className="text-xs text-slate-500">
@@ -7962,7 +8139,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                         <span className="text-[10px] text-slate-400 uppercase font-bold block">
                           Nominal Bonus
                         </span>
-                        <span className="text-base sm:text-lg font-extrabold text-emerald-700 font-mono">
+                        <span className="text-base sm:text-lg font-extrabold text-amber-700 font-mono">
                           +{formatRupiah(bonus.amount)}
                         </span>
                       </div>
@@ -7971,7 +8148,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                         <button
                           type="button"
                           onClick={() => handleMarkBonusRead(bonus.id)}
-                          className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-xs cursor-pointer"
+                          className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold text-xs font-bold flex items-center gap-1.5 shadow-xs cursor-pointer"
                         >
                           <CheckCircle2 className="w-3.5 h-3.5" />
                           <span>Tandai Sudah Dibaca</span>
@@ -8104,20 +8281,20 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
                     }}
                     className={`min-h-[64px] p-3 rounded-2xl border text-left flex items-start gap-2.5 transition-all cursor-pointer ${
                       isActive
-                        ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm'
+                        ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 border-amber-500 font-bold shadow-sm'
                         : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200'
                     }`}
                   >
                     <IconComp
                       className={`w-4 h-4 shrink-0 mt-0.5 ${
-                        isActive ? 'text-white' : 'text-emerald-600'
+                        isActive ? 'text-white' : 'text-amber-600'
                       }`}
                     />
                     <div className="min-w-0 flex-1">
                       <div className="text-xs font-bold truncate">{item.label}</div>
                       <div
                         className={`text-[10px] truncate mt-0.5 ${
-                          isActive ? 'text-emerald-100' : 'text-slate-500'
+                          isActive ? 'text-amber-100' : 'text-slate-500'
                         }`}
                       >
                         {item.desc}
@@ -8158,7 +8335,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
               ) : (
                 <>
                   <div className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-600 min-w-0">
-                    <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0" />
                     <span className="truncate">
                       Sesi Terkunci: <strong>{currentEmployee.nik}</strong>
                     </span>
@@ -8198,7 +8375,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
             }}
             className={`min-h-[54px] py-1.5 px-1 flex flex-col items-center justify-center gap-1 rounded-xl transition-colors cursor-pointer ${
               activePortalTab === 'home'
-                ? 'bg-emerald-50 text-emerald-700 font-extrabold'
+                ? 'bg-amber-50 text-amber-700 font-extrabold'
                 : 'text-slate-500 hover:text-slate-800 font-semibold'
             }`}
           >
@@ -8215,7 +8392,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
             }}
             className={`min-h-[54px] py-1.5 px-1 flex flex-col items-center justify-center gap-1 rounded-xl transition-colors cursor-pointer ${
               activePortalTab === 'payroll'
-                ? 'bg-emerald-50 text-emerald-700 font-extrabold'
+                ? 'bg-amber-50 text-amber-700 font-extrabold'
                 : 'text-slate-500 hover:text-slate-800 font-semibold'
             }`}
           >
@@ -8232,15 +8409,15 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
             }}
             className={`min-h-[54px] py-1.5 px-1 flex flex-col items-center justify-center gap-1 rounded-xl transition-all cursor-pointer relative ${
               activePortalTab === 'attendance'
-                ? 'bg-emerald-600 text-white font-extrabold shadow-xs'
-                : 'bg-emerald-50/80 text-emerald-800 hover:bg-emerald-100 font-bold border border-emerald-200/80'
+                ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 font-extrabold shadow-xs'
+                : 'bg-amber-50/80 text-amber-800 hover:bg-amber-100 font-bold border border-amber-200/80'
             }`}
           >
             <div className="relative flex items-center justify-center">
               <Camera className="w-5 h-5 shrink-0" />
               <span
                 className={`absolute -top-0.5 -right-1.5 w-2 h-2 rounded-full ring-1 ring-white ${
-                  todayAttendance ? 'bg-emerald-300' : 'bg-amber-400 animate-pulse'
+                  todayAttendance ? 'bg-amber-300' : 'bg-amber-400 animate-pulse'
                 }`}
               />
             </div>
@@ -8256,7 +8433,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
             }}
             className={`min-h-[54px] py-1.5 px-1 flex flex-col items-center justify-center gap-1 rounded-xl transition-colors cursor-pointer relative ${
               activePortalTab === 'leave'
-                ? 'bg-emerald-50 text-emerald-700 font-extrabold'
+                ? 'bg-amber-50 text-amber-700 font-extrabold'
                 : 'text-slate-500 hover:text-slate-800 font-semibold'
             }`}
           >
@@ -8276,7 +8453,7 @@ export const EmployeePortalView: React.FC<EmployeePortalViewProps> = ({
             className={`min-h-[54px] py-1.5 px-1 flex flex-col items-center justify-center gap-1 rounded-xl transition-colors cursor-pointer ${
               isMobileMenuSheetOpen ||
               ['claims', 'cash_advance', 'assets', 'performance', 'profile'].includes(activePortalTab)
-                ? 'bg-emerald-50 text-emerald-700 font-extrabold'
+                ? 'bg-amber-50 text-amber-700 font-extrabold'
                 : 'text-slate-500 hover:text-slate-800 font-semibold'
             }`}
           >

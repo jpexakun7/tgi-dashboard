@@ -75,6 +75,8 @@ export const PayrollAdjustmentPanel: React.FC<PayrollAdjustmentPanelProps> = ({
   const [kesalahanCount, setKesalahanCount] = useState<number>(0);
   const [kesalahanRate, setKesalahanRate] = useState<number>(DEFAULT_KESALAHAN_RATE);
   const [catatanKesalahan, setCatatanKesalahan] = useState<string>('');
+  const [isManualKerajinan, setIsManualKerajinan] = useState<boolean>(false);
+  const [isManualKedisiplinan, setIsManualKedisiplinan] = useState<boolean>(false);
 
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [departmentFilter, setDepartmentFilter] = useState<string>('ALL');
@@ -128,6 +130,8 @@ export const PayrollAdjustmentPanel: React.FC<PayrollAdjustmentPanelProps> = ({
       setEditingAdjustmentId(null);
       setTunjanganKerajinan(0);
       setTunjanganKedisiplinan(0);
+      setIsManualKerajinan(false);
+      setIsManualKedisiplinan(false);
       setKesalahanCount(0);
       setKesalahanRate(DEFAULT_KESALAHAN_RATE);
       setCatatanKesalahan('');
@@ -145,6 +149,8 @@ export const PayrollAdjustmentPanel: React.FC<PayrollAdjustmentPanelProps> = ({
       setTunjanganKedisiplinan(
         Math.max(0, Math.round(Number(existingAdj.tunjangan_kedisiplinan) || 0))
       );
+      setIsManualKerajinan(Boolean(existingAdj.is_manual_kerajinan));
+      setIsManualKedisiplinan(Boolean(existingAdj.is_manual_kedisiplinan));
       setKesalahanCount(Math.max(0, Math.round(Number(existingAdj.kesalahan_count) || 0)));
       setKesalahanRate(
         existingAdj.kesalahan_rate !== undefined && !isNaN(Number(existingAdj.kesalahan_rate))
@@ -158,16 +164,33 @@ export const PayrollAdjustmentPanel: React.FC<PayrollAdjustmentPanelProps> = ({
         ? Math.max(
             0,
             Math.round(
-              (Number(empObj.allowances?.transport) || 0) +
-                (Number(empObj.allowances?.communication) || 0)
+              Number(
+                empObj.tunjangan_kerajinan ??
+                  empObj.tunjanganKerajinan ??
+                  empObj.allowances?.tunjangan_kerajinan ??
+                  (Number(empObj.allowances?.transport) || 0) +
+                    (Number(empObj.allowances?.communication) || 0)
+              ) || 0
             )
           )
         : 0;
       const defaultKedisiplinan = empObj
-        ? Math.max(0, Math.round(Number(empObj.allowances?.meal) || 0))
+        ? Math.max(
+            0,
+            Math.round(
+              Number(
+                empObj.tunjangan_kedisiplinan ??
+                  empObj.tunjanganKedisiplinan ??
+                  empObj.allowances?.tunjangan_kedisiplinan ??
+                  empObj.allowances?.meal
+              ) || 0
+            )
+          )
         : 0;
       setTunjanganKerajinan(defaultKerajinan);
       setTunjanganKedisiplinan(defaultKedisiplinan);
+      setIsManualKerajinan(false);
+      setIsManualKedisiplinan(false);
       setKesalahanCount(0);
       setKesalahanRate(DEFAULT_KESALAHAN_RATE);
       setCatatanKesalahan('');
@@ -206,6 +229,8 @@ export const PayrollAdjustmentPanel: React.FC<PayrollAdjustmentPanelProps> = ({
     setEditingAdjustmentId(null);
     setTunjanganKerajinan(0);
     setTunjanganKedisiplinan(0);
+    setIsManualKerajinan(false);
+    setIsManualKedisiplinan(false);
     setKesalahanCount(0);
     setKesalahanRate(DEFAULT_KESALAHAN_RATE);
     setCatatanKesalahan('');
@@ -228,6 +253,10 @@ export const PayrollAdjustmentPanel: React.FC<PayrollAdjustmentPanelProps> = ({
         period_month: selectedPeriodMonth,
         tunjangan_kerajinan: Math.max(0, Number(tunjanganKerajinan) || 0),
         tunjangan_kedisiplinan: Math.max(0, Number(tunjanganKedisiplinan) || 0),
+        base_tunjangan_kerajinan: Math.max(0, Number(tunjanganKerajinan) || 0),
+        base_tunjangan_kedisiplinan: Math.max(0, Number(tunjanganKedisiplinan) || 0),
+        is_manual_kerajinan: isManualKerajinan,
+        is_manual_kedisiplinan: isManualKedisiplinan,
         kesalahan_count: Math.max(0, Number(kesalahanCount) || 0),
         kesalahan_rate: Math.max(0, Number(kesalahanRate) || 0),
         catatan_kesalahan: catatanKesalahan.trim(),
@@ -256,6 +285,8 @@ export const PayrollAdjustmentPanel: React.FC<PayrollAdjustmentPanelProps> = ({
     setEditingAdjustmentId(adj.id);
     setTunjanganKerajinan(Math.max(0, Number(adj.tunjangan_kerajinan) || 0));
     setTunjanganKedisiplinan(Math.max(0, Number(adj.tunjangan_kedisiplinan) || 0));
+    setIsManualKerajinan(Boolean(adj.is_manual_kerajinan));
+    setIsManualKedisiplinan(Boolean(adj.is_manual_kedisiplinan));
     setKesalahanCount(Math.max(0, Number(adj.kesalahan_count) || 0));
     setKesalahanRate(
       adj.kesalahan_rate !== undefined && !isNaN(Number(adj.kesalahan_rate))
@@ -413,13 +444,13 @@ export const PayrollAdjustmentPanel: React.FC<PayrollAdjustmentPanelProps> = ({
         <div
           className={`p-4 rounded-xl border flex items-center justify-between gap-3 shadow-xs ${
             toastMessage?.type === 'success'
-              ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+              ? 'bg-amber-50 border-amber-200 text-amber-900'
               : 'bg-rose-50 border-rose-200 text-rose-900'
           }`}
         >
           <div className="flex items-center gap-2.5 text-xs sm:text-sm font-semibold">
             {toastMessage?.type === 'success' ? (
-              <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+              <CheckCircle2 className="w-5 h-5 text-amber-600 shrink-0" />
             ) : (
               <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0" />
             )}
@@ -457,11 +488,11 @@ export const PayrollAdjustmentPanel: React.FC<PayrollAdjustmentPanelProps> = ({
         <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-2xs">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-slate-500">Total Tunjangan Kerajinan</span>
-            <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
+            <div className="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center">
               <Award className="w-4 h-4" />
             </div>
           </div>
-          <p className="text-xl font-black text-emerald-700 font-mono mt-2">
+          <p className="text-xl font-black text-amber-700 font-mono mt-2">
             {formatRupiah(kpiSummary.totalKerajinan)}
           </p>
           <p className="text-[11px] text-slate-500 mt-0.5">
@@ -474,11 +505,11 @@ export const PayrollAdjustmentPanel: React.FC<PayrollAdjustmentPanelProps> = ({
             <span className="text-xs font-semibold text-slate-500">
               Total Tunjangan Kedisiplinan
             </span>
-            <div className="w-8 h-8 rounded-lg bg-teal-50 text-teal-600 flex items-center justify-center">
+            <div className="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center">
               <CheckCircle2 className="w-4 h-4" />
             </div>
           </div>
-          <p className="text-xl font-black text-teal-700 font-mono mt-2">
+          <p className="text-xl font-black text-amber-700 font-mono mt-2">
             {formatRupiah(kpiSummary.totalKedisiplinan)}
           </p>
           <p className="text-[11px] text-slate-500 mt-0.5">
@@ -585,21 +616,37 @@ export const PayrollAdjustmentPanel: React.FC<PayrollAdjustmentPanelProps> = ({
             </div>
 
             {/* Row 2: Tunjangan Kerajinan & Tunjangan Kedisiplinan */}
-            <div className="p-4 rounded-xl bg-emerald-50/60 border border-emerald-200/80 space-y-4">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-black uppercase tracking-wider text-emerald-900">
-                  A. Komponen Penambah — Bagian 2. Gaji Tidak Tetap
-                </span>
-                <span className="text-[11px] font-semibold text-emerald-700">
+            <div className="p-4 rounded-xl bg-amber-50/60 border border-amber-200/80 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                  <span className="text-xs font-black uppercase tracking-wider text-amber-900 block">
+                    A. Komponen Penambah — Bagian 2. Gaji Tidak Tetap
+                  </span>
+                  <span className="text-[11px] text-amber-800">
+                    Otomatis mengecek Rekap Presensi Cut-Off (tgl 26 s/d 25): Alpha = 0 Hr &rarr; Tunj. Kerajinan Penuh | Terlambat = 0 Mnt &rarr; Tunj. Kedisiplinan Penuh.
+                  </span>
+                </div>
+                <span className="text-[11px] font-semibold text-amber-700 shrink-0">
                   Kuantitas di Slip Gaji: × 1 Kali / Bulan
                 </span>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold text-slate-800 mb-1">
-                    Nominal Tunjangan Kerajinan (Rp)
-                  </label>
+                <div className="p-3 rounded-xl bg-white/90 border border-amber-200/90 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="block text-xs font-bold text-slate-800">
+                      Nominal Dasar Tunjangan Kerajinan (Rp)
+                    </label>
+                    <label className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-amber-900 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={isManualKerajinan}
+                        onChange={(e) => setIsManualKerajinan(e.target.checked)}
+                        className="rounded border-amber-400 text-amber-600 focus:ring-amber-500"
+                      />
+                      <span>Override Manual Admin</span>
+                    </label>
+                  </div>
                   <div className="relative">
                     <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
                       Rp
@@ -613,10 +660,21 @@ export const PayrollAdjustmentPanel: React.FC<PayrollAdjustmentPanelProps> = ({
                         setTunjanganKerajinan(Math.max(0, Number(e.target.value) || 0))
                       }
                       placeholder="0"
-                      className="w-full pl-9 pr-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-sm font-mono font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500"
+                      className="w-full pl-9 pr-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-sm font-mono font-bold text-slate-900 focus:ring-2 focus:ring-amber-500"
                     />
                   </div>
-                  <div className="flex flex-wrap gap-1.5 mt-2">
+                  <p className="text-[10px] text-slate-600 leading-tight">
+                    {isManualKerajinan ? (
+                      <span className="text-amber-800 font-semibold">
+                        Mode Override Manual Aktif: Nominal ini tetap dibayarkan meskipun terdapat Alpha pada periode cut-off.
+                      </span>
+                    ) : (
+                      <span>
+                        Mode Otomatis Presensi: Cair penuh jika <strong>Tanpa Keterangan (Alpha) = 0 hari</strong>; otomatis <strong>Rp 0 (Hangus)</strong> jika Alpha &ge; 1 hari.
+                      </span>
+                    )}
+                  </p>
+                  <div className="flex flex-wrap gap-1.5 pt-1">
                     {[0, 100000, 150000, 200000, 250000, 300000].map((preset) => (
                       <button
                         key={preset}
@@ -624,8 +682,8 @@ export const PayrollAdjustmentPanel: React.FC<PayrollAdjustmentPanelProps> = ({
                         onClick={() => setTunjanganKerajinan(preset)}
                         className={`px-2 py-0.5 rounded-md text-[11px] font-semibold border transition-colors cursor-pointer ${
                           tunjanganKerajinan === preset
-                            ? 'bg-emerald-600 text-white border-emerald-600'
-                            : 'bg-white text-slate-600 border-slate-200 hover:bg-emerald-50'
+                            ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 border-amber-500 font-bold'
+                            : 'bg-white text-slate-600 border-slate-200 hover:bg-amber-50'
                         }`}
                       >
                         {preset === 0 ? 'Rp 0' : `${preset / 1000}rb`}
@@ -634,10 +692,21 @@ export const PayrollAdjustmentPanel: React.FC<PayrollAdjustmentPanelProps> = ({
                   </div>
                 </div>
 
-                <div>
-                  <label className="block text-xs font-bold text-slate-800 mb-1">
-                    Nominal Tunjangan Kedisiplinan (Rp)
-                  </label>
+                <div className="p-3 rounded-xl bg-white/90 border border-amber-200/90 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="block text-xs font-bold text-slate-800">
+                      Nominal Dasar Tunjangan Kedisiplinan (Rp)
+                    </label>
+                    <label className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-amber-900 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={isManualKedisiplinan}
+                        onChange={(e) => setIsManualKedisiplinan(e.target.checked)}
+                        className="rounded border-amber-400 text-amber-600 focus:ring-amber-500"
+                      />
+                      <span>Override Manual Admin</span>
+                    </label>
+                  </div>
                   <div className="relative">
                     <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
                       Rp
@@ -653,10 +722,21 @@ export const PayrollAdjustmentPanel: React.FC<PayrollAdjustmentPanelProps> = ({
                         )
                       }
                       placeholder="0"
-                      className="w-full pl-9 pr-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-sm font-mono font-bold text-slate-900 focus:ring-2 focus:ring-emerald-500"
+                      className="w-full pl-9 pr-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-sm font-mono font-bold text-slate-900 focus:ring-2 focus:ring-amber-500"
                     />
                   </div>
-                  <div className="flex flex-wrap gap-1.5 mt-2">
+                  <p className="text-[10px] text-slate-600 leading-tight">
+                    {isManualKedisiplinan ? (
+                      <span className="text-amber-800 font-semibold">
+                        Mode Override Manual Aktif: Nominal ini tetap dibayarkan meskipun terdapat keterlambatan pada periode cut-off.
+                      </span>
+                    ) : (
+                      <span>
+                        Mode Otomatis Presensi: Cair penuh jika <strong>Total Keterlambatan = 0 menit</strong>; otomatis <strong>Rp 0 (Hangus)</strong> jika Terlambat &gt; 0 menit.
+                      </span>
+                    )}
+                  </p>
+                  <div className="flex flex-wrap gap-1.5 pt-1">
                     {[0, 100000, 150000, 200000, 250000, 300000].map((preset) => (
                       <button
                         key={preset}
@@ -664,8 +744,8 @@ export const PayrollAdjustmentPanel: React.FC<PayrollAdjustmentPanelProps> = ({
                         onClick={() => setTunjanganKedisiplinan(preset)}
                         className={`px-2 py-0.5 rounded-md text-[11px] font-semibold border transition-colors cursor-pointer ${
                           tunjanganKedisiplinan === preset
-                            ? 'bg-emerald-600 text-white border-emerald-600'
-                            : 'bg-white text-slate-600 border-slate-200 hover:bg-emerald-50'
+                            ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 border-amber-500 font-bold'
+                            : 'bg-white text-slate-600 border-slate-200 hover:bg-amber-50'
                         }`}
                       >
                         {preset === 0 ? 'Rp 0' : `${preset / 1000}rb`}
@@ -792,7 +872,7 @@ export const PayrollAdjustmentPanel: React.FC<PayrollAdjustmentPanelProps> = ({
                 <strong
                   className={
                     computedNetAdjustmentImpact >= 0
-                      ? 'text-emerald-700 font-mono'
+                      ? 'text-amber-700 font-mono'
                       : 'text-rose-700 font-mono'
                   }
                 >
@@ -822,7 +902,7 @@ export const PayrollAdjustmentPanel: React.FC<PayrollAdjustmentPanelProps> = ({
         {/* Right Side: Live Payslip Preview Card */}
         <div className="lg:col-span-4 bg-white rounded-2xl border border-slate-200 shadow-xs p-5 space-y-4">
           <div className="flex items-center gap-2.5 border-b border-slate-200 pb-3">
-            <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center">
+            <div className="w-8 h-8 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center">
               <Calculator className="w-4 h-4" />
             </div>
             <div>
@@ -862,7 +942,7 @@ export const PayrollAdjustmentPanel: React.FC<PayrollAdjustmentPanelProps> = ({
                     <p className="font-semibold text-slate-800">Tunjangan Kerajinan</p>
                     <p className="text-[10px] text-slate-500">× 1 Kali / Bulan</p>
                   </div>
-                  <span className="font-mono font-bold text-emerald-700">
+                  <span className="font-mono font-bold text-amber-700">
                     {formatRupiah(tunjanganKerajinan)}
                   </span>
                 </div>
@@ -871,7 +951,7 @@ export const PayrollAdjustmentPanel: React.FC<PayrollAdjustmentPanelProps> = ({
                     <p className="font-semibold text-slate-800">Tunjangan Kedisiplinan</p>
                     <p className="text-[10px] text-slate-500">× 1 Kali / Bulan</p>
                   </div>
-                  <span className="font-mono font-bold text-emerald-700">
+                  <span className="font-mono font-bold text-amber-700">
                     {formatRupiah(tunjanganKedisiplinan)}
                   </span>
                 </div>
@@ -913,7 +993,7 @@ export const PayrollAdjustmentPanel: React.FC<PayrollAdjustmentPanelProps> = ({
                 }}
                 className="w-full py-2.5 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer"
               >
-                <FileText className="w-4 h-4 text-emerald-400" />
+                <FileText className="w-4 h-4 text-amber-400" />
                 <span>Lihat Slip Gaji {selectedEmployee?.fullName}</span>
               </button>
             )}
@@ -1079,10 +1159,10 @@ export const PayrollAdjustmentPanel: React.FC<PayrollAdjustmentPanelProps> = ({
                           {adj.role || empObj?.role || '-'}
                         </p>
                       </td>
-                      <td className="py-3 px-4 text-right font-mono font-bold text-emerald-700">
+                      <td className="py-3 px-4 text-right font-mono font-bold text-amber-700">
                         {formatRupiah(adj.tunjangan_kerajinan)}
                       </td>
-                      <td className="py-3 px-4 text-right font-mono font-bold text-teal-700">
+                      <td className="py-3 px-4 text-right font-mono font-bold text-amber-700">
                         {formatRupiah(adj.tunjangan_kedisiplinan)}
                       </td>
                       <td className="py-3 px-4 text-center">
@@ -1117,7 +1197,7 @@ export const PayrollAdjustmentPanel: React.FC<PayrollAdjustmentPanelProps> = ({
                                   onOpenPayslipByEmployeeId(empObj.id);
                                 }
                               }}
-                              className="p-1.5 rounded-lg text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 transition-colors cursor-pointer"
+                              className="p-1.5 rounded-lg text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 transition-colors cursor-pointer"
                               title="Lihat Slip Gaji"
                             >
                               <FileText className="w-3.5 h-3.5" />

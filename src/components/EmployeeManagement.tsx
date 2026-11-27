@@ -38,6 +38,7 @@ import {
   AlertTriangle,
   Video,
   Clock,
+  MapPin,
 } from 'lucide-react';
 import {
   Employee,
@@ -49,6 +50,7 @@ import {
   PerformanceReview,
   LiveStreamSalesRecord,
   LiveStreamPlatform,
+  EmployeeBranchName,
 } from '../types';
 import {
   formatRupiah,
@@ -60,6 +62,8 @@ import {
   getEmployeeDailySalary,
   getEmployeeHourlyRate,
   getEmployeeStandardDailyHours,
+  getEmployeeWorkDaysPerWeek,
+  getEmployeeMonthlyWorkingDaysDivisor,
   STANDARD_WORK_HOURS_PER_DAY,
   calculateEmployeeLiveSalesCommission,
   normalizeEmploymentType,
@@ -68,6 +72,8 @@ import {
   addDaysToDateString,
   getJakartaIsoTimestamp,
   getCurrentRealTimePayrollPeriod,
+  getEmployeeBranch,
+  normalizeEmployeeBranch,
 } from '../utils/formatters';
 import {
   getContractReminderWhatsAppUrl,
@@ -128,7 +134,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
   const [formError, setFormError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [showDemographics, setShowDemographics] = useState<boolean>(true);
-  const [monthlyEstimationDays, setMonthlyEstimationDays] = useState<25 | 26>(26);
+  const [monthlyEstimationDays, setMonthlyEstimationDays] = useState<number>(26);
 
   // Quick Photo Upload Modal State
   const [quickPhotoEmployee, setQuickPhotoEmployee] = useState<Employee | null>(null);
@@ -439,6 +445,8 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
     avatarUrl: '',
     role: '',
     department: 'Teknologi & IT',
+    branch: 'Sumber Mas',
+    cabang: 'Sumber Mas',
     employmentStatus: 'PKWTT (Tetap)',
     employmentType: 'Full-Time',
     employment_type: 'Full-Time',
@@ -492,6 +500,8 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         role: 'Staff Operasional',
         gender: 'Laki-laki',
         department: 'Operasional',
+        branch: 'Sumber Mas',
+        cabang: 'Sumber Mas',
         employmentStatus: 'PKWT (Kontrak)',
         employmentType: 'Contract',
         employment_type: 'Contract',
@@ -555,6 +565,8 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
       role: 'Staff Operasional',
       gender: 'Laki-laki',
       department: 'Operasional',
+      branch: 'Sumber Mas',
+      cabang: 'Sumber Mas',
       employmentStatus: 'PKWT (Kontrak)',
       employmentType: 'Contract',
       employment_type: 'Contract',
@@ -570,6 +582,8 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
       overtime_rate: 37500,
       standard_daily_hours: 9,
       standardDailyHours: 9,
+      hari_kerja_per_minggu: 6,
+      workDaysPerWeek: 6,
       dailySalary: 225000,
       daily_salary: 225000,
       baseSalary: 225000 * 26,
@@ -607,17 +621,29 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
     setFormError(null);
     setFormPhotoError(null);
     const resolvedStdHours = getEmployeeStandardDailyHours(emp, STANDARD_WORK_HOURS_PER_DAY);
+    const rawWorkDays = Number(emp.hari_kerja_per_minggu ?? emp.workDaysPerWeek);
+    const resolvedWorkDaysPerWeek =
+      rawWorkDays === 7 ? 7 : rawWorkDays === 6 ? 6 : undefined;
+    const defaultDivisor = resolvedWorkDaysPerWeek === 7 ? 30 : 26;
     const explicitHourly = Number(emp.hourlyRate ?? emp.hourly_rate) || 0;
     const explicitDaily = Number(emp.dailySalary ?? emp.daily_salary) || 0;
     const resolvedHourly =
-      explicitHourly > 0 ? explicitHourly : getEmployeeHourlyRate(emp, resolvedStdHours, 25);
+      explicitHourly > 0 ? explicitHourly : getEmployeeHourlyRate(emp, resolvedStdHours, defaultDivisor);
     const resolvedDaily =
       explicitDaily > 0
         ? explicitDaily
         : Number((resolvedHourly * resolvedStdHours).toFixed(2));
     const currentBase = Number(emp.baseSalary) || 0;
-    const detectedDays: 25 | 26 =
-      resolvedDaily > 0 && Math.abs(currentBase / resolvedDaily - 25) < 0.4 ? 25 : 26;
+    const rawRatio =
+      resolvedDaily > 0 && currentBase > 0
+        ? Math.round(currentBase / resolvedDaily)
+        : defaultDivisor;
+    const detectedDays =
+      resolvedWorkDaysPerWeek === 7
+        ? 30
+        : rawRatio >= 1 && rawRatio <= 31
+        ? rawRatio
+        : defaultDivisor;
     setMonthlyEstimationDays(detectedDays);
     const resolvedBase =
       currentBase > 0 ? currentBase : Number((resolvedDaily * detectedDays).toFixed(2));
@@ -656,8 +682,12 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         ? Math.max(0, Number(emp.leave_quota))
         : 0;
 
+    const resolvedBranch = getEmployeeBranch(emp);
+
     setFormData({
       ...emp,
+      branch: resolvedBranch,
+      cabang: resolvedBranch,
       remainingLeaveDays: resolvedRemainingLeave,
       remaining_leave: resolvedRemainingLeave,
       leave_quota: resolvedRemainingLeave,
@@ -672,6 +702,8 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
       overtime_rate: resolvedOvertimeRate,
       standard_daily_hours: resolvedStdHours,
       standardDailyHours: resolvedStdHours,
+      hari_kerja_per_minggu: resolvedWorkDaysPerWeek,
+      workDaysPerWeek: resolvedWorkDaysPerWeek,
       dailySalary: resolvedDaily,
       daily_salary: resolvedDaily,
       baseSalary: resolvedBase,
@@ -722,6 +754,12 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
       `${fullNameTrimmed.toLowerCase().replace(/\s+/g, '.')}@tgi.co.id`;
     const departmentTrimmed =
       sanitizeSafeText(formData.department, 80) || editingEmployee?.department || 'Operasional';
+    const rawBranchSelection = String(formData.branch || formData.cabang || '').trim();
+    if (!rawBranchSelection) {
+      setFormError('Mohon pilih Cabang / Lokasi Kerja karyawan (Sumber Mas atau Green Lake City)!');
+      return;
+    }
+    const resolvedBranch: EmployeeBranchName = normalizeEmployeeBranch(rawBranchSelection);
 
     stopFormCamera();
 
@@ -729,6 +767,9 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
       1,
       getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY)
     );
+    const rawFormWorkDays = Number(formData.hari_kerja_per_minggu ?? formData.workDaysPerWeek);
+    const resolvedWorkDaysPerWeek =
+      rawFormWorkDays === 7 ? 7 : rawFormWorkDays === 6 ? 6 : undefined;
     const explicitHourly = Math.max(0, Number(formData.hourlyRate ?? formData.hourly_rate) || 0);
     const explicitDaily = Math.max(0, Number(formData.dailySalary ?? formData.daily_salary) || 0);
     const resolvedHourlyRate =
@@ -815,6 +856,8 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         nik: nikTrimmed,
         email: emailTrimmed,
         department: departmentTrimmed,
+        branch: resolvedBranch,
+        cabang: resolvedBranch,
         employmentStatus: resolvedEmploymentStatus,
         status: resolvedEmploymentStatus,
         employmentType: resolvedEmploymentType,
@@ -854,6 +897,8 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         overtime_rate: resolvedOvertimeRate,
         standard_daily_hours: resolvedStdHours,
         standardDailyHours: resolvedStdHours,
+        hari_kerja_per_minggu: resolvedWorkDaysPerWeek,
+        workDaysPerWeek: resolvedWorkDaysPerWeek,
         dailySalary: resolvedDailySalary,
         daily_salary: resolvedDailySalary,
         baseSalary: resolvedBaseSalary,
@@ -900,6 +945,8 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         role: formData.role?.trim() || 'Staff Operasional',
         gender: formData.gender || 'Laki-laki',
         department: departmentTrimmed,
+        branch: resolvedBranch,
+        cabang: resolvedBranch,
         employmentStatus: resolvedEmploymentStatus,
         status: resolvedEmploymentStatus,
         employmentType: resolvedEmploymentType,
@@ -926,6 +973,8 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
         overtime_rate: resolvedOvertimeRate,
         standard_daily_hours: resolvedStdHours,
         standardDailyHours: resolvedStdHours,
+        hari_kerja_per_minggu: resolvedWorkDaysPerWeek,
+        workDaysPerWeek: resolvedWorkDaysPerWeek,
         dailySalary: resolvedDailySalary,
         daily_salary: resolvedDailySalary,
         baseSalary: resolvedBaseSalary,
@@ -981,6 +1030,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
       'Telepon',
       'Jabatan',
       'Departemen',
+      'Cabang / Lokasi Kerja',
       'Status Kontrak',
       'Standar Jam Kerja/Hari',
       'Tarif Gaji Per Jam',
@@ -1006,6 +1056,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
       e.phone,
       `"${e.role}"`,
       `"${e.department}"`,
+      `"${getEmployeeBranch(e)}"`,
       e.employmentStatus,
       getEmployeeStandardDailyHours(e),
       getEmployeeHourlyRate(e, getEmployeeStandardDailyHours(e), 25),
@@ -1072,7 +1123,8 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
       emp.nik.toLowerCase().includes(search.toLowerCase()) ||
       (emp.ktpNumber || '').toLowerCase().includes(search.toLowerCase()) ||
       emp.role.toLowerCase().includes(search.toLowerCase()) ||
-      emp.department.toLowerCase().includes(search.toLowerCase());
+      emp.department.toLowerCase().includes(search.toLowerCase()) ||
+      getEmployeeBranch(emp).toLowerCase().includes(search.toLowerCase());
 
     const matchDept = selectedDept === 'ALL' || emp.department === selectedDept;
     const empType =
@@ -1090,7 +1142,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
       {/* Toast Notification */}
       {toastMessage && (
         <div className="fixed top-5 right-5 z-50 bg-slate-900 text-white px-4 py-3 rounded-xl shadow-2xl flex items-center gap-3 border border-slate-700 animate-in fade-in slide-in-from-top-3">
-          <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+          <CheckCircle2 className="w-5 h-5 text-amber-400 shrink-0" />
           <span className="text-xs font-medium">{toastMessage}</span>
           <button
             onClick={() => setToastMessage(null)}
@@ -1105,7 +1157,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
-            <Users className="w-6 h-6 text-emerald-600" />
+            <Users className="w-6 h-6 text-amber-600" />
             Data Karyawan Tas Grosir Import
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
@@ -1154,7 +1206,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
           </button>
           <button
             onClick={openAddModal}
-            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-md shadow-emerald-600/30"
+            className="px-4 py-2 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-md shadow-amber-600/30"
           >
             <Plus className="w-4 h-4" />
             Tambah Karyawan
@@ -1182,7 +1234,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
             placeholder="Cari nama, NIK, atau posisi karyawan..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-9 pr-4 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-slate-700"
+            className="w-full pl-9 pr-4 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 text-slate-700"
           />
         </div>
 
@@ -1190,7 +1242,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
           <select
             value={selectedDept}
             onChange={(e) => setSelectedDept(e.target.value)}
-            className="px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-700 focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20 cursor-pointer"
+            className="px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-700 focus:outline-hidden focus:ring-2 focus:ring-amber-500/20 cursor-pointer"
           >
             <option value="ALL">Semua Departemen ({employees.length})</option>
             {uniqueDepartments.map((dept) => {
@@ -1206,7 +1258,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
           <select
             value={selectedStatus}
             onChange={(e) => setSelectedStatus(e.target.value)}
-            className="px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-700 focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20 cursor-pointer"
+            className="px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-700 focus:outline-hidden focus:ring-2 focus:ring-amber-500/20 cursor-pointer"
           >
             <option value="ALL">Semua Status &amp; Tipe</option>
             <option value="Full-Time">Tipe: Full-Time</option>
@@ -1276,7 +1328,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                         <img
                           src={emp.avatarUrl}
                           alt={emp.fullName}
-                          className="w-10 h-10 rounded-full object-cover shrink-0 ring-2 ring-slate-200 group-hover:ring-emerald-500 transition-all shadow-xs"
+                          className="w-10 h-10 rounded-full object-cover shrink-0 ring-2 ring-slate-200 group-hover:ring-amber-500 transition-all shadow-xs"
                         />
                         <button
                           type="button"
@@ -1289,7 +1341,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                         {emp.avatarUrl && emp.avatarUrl.startsWith('data:image') && (
                           <span
                             title="Foto real kustom terpasang"
-                            className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-emerald-500 border-2 border-white rounded-full flex items-center justify-center"
+                            className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-amber-500 border-2 border-white rounded-full flex items-center justify-center"
                           >
                             <span className="w-1 h-1 bg-white rounded-full" />
                           </span>
@@ -1313,7 +1365,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                             </span>
                           )}
                           {emp.avatarUrl && emp.avatarUrl.startsWith('data:image') && (
-                            <span className="px-1.5 py-0.2 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded text-[9px] font-semibold">
+                            <span className="px-1.5 py-0.2 bg-amber-50 text-amber-700 border border-amber-200 rounded text-[9px] font-semibold">
                               Foto Real
                             </span>
                           )}
@@ -1365,7 +1417,20 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                     {Boolean(
                       (emp.department || '').trim().toLowerCase() !==
                         (emp.role || '').trim().toLowerCase()
-                    ) && <span className="text-[10px] text-slate-500">{emp.department}</span>}
+                    ) && <span className="text-[10px] text-slate-500 block">{emp.department}</span>}
+                    <div className="mt-1">
+                      <span
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border ${
+                          getEmployeeBranch(emp) === 'Green Lake City'
+                            ? 'bg-amber-50 text-amber-900 border-amber-300'
+                            : 'bg-neutral-900 text-amber-300 border-amber-500/35'
+                        }`}
+                        title={`Cabang / Lokasi Kerja: ${getEmployeeBranch(emp)}`}
+                      >
+                        <MapPin className="w-2.5 h-2.5" />
+                        <span>{getEmployeeBranch(emp)}</span>
+                      </span>
+                    </div>
                   </td>
                   <td className="py-3 px-4">
                     <div className="flex flex-wrap items-center gap-1 mb-1">
@@ -1376,7 +1441,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                             ? 'bg-orange-100 text-orange-800 border-orange-300'
                             : (emp.employmentType || emp.employment_type) === 'Full-Time' ||
                               emp.employmentStatus === 'PKWTT (Tetap)'
-                            ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                            ? 'bg-amber-100 text-amber-800 border-amber-200'
                             : 'bg-blue-100 text-blue-800 border-blue-200'
                         }`}
                       >
@@ -1393,7 +1458,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                           (emp.employmentType || emp.employment_type) === 'Part-Time'
                             ? 'bg-orange-50 text-orange-700'
                             : emp.employmentStatus === 'PKWTT (Tetap)'
-                            ? 'bg-emerald-50 text-emerald-700'
+                            ? 'bg-amber-50 text-amber-700'
                             : emp.employmentStatus === 'PKWT (Kontrak)'
                             ? 'bg-blue-50 text-blue-700'
                             : 'bg-amber-100 text-amber-800'
@@ -1411,7 +1476,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                             ? 'bg-rose-100 text-rose-800 border border-rose-200'
                             : contractInfo.isExpiringSoon
                             ? 'bg-amber-100 text-amber-800 border border-amber-200'
-                            : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            : 'bg-amber-50 text-amber-700 border border-amber-200'
                         }`}
                       >
                         {contractInfo.badgeText}
@@ -1440,7 +1505,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                                 `Membuka WhatsApp pengingat kontrak PKWT untuk ${emp.fullName}...`
                               )
                             }
-                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-green-600 hover:bg-green-700 text-white text-[10px] font-bold shadow-2xs transition-colors"
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold text-[10px] font-bold shadow-2xs transition-colors"
                             title={`Kirim pengingat berakhirnya kontrak kerja PKWT (${contractInfo.badgeText}) via WhatsApp ke ${emp.fullName}`}
                           >
                             <MessageCircle className="w-3 h-3" />
@@ -1454,8 +1519,15 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                   </td>
                   <td className="py-3 px-4">
                     <div className="flex items-center gap-1 flex-wrap mb-0.5">
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold text-[11px]">
-                        {formatRupiah(getEmployeeHourlyRate(emp, getEmployeeStandardDailyHours(emp), 25))} / jam
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200 font-bold text-[11px]">
+                        {formatRupiah(
+                          getEmployeeHourlyRate(
+                            emp,
+                            getEmployeeStandardDailyHours(emp),
+                            getEmployeeMonthlyWorkingDaysDivisor(emp, 26)
+                          )
+                        )}{' '}
+                        / jam
                       </span>
                       <span
                         className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-extrabold text-[10px] border ${
@@ -1467,9 +1539,30 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                       >
                         Std: {getEmployeeStandardDailyHours(emp)} Jam/Hari
                       </span>
+                      <span
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-extrabold text-[10px] border ${
+                          getEmployeeWorkDaysPerWeek(emp) === 7
+                            ? 'bg-purple-50 text-purple-800 border-purple-200'
+                            : 'bg-amber-50/80 text-amber-900 border-amber-200'
+                        }`}
+                        title={
+                          getEmployeeWorkDaysPerWeek(emp) === 7
+                            ? '7 Hari Kerja/Minggu (Pembagi 30 Hari/Bulan • Hari Minggu = Hari Kerja Reguler)'
+                            : '6 Hari Kerja/Minggu (Pembagi 26 Hari/Bulan • Hari Minggu = Libur / Masuk Minggu Dihitung Lembur)'
+                        }
+                      >
+                        {getEmployeeWorkDaysPerWeek(emp)} Hari/Minggu (÷{getEmployeeMonthlyWorkingDaysDivisor(emp, 26)} Hr)
+                      </span>
                     </div>
                     <span className="font-semibold text-slate-900 block text-[11px]">
-                      {getEmployeeStandardDailyHours(emp)} Jam/Hr: {formatRupiah(getEmployeeDailySalary(emp, 25, getEmployeeStandardDailyHours(emp)))}
+                      {getEmployeeStandardDailyHours(emp)} Jam/Hr:{' '}
+                      {formatRupiah(
+                        getEmployeeDailySalary(
+                          emp,
+                          getEmployeeMonthlyWorkingDaysDivisor(emp, 26),
+                          getEmployeeStandardDailyHours(emp)
+                        )
+                      )}
                     </span>
                     {(emp.isLiveStreamHost ||
                       (emp.salesCommissionPercentage || 0) > 0 ||
@@ -1546,7 +1639,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                         {emp.ptkpStatus}
                       </span>
                       {npwpInfo.isNikMatched && (
-                        <span className="px-1.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded font-bold text-[9px]">
+                        <span className="px-1.5 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded font-bold text-[9px]">
                           NIK-NPWP
                         </span>
                       )}
@@ -1570,14 +1663,14 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                       <button
                         title="Upload / Ganti Foto Real Karyawan"
                         onClick={() => openQuickPhotoModal(emp)}
-                        className="p-1.5 text-slate-600 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
+                        className="p-1.5 text-slate-600 hover:text-amber-700 hover:bg-amber-50 rounded-lg transition-colors cursor-pointer"
                       >
                         <Camera className="w-4 h-4" />
                       </button>
                       <button
                         title="Lihat Profil"
                         onClick={() => setViewingEmployee(emp)}
-                        className="p-1.5 text-slate-600 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
+                        className="p-1.5 text-slate-600 hover:text-amber-700 hover:bg-amber-50 rounded-lg transition-colors cursor-pointer"
                       >
                         <Eye className="w-4 h-4" />
                       </button>
@@ -1604,7 +1697,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                   <tr>
                     <td colSpan={7} className="py-14 text-center text-slate-500">
                       <div className="flex flex-col items-center justify-center gap-2.5 max-w-md mx-auto">
-                        <div className="w-12 h-12 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-600">
+                        <div className="w-12 h-12 rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600">
                           <Users className="w-6 h-6" />
                         </div>
                         <p className="font-bold text-slate-900 text-sm">
@@ -1620,7 +1713,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                         <button
                           type="button"
                           onClick={openAddModal}
-                          className="mt-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/20 cursor-pointer inline-flex items-center gap-1.5"
+                          className="mt-2 px-4 py-2 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold rounded-xl text-xs font-bold shadow-md shadow-amber-600/20 cursor-pointer inline-flex items-center gap-1.5"
                         >
                           <Plus className="w-4 h-4" />
                           <span>Tambah Karyawan Baru</span>
@@ -1645,13 +1738,13 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                   <img
                     src={viewingEmployee.avatarUrl}
                     alt={viewingEmployee.fullName}
-                    className="w-14 h-14 rounded-full object-cover ring-2 ring-emerald-500 shadow-md"
+                    className="w-14 h-14 rounded-full object-cover ring-2 ring-amber-500 shadow-md"
                   />
                   <button
                     type="button"
                     onClick={() => openQuickPhotoModal(viewingEmployee)}
                     title="Upload / Ganti Foto Real Karyawan"
-                    className="absolute -bottom-1 -right-1 p-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-full shadow-md transition-transform hover:scale-110 cursor-pointer"
+                    className="absolute -bottom-1 -right-1 p-1.5 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold rounded-full shadow-md transition-transform hover:scale-110 cursor-pointer"
                   >
                     <Camera className="w-3.5 h-3.5" />
                   </button>
@@ -1660,7 +1753,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                   <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                     {viewingEmployee.fullName}
                     {Boolean(viewingEmployee.avatarUrl && viewingEmployee.avatarUrl.startsWith('data:image')) && (
-                      <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded-full text-[10px] font-semibold">
+                      <span className="px-2 py-0.5 bg-amber-100 text-amber-800 rounded-full text-[10px] font-semibold">
                         Foto Real
                       </span>
                     )}
@@ -1681,12 +1774,22 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                         {viewingEmployee.gender === 'Laki-laki' ? '♂ Laki-laki (Pria)' : '♀ Perempuan (Wanita)'}
                       </span>
                     )}
+                    <span
+                      className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold border ${
+                        getEmployeeBranch(viewingEmployee) === 'Green Lake City'
+                          ? 'bg-amber-50 text-amber-900 border-amber-300'
+                          : 'bg-neutral-900 text-amber-300 border-amber-500/40'
+                      }`}
+                    >
+                      <MapPin className="w-3 h-3" />
+                      <span>Cabang: {getEmployeeBranch(viewingEmployee)}</span>
+                    </span>
                   </div>
                   <div className="mt-1 flex items-center gap-3 flex-wrap">
                     <button
                       type="button"
                       onClick={() => openQuickPhotoModal(viewingEmployee)}
-                      className="inline-flex items-center gap-1.5 text-[11px] font-medium text-emerald-700 hover:text-emerald-800 hover:underline cursor-pointer"
+                      className="inline-flex items-center gap-1.5 text-[11px] font-medium text-amber-700 hover:text-amber-800 hover:underline cursor-pointer"
                     >
                       <Upload className="w-3 h-3" />
                       Upload / Ganti Foto Real Karyawan
@@ -1741,6 +1844,49 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                   )}
                 </div>
                 <div className="flex justify-between"><span className="text-slate-500">Status Kontrak:</span><span className="font-medium">{viewingEmployee.employmentStatus}</span></div>
+                <div className="flex justify-between items-center gap-2">
+                  <span className="text-slate-500">Cabang / Lokasi Kerja:</span>
+                  <select
+                    value={getEmployeeBranch(viewingEmployee)}
+                    onChange={(e) => {
+                      const nextBranch = normalizeEmployeeBranch(e.target.value);
+                      const updated: Employee = {
+                        ...viewingEmployee,
+                        branch: nextBranch,
+                        cabang: nextBranch,
+                      };
+                      saveEmployeeEmploymentMetaLocal(updated);
+                      setViewingEmployee(updated);
+                      onUpdateEmployee(updated);
+                      syncEmployeeLiveColumnsToSupabase(updated).catch(() => {});
+                      showToast(
+                        `Cabang / Lokasi Kerja untuk ${viewingEmployee.fullName} berhasil diubah ke "${nextBranch}" & disinkronkan ke Supabase!`
+                      );
+                    }}
+                    className={`px-2.5 py-1 rounded-lg font-extrabold text-[11px] border cursor-pointer ${
+                      getEmployeeBranch(viewingEmployee) === 'Green Lake City'
+                        ? 'bg-amber-50 text-amber-900 border-amber-300'
+                        : 'bg-neutral-900 text-amber-300 border-amber-500/40'
+                    }`}
+                  >
+                    <option value="Sumber Mas" className="bg-white text-slate-900">
+                      📍 Sumber Mas
+                    </option>
+                    <option value="Green Lake City" className="bg-white text-slate-900">
+                      📍 Green Lake City
+                    </option>
+                  </select>
+                </div>
+                <div className="flex justify-between items-center gap-2">
+                  <span className="text-slate-500">Hari Kerja / Minggu:</span>
+                  <span className={`px-2 py-0.5 rounded font-bold text-[10px] border ${
+                    getEmployeeWorkDaysPerWeek(viewingEmployee) === 7
+                      ? 'bg-purple-50 text-purple-800 border-purple-200'
+                      : 'bg-amber-50 text-amber-800 border-amber-200'
+                  }`}>
+                    {getEmployeeWorkDaysPerWeek(viewingEmployee)} Hari/Minggu (Pembagi {getEmployeeMonthlyWorkingDaysDivisor(viewingEmployee, 26)} Hari)
+                  </span>
+                </div>
                 <div className="flex justify-between"><span className="text-slate-500">Tgl Bergabung:</span><span className="font-medium">{formatIndoDate(viewingEmployee.joinDate)}</span></div>
                 <div className="flex justify-between"><span className="text-slate-500">Jenis Kelamin:</span><span className="font-medium text-slate-800">{viewingEmployee.gender || 'Laki-laki'}</span></div>
                 <div className="flex justify-between"><span className="text-slate-500">Sisa Cuti:</span><span className="font-medium">{viewingEmployee.remainingLeaveDays} Hari</span></div>
@@ -1749,7 +1895,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
               <div className="p-3.5 bg-slate-50 rounded-xl space-y-2 border border-slate-100">
                 <div className="flex items-center justify-between border-b pb-1">
                   <span className="font-semibold text-slate-700">Kontak (WA/Email) &amp; Rekening</span>
-                  <span className="text-[10px] text-emerald-700 font-semibold">Tersinkron Supabase</span>
+                  <span className="text-[10px] text-amber-700 font-semibold">Tersinkron Supabase</span>
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] text-slate-500 block">Email Karyawan (Kantor / Pribadi):</label>
@@ -1771,7 +1917,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                 <div className="space-y-1">
                   <div className="flex items-center justify-between">
                     <label className="text-[10px] text-slate-500">Nomor WhatsApp / HP:</label>
-                    <span className="text-[10px] font-mono text-green-700 font-semibold">
+                    <span className="text-[10px] font-mono text-amber-700 font-semibold">
                       wa.me/{formatWhatsAppPhone(viewingEmployee.phone) || '-'}
                     </span>
                   </div>
@@ -1815,11 +1961,11 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                 )}
               </div>
 
-              <div className="p-3.5 bg-emerald-50/60 rounded-xl space-y-2 border border-emerald-100">
-                <span className="font-semibold text-emerald-900 block border-b border-emerald-200 pb-1">Struktur Gaji Per Jam &amp; Tunjangan</span>
+              <div className="p-3.5 bg-amber-50/60 rounded-xl space-y-2 border border-amber-100">
+                <span className="font-semibold text-amber-900 block border-b border-amber-200 pb-1">Struktur Gaji Per Jam &amp; Tunjangan</span>
                 <div className="flex justify-between items-center">
                   <span className="text-slate-600 font-medium">Tarif Gaji Per Jam (hourly_rate):</span>
-                  <span className="font-extrabold text-emerald-700 bg-white px-2 py-0.5 rounded border border-emerald-200">
+                  <span className="font-extrabold text-amber-700 bg-white px-2 py-0.5 rounded border border-amber-200">
                     {formatRupiah(getEmployeeHourlyRate(viewingEmployee, getEmployeeStandardDailyHours(viewingEmployee), 25))} / jam
                   </span>
                 </div>
@@ -1845,7 +1991,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                   (viewingEmployee.salesCommissionPercentage || 0) > 0 ||
                   (viewingEmployee.salesCommissionPerPcs || 0) > 0 ||
                   (viewingEmployee.coHostCommissionPercentage || 0) > 0) && (
-                  <div className="pt-2 mt-1 border-t border-emerald-200 space-y-1">
+                  <div className="pt-2 mt-1 border-t border-amber-200 space-y-1">
                     {viewingEmployee.isLiveStreamHost && (
                       <div className="flex justify-between items-center">
                         <span className="text-fuchsia-800 font-bold">Status Host Live Stream:</span>
@@ -1891,7 +2037,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                 </div>
                 <div className="flex justify-between items-center gap-2">
                   <span className="text-slate-600">Status Padan NIK-NPWP:</span>
-                  <span className="font-semibold text-[11px] text-emerald-700">
+                  <span className="font-semibold text-[11px] text-amber-700">
                     {getNpwpStatusInfo(viewingEmployee.npwp, viewingEmployee.ktpNumber).label}
                   </span>
                 </div>
@@ -1904,7 +2050,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
             {(() => {
               const contractInfo = getContractValidityInfo(viewingEmployee);
               return (
-                <div className="mt-4 p-4 bg-gradient-to-br from-indigo-50/60 via-white to-emerald-50/50 rounded-xl border border-indigo-200 space-y-3.5 text-xs">
+                <div className="mt-4 p-4 bg-gradient-to-br from-indigo-50/60 via-white to-amber-50/50 rounded-xl border border-indigo-200 space-y-3.5 text-xs">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-indigo-200/80 pb-2.5">
                     <div>
                       <span className="font-bold text-slate-900 flex items-center gap-1.5 text-xs">
@@ -1924,7 +2070,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                             ? 'bg-rose-100 text-rose-800 border border-rose-200'
                             : contractInfo.isExpiringSoon
                             ? 'bg-amber-100 text-amber-800 border border-amber-200'
-                            : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                            : 'bg-amber-100 text-amber-800 border border-amber-200'
                         }`}
                       >
                         {contractInfo.badgeText}
@@ -1942,7 +2088,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                               )}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="px-3 py-1 rounded-xl bg-green-600 hover:bg-green-700 text-white font-bold text-[11px] inline-flex items-center gap-1 shadow-2xs transition-colors"
+                              className="px-3 py-1 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold font-bold text-[11px] inline-flex items-center gap-1 shadow-2xs transition-colors"
                             >
                               <MessageCircle className="w-3.5 h-3.5" />
                               <span>Ingatkan Kontrak (WA)</span>
@@ -1966,7 +2112,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                           setLetterModalInitialTab('documents');
                           setLetterModalInitialType('PKWT');
                         }}
-                        className="px-3 py-1 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] inline-flex items-center gap-1 shadow-2xs cursor-pointer"
+                        className="px-3 py-1 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold font-bold text-[11px] inline-flex items-center gap-1 shadow-2xs cursor-pointer"
                       >
                         <Upload className="w-3.5 h-3.5" />
                         <span>Arsip Dokumen (KTP, NPWP, Kontrak)</span>
@@ -2198,12 +2344,12 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                             downloadFileName: `Foto-Profil-${viewingEmployee.nik}.jpg`,
                           })
                         }
-                        className="w-16 h-16 rounded-xl object-cover ring-2 ring-emerald-500 shrink-0 cursor-pointer"
+                        className="w-16 h-16 rounded-xl object-cover ring-2 ring-amber-500 shrink-0 cursor-pointer"
                       />
                       <div className="min-w-0 flex-1 space-y-1">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <span className="font-bold text-slate-900 text-xs">Photo Profil Karyawan</span>
-                          <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-100 text-emerald-800">
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-100 text-amber-800">
                             Aktif
                           </span>
                         </div>
@@ -2231,7 +2377,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                           <button
                             type="button"
                             onClick={() => openQuickPhotoModal(viewingEmployee)}
-                            className="px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-semibold text-[10px] cursor-pointer flex items-center gap-1"
+                            className="px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-700 font-semibold text-[10px] cursor-pointer flex items-center gap-1"
                           >
                             <Upload className="w-3 h-3" />
                             <span>Ganti</span>
@@ -2250,13 +2396,13 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                 (a) => a.assignedToEmployeeId === viewingEmployee.id
               );
               return (
-                <div className="mt-4 p-4 bg-teal-50/70 rounded-xl border border-teal-200 space-y-3 text-xs">
-                  <div className="flex items-center justify-between border-b border-teal-200/80 pb-2">
-                    <span className="font-bold text-teal-900 flex items-center gap-1.5 text-xs">
-                      <Boxes className="w-4 h-4 text-teal-700" />
+                <div className="mt-4 p-4 bg-amber-50/70 rounded-xl border border-amber-200 space-y-3 text-xs">
+                  <div className="flex items-center justify-between border-b border-amber-200/80 pb-2">
+                    <span className="font-bold text-amber-900 flex items-center gap-1.5 text-xs">
+                      <Boxes className="w-4 h-4 text-amber-700" />
                       Inventaris & Aset Kantor yang Dipegang ({myAssets.length})
                     </span>
-                    <span className="text-[10px] text-teal-700 font-semibold bg-teal-100/90 px-2 py-0.5 rounded-full">
+                    <span className="text-[10px] text-amber-700 font-semibold bg-amber-100/90 px-2 py-0.5 rounded-full">
                       Tanggung Jawab Staf
                     </span>
                   </div>
@@ -2270,7 +2416,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                       {myAssets.map((asset) => (
                         <div
                           key={asset.id}
-                          className="bg-white p-3 rounded-lg border border-teal-200/70 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs shadow-2xs"
+                          className="bg-white p-3 rounded-lg border border-amber-200/70 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs shadow-2xs"
                         >
                           <div>
                             <div className="flex items-center gap-2">
@@ -2294,7 +2440,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                             <span
                               className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                                 asset.condition === 'Baik'
-                                  ? 'bg-emerald-100 text-emerald-800'
+                                  ? 'bg-amber-100 text-amber-800'
                                   : 'bg-amber-100 text-amber-800'
                               }`}
                             >
@@ -2355,8 +2501,8 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                               </span>
                               <span
                                 className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
-                                  rev.grade === 'A+' ? 'bg-emerald-100 text-emerald-800 border-emerald-300' :
-                                  rev.grade === 'A' ? 'bg-teal-100 text-teal-800 border-teal-300' :
+                                  rev.grade === 'A+' ? 'bg-amber-100 text-amber-800 border-amber-300' :
+                                  rev.grade === 'A' ? 'bg-amber-100 text-amber-800 border-amber-300' :
                                   rev.grade === 'B+' ? 'bg-blue-100 text-blue-800 border-blue-300' :
                                   rev.grade === 'B' ? 'bg-amber-100 text-amber-800 border-amber-300' :
                                   'bg-rose-100 text-rose-800 border-rose-300'
@@ -2375,7 +2521,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                             </div>
                             <div className="bg-slate-50 p-1.5 rounded border border-slate-200">
                               <span className="text-slate-500 block text-[9px]">Disiplin</span>
-                              <span className="font-bold text-teal-700 text-xs">{rev.disciplineScore}</span>
+                              <span className="font-bold text-amber-700 text-xs">{rev.disciplineScore}</span>
                             </div>
                             <div className="bg-slate-50 p-1.5 rounded border border-slate-200">
                               <span className="text-slate-500 block text-[9px]">Kerjasama</span>
@@ -2395,12 +2541,12 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
 
                           <div className="flex items-center justify-between text-[11px] pt-1">
                             <span className="text-slate-500">
-                              Rekomendasi Bonus: <strong className="text-emerald-700">{formatRupiah(rev.recommendedBonus)}</strong>
+                              Rekomendasi Bonus: <strong className="text-amber-700">{formatRupiah(rev.recommendedBonus)}</strong>
                             </span>
                             <span
                               className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
                                 rev.isBonusAppliedToPayroll
-                                  ? 'bg-emerald-100 text-emerald-800'
+                                  ? 'bg-amber-100 text-amber-800'
                                   : 'bg-amber-100 text-amber-800'
                               }`}
                             >
@@ -3132,7 +3278,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 pb-3 mb-3 border-b border-slate-200">
                   <div>
                     <h4 className="font-semibold text-slate-800 flex items-center gap-2 text-xs">
-                      <Camera className="w-4 h-4 text-emerald-600" />
+                      <Camera className="w-4 h-4 text-amber-600" />
                       Pas Foto Real Karyawan (Foto Wajah Asli)
                     </h4>
                     <p className="text-[11px] text-slate-500 mt-0.5">
@@ -3140,8 +3286,8 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                     </p>
                   </div>
                   {formData.avatarUrl && formData.avatarUrl.startsWith('data:image') && (
-                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-emerald-100 text-emerald-800 rounded-full font-medium text-[11px]">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-amber-100 text-amber-800 rounded-full font-medium text-[11px]">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-amber-600" />
                       Foto Real Terpasang
                     </span>
                   )}
@@ -3150,7 +3296,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                 <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4">
                   {/* Avatar Display */}
                   <div className="shrink-0 flex flex-col items-center">
-                    <div className="w-24 h-24 rounded-2xl overflow-hidden ring-2 ring-emerald-500 shadow-md bg-slate-100 flex items-center justify-center">
+                    <div className="w-24 h-24 rounded-2xl overflow-hidden ring-2 ring-amber-500 shadow-md bg-slate-100 flex items-center justify-center">
                       {formData.avatarUrl ? (
                         <img
                           src={formData.avatarUrl}
@@ -3167,7 +3313,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                   {/* Photo Controls */}
                   <div className="flex-1 w-full space-y-3">
                     <div className="flex flex-wrap gap-2">
-                      <label className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-medium cursor-pointer transition-colors shadow-xs">
+                      <label className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold rounded-xl font-medium cursor-pointer transition-colors shadow-xs">
                         <Upload className="w-3.5 h-3.5" />
                         <span>{isCompressingForm ? 'Memproses...' : 'Upload File Foto'}</span>
                         <input
@@ -3240,13 +3386,13 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                             muted
                             className="w-full h-full object-cover scale-x-[-1]"
                           />
-                          <div className="absolute inset-0 border-2 border-emerald-400 rounded-full scale-75 pointer-events-none opacity-80 border-dashed" />
+                          <div className="absolute inset-0 border-2 border-amber-400 rounded-full scale-75 pointer-events-none opacity-80 border-dashed" />
                         </div>
                         <div className="mt-2.5 flex items-center justify-center gap-3">
                           <button
                             type="button"
                             onClick={captureFormCamera}
-                            className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-semibold flex items-center gap-1.5 cursor-pointer shadow-md"
+                            className="px-4 py-1.5 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold rounded-lg font-semibold flex items-center gap-1.5 cursor-pointer shadow-md"
                           >
                             <Camera className="w-3.5 h-3.5" />
                             Jepret Pas Foto
@@ -3278,7 +3424,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                                 facePhotoUrl: sample.url,
                               }));
                             }}
-                            className="relative p-0.5 rounded-lg border-2 hover:border-emerald-500 transition-all cursor-pointer overflow-hidden group"
+                            className="relative p-0.5 rounded-lg border-2 hover:border-amber-500 transition-all cursor-pointer overflow-hidden group"
                             title={sample.label}
                           >
                             <img
@@ -3355,7 +3501,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                     <div className="flex items-center justify-between mb-1">
                       <label className="block text-slate-600">Nomor WhatsApp / HP</label>
                       {formData.phone && (
-                        <span className="text-[10px] font-mono text-green-700 font-semibold">
+                        <span className="text-[10px] font-mono text-amber-700 font-semibold">
                           WA: {formatWhatsAppPhone(formData.phone)}
                         </span>
                       )}
@@ -3384,7 +3530,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                       <label className="block text-slate-600 font-semibold">
                         Departemen / Divisi <span className="text-rose-500">*</span>
                       </label>
-                      <span className="text-[10px] text-emerald-700 font-semibold bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                      <span className="text-[10px] text-amber-700 font-semibold bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
                         Ketik Bebas atau Klik Pilihan Cepat
                       </span>
                     </div>
@@ -3397,7 +3543,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                         setFormData({ ...formData, department: e.target.value as Department })
                       }
                       placeholder="Ketik nama departemen baru (contoh: Gudang, Packing, Ekspedisi, Admin Marketplace)..."
-                      className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 font-medium focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                      className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 font-medium focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
                     />
                     <datalist id="department-suggestions">
                       {departmentSuggestions.map((dept) => (
@@ -3421,8 +3567,8 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                                 onClick={() => setFormData({ ...formData, department: dept })}
                                 className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-all cursor-pointer ${
                                   isSelected
-                                    ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
-                                    : 'bg-emerald-50/70 hover:bg-emerald-100 text-emerald-800 border-emerald-200'
+                                    ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 border-amber-500 font-bold shadow-2xs'
+                                    : 'bg-amber-50/70 hover:bg-amber-100 text-amber-800 border-amber-200'
                                 }`}
                               >
                                 {dept}
@@ -3483,6 +3629,63 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                       <option value="Laki-laki">♂ Laki-laki (Pria)</option>
                       <option value="Perempuan">♀ Perempuan (Wanita)</option>
                     </select>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-slate-800 font-bold flex items-center gap-1">
+                        <MapPin className="w-3.5 h-3.5 text-amber-600" />
+                        <span>
+                          Cabang / Lokasi Kerja (<code className="font-mono text-[10px]">branch</code> / <code className="font-mono text-[10px]">cabang</code>) <span className="text-rose-500">*</span>
+                        </span>
+                      </label>
+                      <span className="text-[10px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                        Wajib Dipilih • Tersinkron ke Supabase
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <select
+                        required
+                        value={normalizeEmployeeBranch(formData.branch || formData.cabang || 'Sumber Mas')}
+                        onChange={(e) => {
+                          const nextBranch = normalizeEmployeeBranch(e.target.value);
+                          setFormData({
+                            ...formData,
+                            branch: nextBranch,
+                            cabang: nextBranch,
+                          });
+                        }}
+                        className="w-full p-2 bg-slate-50 border border-amber-400 rounded-lg font-bold text-slate-900 focus:outline-hidden focus:ring-2 focus:ring-amber-500/20"
+                      >
+                        <option value="Sumber Mas">1) Sumber Mas</option>
+                        <option value="Green Lake City">2) Green Lake City</option>
+                      </select>
+                      {(['Sumber Mas', 'Green Lake City'] as const).map((branchOpt) => {
+                        const isSelected =
+                          normalizeEmployeeBranch(formData.branch || formData.cabang || 'Sumber Mas') ===
+                          branchOpt;
+                        return (
+                          <button
+                            key={branchOpt}
+                            type="button"
+                            onClick={() =>
+                              setFormData({
+                                ...formData,
+                                branch: branchOpt,
+                                cabang: branchOpt,
+                              })
+                            }
+                            className={`px-3 py-2 rounded-lg text-xs font-extrabold border flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                              isSelected
+                                ? 'bg-neutral-950 text-amber-300 border-amber-500 shadow-xs'
+                                : 'bg-white hover:bg-amber-50/70 text-slate-700 border-slate-200'
+                            }`}
+                          >
+                            <MapPin className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                            <span>{branchOpt}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                   <div>
                     <label className="block text-slate-600 mb-1">Status Kepegawaian / Kontrak</label>
@@ -3738,7 +3941,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                           </div>
                           <div className="flex items-center justify-between text-orange-950 font-bold pt-1 border-t border-orange-100">
                             <span>Simulasi 48j Normal + 4j Lembur:</span>
-                            <span className="text-emerald-700">
+                            <span className="text-amber-700">
                               {formatRupiah(
                                 (Number(formData.hourlyRate ?? formData.hourly_rate) || 0) * 48 +
                                   (Number(
@@ -3777,7 +3980,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                       <label className="block text-slate-800 font-bold">
                         Kuota / Sisa Cuti Tahunan (Hari)
                       </label>
-                      <span className="text-[10px] font-mono text-emerald-700 font-semibold">
+                      <span className="text-[10px] font-mono text-amber-700 font-semibold">
                         remaining_leave
                       </span>
                     </div>
@@ -3799,7 +4002,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                           });
                         }}
                         placeholder="Default: 0 hari"
-                        className="w-full p-2 bg-emerald-50/50 border border-emerald-300 rounded-lg font-extrabold text-emerald-950 focus:outline-hidden focus:ring-2 focus:ring-emerald-500/30"
+                        className="w-full p-2 bg-amber-50/50 border border-amber-300 rounded-lg font-extrabold text-amber-950 focus:outline-hidden focus:ring-2 focus:ring-amber-500/30"
                       />
                       <div className="flex items-center gap-1 shrink-0">
                         {[0, 6, 12].map((q) => (
@@ -3817,8 +4020,8 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                             }
                             className={`px-2 py-1.5 rounded-lg text-[10px] font-bold border cursor-pointer transition-colors ${
                               (formData.remainingLeaveDays ?? 0) === q
-                                ? 'bg-emerald-600 text-white border-emerald-600'
-                                : 'bg-white text-slate-600 border-slate-200 hover:bg-emerald-50'
+                                ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 border-amber-500 font-bold'
+                                : 'bg-white text-slate-600 border-slate-200 hover:bg-amber-50'
                             }`}
                             title={`Set Kuota Cuti ${q} Hari`}
                           >
@@ -3993,7 +4196,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                   <h4 className="font-semibold text-slate-800">
                     2. Struktur Tarif Gaji Per Jam (Hourly Rate), Standar Jam Kerja Harian &amp; Tunjangan (IDR)
                   </h4>
-                  <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
+                  <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 px-2.5 py-0.5 rounded-full border border-amber-200">
                     Payroll Real-Time = Jam Kerja Riil × Tarif Gaji Per Jam (Standar {getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY)} Jam/Hari)
                   </span>
                 </div>
@@ -4132,9 +4335,172 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                   </div>
                 </div>
 
+                {/* Pengaturan Hari Kerja Per Minggu (hari_kerja_per_minggu: 6 Hari/Minggu vs 7 Hari/Minggu) */}
+                <div className="mb-3 p-3.5 bg-amber-50/70 border-2 border-amber-300 rounded-xl space-y-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <label className="block text-amber-950 font-extrabold text-xs">
+                        Skema Hari Kerja Per Minggu (<code className="font-mono text-[10px]">hari_kerja_per_minggu</code>) *
+                      </label>
+                      <span className="text-[11px] text-amber-800 block mt-0.5">
+                        Menentukan pembagi hari kerja bulanan (26 vs 30 hari), jadwal hari Minggu, serta aturan Lembur / Alfa di hari Minggu.
+                      </span>
+                    </div>
+                    <span
+                      className={`px-2.5 py-1 rounded-lg font-extrabold text-xs shadow-2xs ${
+                        Number(formData.hari_kerja_per_minggu ?? formData.workDaysPerWeek) === 7
+                          ? 'bg-purple-700 text-white'
+                          : 'bg-neutral-900 text-amber-300 border border-amber-500/40'
+                      }`}
+                    >
+                      {Number(formData.hari_kerja_per_minggu ?? formData.workDaysPerWeek) === 7
+                        ? '7 Hari/Minggu (Pembagi 30 Hari • Masuk Minggu)'
+                        : Number(formData.hari_kerja_per_minggu ?? formData.workDaysPerWeek) === 6
+                        ? '6 Hari/Minggu (Pembagi 26 Hari • Minggu Libur/Lembur)'
+                        : 'Mengikuti Default Sistem (6 Hari/Minggu • Pembagi 26 Hari)'}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nextDays = 26;
+                        setMonthlyEstimationDays(nextDays);
+                        const stdHrs = getEmployeeStandardDailyHours(
+                          formData,
+                          STANDARD_WORK_HOURS_PER_DAY
+                        );
+                        const currHourly =
+                          Number(formData.hourlyRate ?? formData.hourly_rate) || 25000;
+                        const nextDaily = Number((currHourly * stdHrs).toFixed(2));
+                        setFormData({
+                          ...formData,
+                          hari_kerja_per_minggu: 6,
+                          workDaysPerWeek: 6,
+                          dailySalary: nextDaily,
+                          daily_salary: nextDaily,
+                          baseSalary: Number((nextDaily * nextDays).toFixed(2)),
+                        });
+                      }}
+                      className={`p-2.5 rounded-xl text-left border-2 transition-all cursor-pointer ${
+                        Number(formData.hari_kerja_per_minggu ?? formData.workDaysPerWeek) === 6
+                          ? 'bg-neutral-900 text-amber-300 border-amber-500 shadow-sm'
+                          : 'bg-white text-slate-800 border-amber-200 hover:bg-amber-50'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-extrabold">6 Hari/Minggu</span>
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-600 border border-amber-500/30">
+                          Pembagi 26 Hari
+                        </span>
+                      </div>
+                      <p
+                        className={`text-[10px] mt-1 leading-relaxed ${
+                          Number(formData.hari_kerja_per_minggu ?? formData.workDaysPerWeek) === 6
+                            ? 'text-amber-200/80'
+                            : 'text-slate-500'
+                        }`}
+                      >
+                        1 hari libur mingguan (Minggu). Tidak kena Alfa di hari Minggu; jika masuk Minggu otomatis dihitung <strong>Lembur (Overtime)</strong>.
+                      </p>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nextDays = 30;
+                        setMonthlyEstimationDays(nextDays);
+                        const stdHrs = getEmployeeStandardDailyHours(
+                          formData,
+                          STANDARD_WORK_HOURS_PER_DAY
+                        );
+                        const currHourly =
+                          Number(formData.hourlyRate ?? formData.hourly_rate) || 25000;
+                        const nextDaily = Number((currHourly * stdHrs).toFixed(2));
+                        setFormData({
+                          ...formData,
+                          hari_kerja_per_minggu: 7,
+                          workDaysPerWeek: 7,
+                          dailySalary: nextDaily,
+                          daily_salary: nextDaily,
+                          baseSalary: Number((nextDaily * nextDays).toFixed(2)),
+                        });
+                      }}
+                      className={`p-2.5 rounded-xl text-left border-2 transition-all cursor-pointer ${
+                        Number(formData.hari_kerja_per_minggu ?? formData.workDaysPerWeek) === 7
+                          ? 'bg-purple-900 text-purple-100 border-purple-400 shadow-sm'
+                          : 'bg-white text-slate-800 border-purple-200 hover:bg-purple-50/60'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-extrabold">7 Hari/Minggu</span>
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-500/20 text-purple-600 border border-purple-400/30">
+                          Pembagi 30 Hari
+                        </span>
+                      </div>
+                      <p
+                        className={`text-[10px] mt-1 leading-relaxed ${
+                          Number(formData.hari_kerja_per_minggu ?? formData.workDaysPerWeek) === 7
+                            ? 'text-purple-200/90'
+                            : 'text-slate-500'
+                        }`}
+                      >
+                        Senin–Minggu aktif. Hari Minggu dihitung <strong>Hari Kerja Reguler</strong> sesuai shift (jika mangkir/Alpa Minggu tetap terkena potongan).
+                      </p>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nextDays = 26;
+                        setMonthlyEstimationDays(nextDays);
+                        const stdHrs = getEmployeeStandardDailyHours(
+                          formData,
+                          STANDARD_WORK_HOURS_PER_DAY
+                        );
+                        const currHourly =
+                          Number(formData.hourlyRate ?? formData.hourly_rate) || 25000;
+                        const nextDaily = Number((currHourly * stdHrs).toFixed(2));
+                        setFormData({
+                          ...formData,
+                          hari_kerja_per_minggu: undefined,
+                          workDaysPerWeek: undefined,
+                          dailySalary: nextDaily,
+                          daily_salary: nextDaily,
+                          baseSalary: Number((nextDaily * nextDays).toFixed(2)),
+                        });
+                      }}
+                      className={`p-2.5 rounded-xl text-left border-2 transition-all cursor-pointer ${
+                        formData.hari_kerja_per_minggu === undefined &&
+                        formData.workDaysPerWeek === undefined
+                          ? 'bg-slate-800 text-white border-slate-600 shadow-sm'
+                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-extrabold">Mengikuti Default Sistem</span>
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-200 text-slate-700">
+                          Sesuai Shift
+                        </span>
+                      </div>
+                      <p
+                        className={`text-[10px] mt-1 leading-relaxed ${
+                          formData.hari_kerja_per_minggu === undefined &&
+                          formData.workDaysPerWeek === undefined
+                            ? 'text-slate-300'
+                            : 'text-slate-500'
+                        }`}
+                      >
+                        Mengikuti jumlah hari kerja pada jadwal Shift karyawan atau pengaturan default sistem (6 Hari/Minggu).
+                      </p>
+                    </button>
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-3">
-                  <div className="p-2.5 bg-emerald-50/90 border border-emerald-400 rounded-xl">
-                    <label className="block text-emerald-950 font-bold mb-1">
+                  <div className="p-2.5 bg-amber-50/90 border border-amber-400 rounded-xl">
+                    <label className="block text-amber-950 font-bold mb-1">
                       Tarif Gaji Per Jam (<code className="font-mono text-[10px]">hourly_rate</code>) *
                     </label>
                     <input
@@ -4168,14 +4534,14 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                         });
                       }}
                       placeholder="Contoh: 15000 atau 955"
-                      className="w-full p-2 bg-white border border-emerald-500 rounded-lg text-emerald-950 font-extrabold focus:outline-hidden focus:ring-2 focus:ring-emerald-500/30"
+                      className="w-full p-2 bg-white border border-amber-500 rounded-lg text-amber-950 font-extrabold focus:outline-hidden focus:ring-2 focus:ring-amber-500/30"
                     />
-                    <span className="block text-[10px] text-emerald-700 mt-1 font-medium">
+                    <span className="block text-[10px] text-amber-700 mt-1 font-medium">
                       Dikali akumulasi jam kerja riil bulanan (Maks. {getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY)} Jam/Hari)
                     </span>
                   </div>
-                  <div className="p-2.5 bg-emerald-50/50 border border-emerald-200 rounded-xl">
-                    <label className="block text-emerald-900 font-bold mb-1">
+                  <div className="p-2.5 bg-amber-50/50 border border-amber-200 rounded-xl">
+                    <label className="block text-amber-900 font-bold mb-1">
                       Gaji Harian Standar {getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY)} Jam (<code className="font-mono text-[10px]">daily_salary</code>)
                     </label>
                     <input
@@ -4202,42 +4568,79 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                         });
                       }}
                       placeholder="Contoh: 135000"
-                      className="w-full p-2 bg-white border border-emerald-300 rounded-lg text-emerald-900 font-bold focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20"
+                      className="w-full p-2 bg-white border border-amber-300 rounded-lg text-amber-900 font-bold focus:outline-hidden focus:ring-2 focus:ring-amber-500/20"
                     />
-                    <span className="block text-[10px] text-emerald-700 mt-1">
+                    <span className="block text-[10px] text-amber-700 mt-1">
                       {getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY)} jam × {formatRupiah(formData.hourlyRate ?? formData.hourly_rate ?? 0)} / jam
                     </span>
                   </div>
                   <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl">
-                    <div className="flex flex-wrap items-center justify-between gap-1.5 mb-1">
+                    <div className="flex flex-wrap items-center justify-between gap-1.5 mb-1.5">
                       <label className="block text-slate-700 font-bold text-xs">
                         Estimasi Bulanan ({monthlyEstimationDays} Hari / {Number((monthlyEstimationDays * getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY)).toFixed(1))} Jam)
                       </label>
-                      <div className="inline-flex items-center rounded-lg bg-slate-200/80 p-0.5 border border-slate-300">
-                        {([25, 26] as const).map((daysOpt) => (
-                          <button
-                            key={daysOpt}
-                            type="button"
-                            onClick={() => {
-                              setMonthlyEstimationDays(daysOpt);
+                      <div className="flex flex-wrap items-center gap-1">
+                        <div className="inline-flex items-center rounded-lg bg-slate-200/80 p-0.5 border border-slate-300">
+                          {([25, 26, 27, 30] as const).map((daysOpt) => (
+                            <button
+                              key={daysOpt}
+                              type="button"
+                              onClick={() => {
+                                setMonthlyEstimationDays(daysOpt);
+                                const stdHrs = getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY);
+                                const currHourly = Number(formData.hourlyRate ?? formData.hourly_rate) || 0;
+                                const currDaily =
+                                  currHourly > 0
+                                    ? Number((currHourly * stdHrs).toFixed(2))
+                                    : Number(formData.dailySalary ?? formData.daily_salary) || 0;
+                                setFormData({
+                                  ...formData,
+                                  dailySalary: currDaily,
+                                  daily_salary: currDaily,
+                                  baseSalary: Number((currDaily * daysOpt).toFixed(2)),
+                                });
+                              }}
+                              className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold transition-all cursor-pointer ${
+                                monthlyEstimationDays === daysOpt
+                                  ? 'bg-amber-500 text-neutral-950 shadow-2xs'
+                                  : 'text-slate-600 hover:text-slate-900'
+                              }`}
+                            >
+                              {daysOpt} Hari
+                            </button>
+                          ))}
+                        </div>
+                        <div className="inline-flex items-center gap-1 bg-white border border-slate-300 rounded-lg px-1.5 py-0.5">
+                          <input
+                            type="number"
+                            min={1}
+                            max={31}
+                            step="any"
+                            aria-label="Jumlah Hari Simulasi Bulanan"
+                            value={monthlyEstimationDays}
+                            onChange={(e) => {
+                              const rawVal = Number(e.target.value);
+                              const clampedDays = isNaN(rawVal)
+                                ? 1
+                                : Math.min(31, Math.max(1, rawVal));
+                              setMonthlyEstimationDays(clampedDays);
                               const stdHrs = getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY);
+                              const currHourly = Number(formData.hourlyRate ?? formData.hourly_rate) || 0;
                               const currDaily =
-                                Number(formData.dailySalary ?? formData.daily_salary) ||
-                                Number(((Number(formData.hourlyRate ?? formData.hourly_rate) || 0) * stdHrs).toFixed(2));
+                                currHourly > 0
+                                  ? Number((currHourly * stdHrs).toFixed(2))
+                                  : Number(formData.dailySalary ?? formData.daily_salary) || 0;
                               setFormData({
                                 ...formData,
-                                baseSalary: Number((currDaily * daysOpt).toFixed(2)),
+                                dailySalary: currDaily,
+                                daily_salary: currDaily,
+                                baseSalary: Number((currDaily * clampedDays).toFixed(2)),
                               });
                             }}
-                            className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold transition-all cursor-pointer ${
-                              monthlyEstimationDays === daysOpt
-                                ? 'bg-amber-500 text-neutral-950 shadow-2xs'
-                                : 'text-slate-600 hover:text-slate-900'
-                            }`}
-                          >
-                            {daysOpt} Hari
-                          </button>
-                        ))}
+                            className="w-11 text-center font-mono text-[11px] font-extrabold text-slate-900 bg-transparent focus:outline-hidden"
+                          />
+                          <span className="text-[10px] font-bold text-slate-500">Hr</span>
+                        </div>
                       </div>
                     </div>
                     <input
@@ -4247,7 +4650,8 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                       onChange={(e) => {
                         const nextBase = Math.max(0, Number(e.target.value) || 0);
                         const stdHrs = getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY);
-                        const syncedDaily = Number((nextBase / monthlyEstimationDays).toFixed(2));
+                        const activeDays = Math.max(1, monthlyEstimationDays || 26);
+                        const syncedDaily = Number((nextBase / activeDays).toFixed(2));
                         const syncedHourly = Number((syncedDaily / stdHrs).toFixed(2));
                         setFormData({
                           ...formData,
@@ -4261,13 +4665,15 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                       className="w-full p-2 bg-white border border-slate-200 rounded-lg text-slate-800 font-semibold"
                     />
                     <span className="block text-[10px] text-slate-500 mt-1">
-                      Simulasi {monthlyEstimationDays} hari × {getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY)} jam kerja = {Number((monthlyEstimationDays * getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY)).toFixed(1))} jam (Payroll riil tetap mengikuti jam kehadiran aktual)
+                      Simulasi {monthlyEstimationDays} hari × {getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY)} jam/hari × {formatRupiah(formData.hourlyRate ?? formData.hourly_rate ?? 0)}/jam = {Number((monthlyEstimationDays * getEmployeeStandardDailyHours(formData, STANDARD_WORK_HOURS_PER_DAY)).toFixed(1))} jam (Payroll riil tetap mengikuti total jam presensi tanpa batas 26 hari)
                     </span>
                   </div>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                   <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl">
-                    <label className="block text-slate-600 mb-1">Tunj. Jabatan</label>
+                    <label className="block text-slate-700 font-semibold mb-1">
+                      Tunj. Jabatan (Tetap)
+                    </label>
                     <input
                       type="number"
                       step="any"
@@ -4283,45 +4689,90 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                       }
                       className="w-full p-2 bg-white border border-slate-200 rounded-lg text-slate-800"
                     />
+                    <span className="block text-[10px] text-slate-500 mt-1">
+                      Tunjangan tetap bulanan sesuai jabatan
+                    </span>
                   </div>
-                  <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl">
-                    <label className="block text-slate-600 mb-1">Tunj. Transport</label>
+                  <div className="p-2.5 bg-amber-50/70 border border-amber-300/80 rounded-xl">
+                    <div className="flex items-center justify-between gap-1 mb-1">
+                      <label className="block text-amber-950 font-bold">
+                        Tunj. Kerajinan
+                      </label>
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-200/80 text-amber-950">
+                        Alpha = 0 Hr
+                      </span>
+                    </div>
                     <input
                       type="number"
                       step="any"
-                      value={formData.allowances?.transport || 0}
-                      onChange={(e) =>
+                      value={
+                        formData.tunjangan_kerajinan ??
+                        formData.tunjanganKerajinan ??
+                        formData.allowances?.tunjangan_kerajinan ??
+                        formData.allowances?.transport ??
+                        0
+                      }
+                      onChange={(e) => {
+                        const val = Math.max(0, Number(e.target.value) || 0);
                         setFormData({
                           ...formData,
+                          tunjangan_kerajinan: val,
+                          tunjanganKerajinan: val,
                           allowances: {
                             ...formData.allowances!,
-                            transport: Number(e.target.value),
+                            transport: val,
+                            tunjangan_kerajinan: val,
                           },
-                        })
-                      }
-                      className="w-full p-2 bg-white border border-slate-200 rounded-lg text-slate-800"
+                        });
+                      }}
+                      className="w-full p-2 bg-white border border-amber-300 rounded-lg text-slate-900 font-bold"
                     />
+                    <span className="block text-[10px] text-amber-900/80 mt-1 leading-tight">
+                      Otomatis penuh jika <strong>Alpha = 0 hari</strong> (26–25). Hangus (Rp 0) jika Alpha &ge; 1 hari.
+                    </span>
                   </div>
-                  <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl">
-                    <label className="block text-slate-600 mb-1">Tunj. Uang Makan</label>
+                  <div className="p-2.5 bg-amber-50/70 border border-amber-300/80 rounded-xl">
+                    <div className="flex items-center justify-between gap-1 mb-1">
+                      <label className="block text-amber-950 font-bold">
+                        Tunj. Kedisiplinan
+                      </label>
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-200/80 text-amber-950">
+                        Telat = 0 Mnt
+                      </span>
+                    </div>
                     <input
                       type="number"
                       step="any"
-                      value={formData.allowances?.meal || 0}
-                      onChange={(e) =>
+                      value={
+                        formData.tunjangan_kedisiplinan ??
+                        formData.tunjanganKedisiplinan ??
+                        formData.allowances?.tunjangan_kedisiplinan ??
+                        formData.allowances?.meal ??
+                        0
+                      }
+                      onChange={(e) => {
+                        const val = Math.max(0, Number(e.target.value) || 0);
                         setFormData({
                           ...formData,
+                          tunjangan_kedisiplinan: val,
+                          tunjanganKedisiplinan: val,
                           allowances: {
                             ...formData.allowances!,
-                            meal: Number(e.target.value),
+                            meal: val,
+                            tunjangan_kedisiplinan: val,
                           },
-                        })
-                      }
-                      className="w-full p-2 bg-white border border-slate-200 rounded-lg text-slate-800"
+                        });
+                      }}
+                      className="w-full p-2 bg-white border border-amber-300 rounded-lg text-slate-900 font-bold"
                     />
+                    <span className="block text-[10px] text-amber-900/80 mt-1 leading-tight">
+                      Otomatis penuh jika <strong>Terlambat = 0 mnt</strong> (26–25). Hangus (Rp 0) jika Terlambat &gt; 0 mnt.
+                    </span>
                   </div>
                   <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl">
-                    <label className="block text-slate-600 mb-1">Tunj. Komunikasi</label>
+                    <label className="block text-slate-700 font-semibold mb-1">
+                      Tunj. Komunikasi
+                    </label>
                     <input
                       type="number"
                       step="any"
@@ -4337,6 +4788,9 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                       }
                       className="w-full p-2 bg-white border border-slate-200 rounded-lg text-slate-800"
                     />
+                    <span className="block text-[10px] text-slate-500 mt-1">
+                      Tunjangan komunikasi tambahan
+                    </span>
                   </div>
                 </div>
 
@@ -4471,7 +4925,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                             pada Slip Gaji bulanan.
                           </p>
                         </div>
-                        <span className="text-[10px] font-bold text-emerald-700 mt-1">
+                        <span className="text-[10px] font-bold text-amber-700 mt-1">
                           ✓ Real-Time masuk ke Gaji Bruto &amp; THP
                         </span>
                       </div>
@@ -4609,7 +5063,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                               pada Slip Gaji bulanan.
                             </p>
                           </div>
-                          <span className="text-[10px] font-bold text-emerald-700 mt-1">
+                          <span className="text-[10px] font-bold text-amber-700 mt-1">
                             ✓ Sinkron Real-Time ke Slip Gaji &amp; THP
                           </span>
                         </div>
@@ -4738,7 +5192,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-semibold shadow-md cursor-pointer"
+                  className="px-5 py-2 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold rounded-xl font-semibold shadow-md cursor-pointer"
                 >
                   {editingEmployee ? 'Simpan Perubahan' : 'Tambah Karyawan'}
                 </button>
@@ -4818,7 +5272,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
           <div className="bg-white rounded-2xl max-w-lg w-full shadow-2xl border border-slate-200 flex flex-col max-h-[88vh] overflow-hidden">
             <div className="shrink-0 flex items-center justify-between px-5 py-3.5 border-b border-slate-200 bg-white">
               <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                <div className="w-8 h-8 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center">
                   <Camera className="w-4 h-4" />
                 </div>
                 <div>
@@ -4852,18 +5306,18 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                 </div>
                 <div className="text-slate-300 text-sm font-semibold">➔</div>
                 <div className="text-center">
-                  <span className="text-[10px] text-emerald-700 font-semibold block mb-1.5 flex items-center justify-center gap-1">
-                    <Sparkles className="w-3 h-3 text-emerald-600" />
+                  <span className="text-[10px] text-amber-700 font-semibold block mb-1.5 flex items-center justify-center gap-1">
+                    <Sparkles className="w-3 h-3 text-amber-600" />
                     Pratinjau Baru
                   </span>
                   <div className="relative inline-block">
                     <img
                       src={quickPhotoPreview || quickPhotoEmployee.avatarUrl}
                       alt="Pratinjau Baru"
-                      className="w-16 h-16 rounded-xl object-cover ring-2 ring-emerald-500 mx-auto shadow-md"
+                      className="w-16 h-16 rounded-xl object-cover ring-2 ring-amber-500 mx-auto shadow-md"
                     />
                     {Boolean(quickPhotoPreview && quickPhotoPreview.startsWith('data:image')) && (
-                      <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-emerald-500 border-2 border-white rounded-full" />
+                      <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-amber-500 border-2 border-white rounded-full" />
                     )}
                   </div>
                 </div>
@@ -4879,12 +5333,12 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
               {/* Upload Controls */}
               <div className="space-y-3">
                 <div className="grid grid-cols-2 gap-2">
-                  <label className="p-3 bg-emerald-50/70 hover:bg-emerald-100/70 border border-emerald-200 text-emerald-900 rounded-xl font-medium cursor-pointer transition-colors flex flex-col items-center justify-center text-center gap-1">
-                    <Upload className="w-5 h-5 text-emerald-600" />
+                  <label className="p-3 bg-amber-50/70 hover:bg-amber-100/70 border border-amber-200 text-amber-900 rounded-xl font-medium cursor-pointer transition-colors flex flex-col items-center justify-center text-center gap-1">
+                    <Upload className="w-5 h-5 text-amber-600" />
                     <span className="font-semibold text-xs">
                       {isCompressingQuick ? 'Memproses...' : 'Upload File Foto'}
                     </span>
-                    <span className="text-[10px] text-emerald-700/80">Pilih JPG, PNG, WebP</span>
+                    <span className="text-[10px] text-amber-700/80">Pilih JPG, PNG, WebP</span>
                     <input
                       type="file"
                       accept="image/png,image/jpeg,image/jpg,image/webp"
@@ -4932,13 +5386,13 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                         muted
                         className="w-full h-full object-cover scale-x-[-1]"
                       />
-                      <div className="absolute inset-0 border-2 border-emerald-400 rounded-full scale-75 pointer-events-none opacity-80 border-dashed" />
+                      <div className="absolute inset-0 border-2 border-amber-400 rounded-full scale-75 pointer-events-none opacity-80 border-dashed" />
                     </div>
                     <div className="mt-2.5 flex items-center justify-center gap-3">
                       <button
                         type="button"
                         onClick={captureQuickCamera}
-                        className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-semibold flex items-center gap-1.5 cursor-pointer shadow-md"
+                        className="px-4 py-1.5 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold rounded-lg font-semibold flex items-center gap-1.5 cursor-pointer shadow-md"
                       >
                         <Camera className="w-3.5 h-3.5" />
                         Jepret Pas Foto
@@ -4969,8 +5423,8 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                         }}
                         className={`relative p-0.5 rounded-lg border-2 transition-all cursor-pointer overflow-hidden ${
                           quickPhotoPreview === sample.url
-                            ? 'border-emerald-600 ring-2 ring-emerald-400/50'
-                            : 'border-slate-200 hover:border-emerald-400'
+                            ? 'border-amber-600 ring-2 ring-amber-400/50'
+                            : 'border-slate-200 hover:border-amber-400'
                         }`}
                         title={sample.label}
                       >
@@ -4999,7 +5453,7 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
                 type="button"
                 onClick={handleSaveQuickPhoto}
                 disabled={!quickPhotoPreview || quickPhotoPreview === quickPhotoEmployee.avatarUrl}
-                className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl font-semibold shadow-md cursor-pointer flex items-center gap-1.5"
+                className="px-5 py-2 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl font-semibold shadow-md cursor-pointer flex items-center gap-1.5"
               >
                 <Check className="w-4 h-4" />
                 <span>Simpan Pas Foto Real</span>
@@ -5034,15 +5488,15 @@ export const EmployeeManagement: React.FC<EmployeeManagementProps> = ({
               />
             </div>
             <div className="flex items-center justify-between gap-2 pt-1 flex-wrap">
-              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-amber-700">
+                <CheckCircle2 className="w-3.5 h-3.5 text-amber-600" />
                 Terintegrasi dari Portal Karyawan &amp; Admin HR
               </span>
               <div className="flex items-center gap-2">
                 <a
                   href={adminPreviewDoc.imageUrl}
                   download={adminPreviewDoc.downloadFileName || 'Dokumen-Karyawan.jpg'}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl transition-colors"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold rounded-xl transition-colors"
                 >
                   <Download className="w-3.5 h-3.5" />
                   <span>Unduh Dokumen</span>

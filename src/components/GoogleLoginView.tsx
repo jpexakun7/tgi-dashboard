@@ -72,16 +72,16 @@ const ROLE_BADGE_CONFIG: Record<
   },
   'Finance & Reimbursement': {
     label: 'Finance & Klaim',
-    bg: 'bg-emerald-950/70',
-    text: 'text-emerald-300',
-    border: 'border-emerald-600/50',
+    bg: 'bg-amber-950/70',
+    text: 'text-amber-300',
+    border: 'border-amber-600/50',
     desc: 'Verifikasi reimbursement, audit PPh 21 TER, dan transfer bank',
   },
   'Operations Manager': {
     label: 'Operasional',
-    bg: 'bg-teal-950/70',
-    text: 'text-teal-300',
-    border: 'border-teal-600/50',
+    bg: 'bg-amber-950/70',
+    text: 'text-amber-300',
+    border: 'border-amber-600/50',
     desc: 'Pantau kinerja departemen KPI & operasional tim harian',
   },
   'Viewer / Auditor': {
@@ -389,8 +389,8 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
   return (
     <div className="min-h-screen w-full max-w-full bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 flex flex-col justify-center items-center px-3 sm:px-4 py-6 sm:py-8 relative overflow-x-hidden text-slate-100">
       {/* Background Decorative Glows */}
-      <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-full max-w-[700px] h-[380px] bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute bottom-10 right-10 w-64 sm:w-[450px] h-[300px] bg-teal-500/10 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-full max-w-[700px] h-[380px] bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute bottom-10 right-10 w-64 sm:w-[450px] h-[300px] bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute top-10 left-10 w-64 sm:w-[350px] h-[250px] bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
 
       {/* Main Container */}
@@ -398,14 +398,14 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
         {/* Brand Header */}
         <div className="text-center space-y-2">
           <div className="inline-flex items-center justify-center gap-3 p-3 bg-slate-800/80 border border-slate-700/80 rounded-2xl shadow-xl shadow-black/30 backdrop-blur-md max-w-full">
-            <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-white font-black text-lg sm:text-xl shadow-md shadow-emerald-500/30 shrink-0">
+            <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-gradient-to-tr from-amber-500 to-amber-400 flex items-center justify-center text-white font-black text-lg sm:text-xl shadow-md shadow-amber-500/30 shrink-0">
               TGI
             </div>
             <div className="text-left pr-1 sm:pr-2 min-w-0">
               <span className="block font-bold text-white text-sm sm:text-base leading-tight truncate">
                 Tas Grosir Import
               </span>
-              <span className="text-[10px] sm:text-[11px] text-emerald-400 font-semibold tracking-wide block truncate">
+              <span className="text-[10px] sm:text-[11px] text-amber-400 font-semibold tracking-wide block truncate">
                 HRIS & Payroll Executive Dashboard
               </span>
             </div>
@@ -439,15 +439,15 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
 
         {/* Quick Entry: Portal Layanan Mandiri Karyawan (Non-Admin, Tanpa Ekspos Daftar Karyawan Sebelum Login) */}
         {onLoginAsEmployee && (
-          <div className="bg-gradient-to-r from-emerald-950/70 via-slate-900/90 to-teal-950/70 border border-emerald-500/30 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xl backdrop-blur-md">
+          <div className="bg-gradient-to-r from-amber-950/70 via-slate-900/90 to-amber-950/70 border border-amber-500/30 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xl backdrop-blur-md">
             <div className="flex items-center gap-3 min-w-0">
-              <div className="p-2.5 bg-emerald-500/20 text-emerald-400 rounded-xl border border-emerald-500/30 shrink-0">
+              <div className="p-2.5 bg-amber-500/20 text-amber-400 rounded-xl border border-amber-500/30 shrink-0">
                 <UserCheck className="w-5 h-5" />
               </div>
               <div className="min-w-0">
                 <p className="text-xs font-bold text-white flex items-center gap-2 flex-wrap">
                   <span>Portal Layanan Mandiri Karyawan (Self-Service)</span>
-                  <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-500/30 font-semibold">
+                  <span className="text-[10px] bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded border border-amber-500/30 font-semibold">
                     Verifikasi PIN / NIK
                   </span>
                 </p>
@@ -460,7 +460,7 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
               <button
                 type="button"
                 onClick={() => onLoginAsEmployee(selectedPortalEmpId || undefined)}
-                className="w-full sm:w-auto px-4 py-2.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white transition-all shrink-0 shadow-xs flex items-center justify-center gap-1.5 cursor-pointer hover:shadow-emerald-600/30"
+                className="w-full sm:w-auto px-4 py-2.5 rounded-xl text-xs font-bold bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold transition-all shrink-0 shadow-xs flex items-center justify-center gap-1.5 cursor-pointer hover:shadow-amber-600/30"
               >
                 <span>Masuk Portal Karyawan</span>
                 <ArrowRight className="w-3.5 h-3.5" />
@@ -498,7 +498,7 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
                 {allowedRoles.map((r) => (
                   <span
                     key={r}
-                    className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-950/90 text-emerald-300 border border-emerald-700/50"
+                    className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-950/90 text-amber-300 border border-amber-700/50"
                   >
                     ✓ {r}
                   </span>
@@ -559,7 +559,7 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
                   onClick={() => setActiveTab('real_google')}
                   className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
                     activeTab === 'real_google'
-                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
                       : 'text-slate-400 hover:text-slate-200 hover:bg-slate-700/50'
                   }`}
                 >
@@ -572,7 +572,7 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
                   onClick={() => setActiveTab('quick')}
                   className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
                     activeTab === 'quick'
-                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
                       : 'text-slate-400 hover:text-slate-200 hover:bg-slate-700/50'
                   }`}
                 >
@@ -585,7 +585,7 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
                   onClick={() => setActiveTab('custom')}
                   className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
                     activeTab === 'custom'
-                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
                       : 'text-slate-400 hover:text-slate-200 hover:bg-slate-700/50'
                   }`}
                 >
@@ -595,7 +595,7 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
               </div>
 
               {/* Status indicator of allowed roles */}
-              <div className="flex items-center gap-1 text-[10px] text-emerald-400 bg-emerald-950/70 px-2.5 py-1 rounded-full border border-emerald-700/40">
+              <div className="flex items-center gap-1 text-[10px] text-amber-400 bg-amber-950/70 px-2.5 py-1 rounded-full border border-amber-700/40">
                 <Sliders className="w-3 h-3" />
                 <span>{allowedRoles.length} Role Diizinkan</span>
               </div>
@@ -605,7 +605,7 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
             {activeTab === 'real_google' && (
               <div className="space-y-4">
                 <div className="p-5 rounded-2xl bg-gradient-to-br from-slate-900/90 to-slate-900/60 border border-slate-700/80 text-center space-y-4 shadow-inner">
-                  <div className="w-14 h-14 mx-auto rounded-2xl bg-white flex items-center justify-center shadow-lg shadow-black/30 ring-4 ring-emerald-500/20">
+                  <div className="w-14 h-14 mx-auto rounded-2xl bg-white flex items-center justify-center shadow-lg shadow-black/30 ring-4 ring-amber-500/20">
                     <svg className="w-8 h-8" viewBox="0 0 24 24">
                       <path
                         fill="#4285F4"
@@ -680,7 +680,7 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
                   <div className="pt-3 border-t border-slate-800 text-[11px] text-slate-400 space-y-1.5 text-left">
                     <div className="flex items-center justify-between text-slate-300">
                       <span className="font-semibold flex items-center gap-1.5">
-                        <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                        <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
                         <span>Kebijakan Role Login Aktif (Panel Admin):</span>
                       </span>
                     </div>
@@ -700,7 +700,7 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
                             key={role}
                             className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
                               isAllowed
-                                ? 'bg-emerald-950/80 text-emerald-300 border-emerald-700/60'
+                                ? 'bg-amber-950/80 text-amber-300 border-amber-700/60'
                                 : 'bg-slate-900 text-slate-500 border-slate-800 line-through opacity-70'
                             }`}
                             title={
@@ -732,7 +732,7 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
                       placeholder="Cari akun..."
                       value={searchAccountQuery}
                       onChange={(e) => setSearchAccountQuery(e.target.value)}
-                      className="px-2.5 py-1 text-[11px] bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-hidden focus:border-emerald-500 w-36"
+                      className="px-2.5 py-1 text-[11px] bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-hidden focus:border-amber-500 w-36"
                     />
                   )}
                 </div>
@@ -753,7 +753,7 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
                         key={acc.id}
                         className={`p-3.5 rounded-xl bg-slate-900/90 border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 group ${
                           isRoleAllowed
-                            ? 'border-slate-700/80 hover:border-emerald-500/50 hover:shadow-lg'
+                            ? 'border-slate-700/80 hover:border-amber-500/50 hover:shadow-lg'
                             : 'border-amber-900/40 opacity-70 bg-slate-950/90'
                         }`}
                       >
@@ -762,11 +762,11 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
                             <img
                               src={acc.avatarUrl}
                               alt={acc.name}
-                              className="w-11 h-11 rounded-full object-cover ring-2 ring-slate-700 group-hover:ring-emerald-500/60 transition-all"
+                              className="w-11 h-11 rounded-full object-cover ring-2 ring-slate-700 group-hover:ring-amber-500/60 transition-all"
                             />
                             <span
                               className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full ring-2 ring-slate-900 ${
-                                isRoleAllowed ? 'bg-emerald-400' : 'bg-amber-500'
+                                isRoleAllowed ? 'bg-amber-400' : 'bg-amber-500'
                               }`}
                             />
                           </div>
@@ -788,8 +788,8 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
                               )}
                             </div>
 
-                            <div className="font-mono text-xs text-emerald-400/90 truncate flex items-center gap-1.5 mt-0.5">
-                              <Mail className="w-3 h-3 text-emerald-500 shrink-0" />
+                            <div className="font-mono text-xs text-amber-400/90 truncate flex items-center gap-1.5 mt-0.5">
+                              <Mail className="w-3 h-3 text-amber-500 shrink-0" />
                               <span className="truncate">{acc.email}</span>
                             </div>
 
@@ -844,7 +844,7 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
               <form onSubmit={handleCustomSignIn} className="space-y-3.5">
                 <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-700/80 space-y-3">
                   <div className="flex items-center gap-2 text-xs font-semibold text-white">
-                    <Mail className="w-4 h-4 text-emerald-400" />
+                    <Mail className="w-4 h-4 text-amber-400" />
                     <span>Verifikasi Email & PIN Admin Resmi</span>
                   </div>
 
@@ -856,7 +856,7 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
                       <select
                         value={customEmail}
                         onChange={(e) => setCustomEmail(e.target.value)}
-                        className="w-full px-3 py-2 text-xs bg-slate-800 border border-slate-700 rounded-lg text-white focus:outline-hidden focus:border-emerald-500 font-mono"
+                        className="w-full px-3 py-2 text-xs bg-slate-800 border border-slate-700 rounded-lg text-white focus:outline-hidden focus:border-amber-500 font-mono"
                       >
                         {OFFICIAL_ADMIN_EMAILS.map((email) => (
                           <option key={email} value={email}>
@@ -877,7 +877,7 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
                         placeholder="Masukkan PIN / Kata Sandi Admin"
                         value={customPin}
                         onChange={(e) => setCustomPin(e.target.value.slice(0, 32))}
-                        className="w-full px-3 py-2 text-xs bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-hidden focus:border-emerald-500 font-mono tracking-widest"
+                        className="w-full px-3 py-2 text-xs bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-hidden focus:border-amber-500 font-mono tracking-widest"
                       />
                     </div>
                   </div>
@@ -887,7 +887,7 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
                   <button
                     type="submit"
                     disabled={isProcessing || !customEmail || !customPin}
-                    className="flex-1 py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-emerald-700/30 disabled:opacity-50"
+                    className="flex-1 py-2.5 px-4 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold font-bold text-xs transition-colors flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-amber-700/30 disabled:opacity-50"
                   >
                     <span>{isProcessing ? 'Memverifikasi...' : 'Verifikasi PIN & Masuk'}</span>
                     <ArrowRight className="w-3.5 h-3.5" />
@@ -919,11 +919,11 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
                   <span><strong>HR & Payroll:</strong> Data karyawan, presensi, cuti, lembur & slip gaji</span>
                 </div>
                 <div className="flex items-start gap-1.5">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
+                  <CheckCircle2 className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
                   <span><strong>Finance:</strong> Klaim reimbursement, BPJS & PPh 21 TER 2026</span>
                 </div>
                 <div className="flex items-start gap-1.5">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-teal-400 shrink-0 mt-0.5" />
+                  <CheckCircle2 className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
                   <span><strong>Operasional:</strong> KPI kinerja departemen & monitoring shift tim</span>
                 </div>
               </div>
@@ -934,7 +934,7 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
         {/* Footer Security Badges */}
         <div className="text-center text-[11px] text-slate-500 space-y-1">
           <p className="flex items-center justify-center gap-1.5">
-            <Lock className="w-3 h-3 text-emerald-500" />
+            <Lock className="w-3 h-3 text-amber-500" />
             <span>Terlindungi Autentikasi Google Identity Services &bull; Tas Grosir Import &copy; 2026</span>
           </p>
           <p className="text-[10px] text-slate-600">

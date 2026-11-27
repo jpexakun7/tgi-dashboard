@@ -17,12 +17,53 @@ import {
   AppNotification,
   CashAdvance,
   WorkShift,
+  OfficeBranchLocation,
 } from './types';
 import {
   DEFAULT_WORK_SHIFTS,
   DEFAULT_ATTENDANCE_PENALTY_POLICY,
   getCurrentRealTimePayrollPeriod,
 } from './utils/formatters';
+
+export const DEFAULT_OFFICE_BRANCHES: OfficeBranchLocation[] = [
+  {
+    id: 'branch-main-tgr',
+    name: 'Sumber Mas',
+    latitude: -6.2105112,
+    longitude: 106.6847656,
+    radiusMeters: 25,
+    address: 'Jl. Sumber Mas I Blok C No. 191, Tangerang, Banten (-6.2105112, 106.6847656)',
+    isActive: true,
+  },
+  {
+    id: 'branch-cabang-02',
+    name: 'Green Lake City',
+    latitude: -6.183852,
+    longitude: 106.7104734,
+    radiusMeters: 10,
+    address: 'Green Lake City (-6.183852, 106.7104734) • Radius 10 Meter',
+    isActive: true,
+  },
+];
+
+export function ensureDefaultOfficeBranches(
+  existing?: OfficeBranchLocation[]
+): OfficeBranchLocation[] {
+  if (!Array.isArray(existing) || existing.length === 0) {
+    return DEFAULT_OFFICE_BRANCHES;
+  }
+  const list = [...existing];
+  const hasSecondBranch = list.some(
+    (b) =>
+      b.id === 'branch-cabang-02' ||
+      (Math.abs(Number(b.latitude) - -6.183852) < 0.0005 &&
+        Math.abs(Number(b.longitude) - 106.7104734) < 0.0005)
+  );
+  if (!hasSecondBranch && list.length === 1 && list[0].id === 'branch-main-tgr') {
+    list.push(DEFAULT_OFFICE_BRANCHES[1]);
+  }
+  return list;
+}
 
 export const initialWorkShifts: WorkShift[] = DEFAULT_WORK_SHIFTS;
 
@@ -227,6 +268,7 @@ export const initialCompanyConfig: CompanyConfig = {
   defaultOvertimeRatePerHour: 55000,
   defaultOvertimeRatePerMinute: 1400,
   workShifts: DEFAULT_WORK_SHIFTS,
+  officeBranches: DEFAULT_OFFICE_BRANCHES,
   attendancePenaltyPolicy: DEFAULT_ATTENDANCE_PENALTY_POLICY,
   securitySettings: {
     requirePinForAdminMode: true,

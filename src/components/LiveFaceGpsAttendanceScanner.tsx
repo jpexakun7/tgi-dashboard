@@ -20,7 +20,14 @@ import {
   Lock,
   ExternalLink,
 } from 'lucide-react';
-import { Employee, WorkShift, AttendanceRecord, OvertimeRequest } from '../types';
+import {
+  Employee,
+  WorkShift,
+  AttendanceRecord,
+  OvertimeRequest,
+  OfficeBranchLocation,
+} from '../types';
+import { ensureDefaultOfficeBranches } from '../mockData';
 import {
   evaluateAttendanceAgainstShift,
   getEmployeeStandardDailyHours,
@@ -41,19 +48,27 @@ interface LiveFaceGpsAttendanceScannerProps {
   customClockOutTime: string;
   clockInNotes: string;
   overtimeRequests?: OvertimeRequest[];
+  officeBranches?: OfficeBranchLocation[];
   onChangeNotes: (notes: string) => void;
   onSubmitAttendance: (record: AttendanceRecord, mode: 'check_in' | 'check_out') => void;
 }
 
-// Titik Lokasi Resmi Kantor Tas Grosir Import (Sesuai Titik Google Maps)
+// Titik Lokasi Resmi Kantor Tas Grosir Import (Default Fallback jika belum ada cabang aktif)
 export const OFFICE_REFERENCE_COORDS = {
+  id: 'branch-main-tgr',
   latitude: -6.2105112,
   longitude: 106.6847656,
   shortAddress: 'Jl. Sumber Mas I Blok C No. 191, Tangerang, Banten (-6.2105112, 106.6847656)',
-  name: 'Kantor & Gudang Tas Grosir Import — Jl. Sumber Mas I Blok C No. 191, Tangerang, Banten (-6.2105112, 106.6847656)',
+  name: 'Kantor & Gudang Pusat Tangerang',
   mapsUrl: 'https://maps.google.com/maps?q=-6.2105112%2C106.6847656&z=17&hl=id',
-  maxRadiusMeters: 25, // Batas maksimal jangkauan wajib 25 meter dari titik koordinat kantor
+  maxRadiusMeters: 25, // Batas maksimal jangkauan default 25 meter dari titik koordinat kantor
 };
+
+export interface BranchDistanceEvaluation {
+  branch: OfficeBranchLocation;
+  distanceMeters: number;
+  isWithinRadius: boolean;
+}
 
 interface GpsTelemetrySample {
   latitude: number;
@@ -239,6 +254,7 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
   customClockOutTime,
   clockInNotes,
   overtimeRequests,
+  officeBranches,
   onChangeNotes,
   onSubmitAttendance,
 }) => {
@@ -247,6 +263,22 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
   const watchIdRef = useRef<number | null>(null);
   const avatarImgRef = useRef<HTMLImageElement | null>(null);
   const gpsHistoryRef = useRef<GpsTelemetrySample[]>([]);
+
+  // Daftar cabang aktif yang dievaluasi untuk Geofence Multi-Cabang (Pusat 25m & Cabang 10m)
+  const activeBranches = React.useMemo<OfficeBranchLocation[]>(() => {
+    const normalized = ensureDefaultOfficeBranches(officeBranches);
+    const filtered = normalized.filter(
+      (b) => b && b.isActive !== false && Number.isFinite(Number(b.latitude)) && Number.isFinite(Number(b.longitude))
+    );
+    if (filtered.length > 0) return filtered;
+    return ensureDefaultOfficeBranches([]);
+  }, [officeBranches]);
+
+  // Pilihan lokasi absen karyawan (Pusat vs Cabang)
+  const [selectedBranchId, setSelectedBranchId] = useState<string>(() => {
+    const initBranches = ensureDefaultOfficeBranches(officeBranches);
+    return initBranches[0]?.id || 'branch-main-tgr';
+  });
 
   // Real-time ticking clock (updated every second)
   const [nowDate, setNowDate] = useState<Date>(() => new Date());
@@ -275,6 +307,8 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
   );
   const [gpsSuburbCity, setGpsSuburbCity] = useState<string>('Tangerang, Banten');
   const [distanceFromOffice, setDistanceFromOffice] = useState<number | null>(null);
+  const [matchedBranchEval, setMatchedBranchEval] = useState<BranchDistanceEvaluation | null>(null);
+  const [allBranchEvaluations, setAllBranchEvaluations] = useState<BranchDistanceEvaluation[]>([]);
   const [lastGpsUpdatedTime, setLastGpsUpdatedTime] = useState<string>('');
 
   // Anti-Fake GPS Audit State
@@ -328,64 +362,119 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
   }, []);
 
   // 2. Reverse Geocoding helper (reads street, kelurahan, kecamatan, kota from GPS lat/lon)
-  const reverseGeocodeCoords = useCallback(async (lat: number, lon: number, distMeters: number) => {
-    // If right inside the 15m office radius, include the official office address clearly
-    if (distMeters <= OFFICE_REFERENCE_COORDS.maxRadiusMeters) {
-      setGpsDetailedAddress(
-        `${OFFICE_REFERENCE_COORDS.shortAddress} (Titik GPS: ${lat.toFixed(6)}, ${lon.toFixed(6)})`
-      );
-      setGpsSuburbCity('Tangerang, Banten');
-      return;
-    }
+  const reverseGeocodeCoords = useCallback(
+    async (lat: number, lon: number, bestEval: BranchDistanceEvaluation) => {
+      const targetBranch = bestEval.branch;
+      const distMeters = bestEval.distanceMeters;
+      const maxRad = targetBranch.radiusMeters || 25;
 
-    try {
-      const response = await fetch(
-        `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&accept-language=id`,
-        {
-          headers: {
-            Accept: 'application/json',
-          },
-        }
-      );
-      if (!response.ok) throw new Error('Reverse geocode HTTP error');
-      const data = await response.json();
-      if (data && data.display_name) {
-        const addr = data.address || {};
-        const road = addr.road || addr.pedestrian || addr.suburb || addr.Commercial || '';
-        const houseNumber = addr.house_number ? `No. ${addr.house_number}` : '';
-        const neighbourhood =
-          addr.neighbourhood || addr.village || addr.suburb || addr.quarter || '';
-        const cityDistrict =
-          addr.city_district || addr.municipality || addr.county || '';
-        const city = addr.city || addr.town || addr.state || 'Tangerang, Banten';
-        const postcode = addr.postcode || '';
-
-        const shortParts = [
-          [road, houseNumber].filter(Boolean).join(' '),
-          neighbourhood ? `Kel. ${neighbourhood}` : '',
-          cityDistrict ? `Kec. ${cityDistrict}` : '',
-          city,
-          postcode,
-        ].filter(Boolean);
-
-        const formattedAddress =
-          shortParts.length >= 2 ? shortParts.join(', ') : data.display_name;
-
-        setGpsDetailedAddress(formattedAddress);
-        setGpsSuburbCity(
-          [cityDistrict || neighbourhood, city].filter(Boolean).join(', ') ||
-            'Tangerang, Banten'
+      // If right inside the matched branch radius, include the branch name & address clearly
+      if (bestEval.isWithinRadius || distMeters <= maxRad) {
+        const branchAddrText = targetBranch.address
+          ? `${targetBranch.name} — ${targetBranch.address}`
+          : targetBranch.name;
+        setGpsDetailedAddress(
+          `[${targetBranch.name}] ${branchAddrText} (Titik GPS: ${lat.toFixed(6)}, ${lon.toFixed(6)} • Jarak ${distMeters}m ≤ ${maxRad}m)`
         );
+        setGpsSuburbCity(targetBranch.name);
         return;
       }
-    } catch {
-      // Fallback if offline or rate-limited
-    }
 
-    setGpsDetailedAddress(
-      `Koordinat Terbaca: ${lat.toFixed(6)}°, ${lon.toFixed(6)}° (${distMeters}m dari ${OFFICE_REFERENCE_COORDS.shortAddress})`
-    );
-  }, []);
+      try {
+        const response = await fetch(
+          `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&accept-language=id`,
+          {
+            headers: {
+              Accept: 'application/json',
+            },
+          }
+        );
+        if (!response.ok) throw new Error('Reverse geocode HTTP error');
+        const data = await response.json();
+        if (data && data.display_name) {
+          const addr = data.address || {};
+          const road = addr.road || addr.pedestrian || addr.suburb || addr.Commercial || '';
+          const houseNumber = addr.house_number ? `No. ${addr.house_number}` : '';
+          const neighbourhood =
+            addr.neighbourhood || addr.village || addr.suburb || addr.quarter || '';
+          const cityDistrict =
+            addr.city_district || addr.municipality || addr.county || '';
+          const city = addr.city || addr.town || addr.state || 'Tangerang, Banten';
+          const postcode = addr.postcode || '';
+
+          const shortParts = [
+            [road, houseNumber].filter(Boolean).join(' '),
+            neighbourhood ? `Kel. ${neighbourhood}` : '',
+            cityDistrict ? `Kec. ${cityDistrict}` : '',
+            city,
+            postcode,
+          ].filter(Boolean);
+
+          const formattedAddress =
+            shortParts.length >= 2 ? shortParts.join(', ') : data.display_name;
+
+          setGpsDetailedAddress(formattedAddress);
+          setGpsSuburbCity(
+            [cityDistrict || neighbourhood, city].filter(Boolean).join(', ') ||
+              'Tangerang, Banten'
+          );
+          return;
+        }
+      } catch {
+        // Fallback if offline or rate-limited
+      }
+
+      setGpsDetailedAddress(
+        `Koordinat Terbaca: ${lat.toFixed(6)}°, ${lon.toFixed(6)}° (${distMeters}m dari ${targetBranch.name})`
+      );
+    },
+    []
+  );
+
+  // Evaluate distance from user coordinates to ALL active branches
+  const evaluateBranchesDistance = useCallback(
+    (lat: number, lon: number): { best: BranchDistanceEvaluation; all: BranchDistanceEvaluation[] } => {
+      const evaluations: BranchDistanceEvaluation[] = activeBranches.map((branch) => {
+        const bLat = Number(branch.latitude);
+        const bLon = Number(branch.longitude);
+        const bRad = Math.max(1, Number(branch.radiusMeters) || 25);
+        const dist = calculateHaversineMeters(lat, lon, bLat, bLon);
+        return {
+          branch: {
+            ...branch,
+            latitude: bLat,
+            longitude: bLon,
+            radiusMeters: bRad,
+          },
+          distanceMeters: dist,
+          isWithinRadius: dist <= bRad,
+        };
+      });
+
+      // Sort: prioritize branches where user is WITHIN radius first (closest first), otherwise closest branch overall
+      const sorted = [...evaluations].sort((a, b) => {
+        if (a.isWithinRadius && !b.isWithinRadius) return -1;
+        if (!a.isWithinRadius && b.isWithinRadius) return 1;
+        return a.distanceMeters - b.distanceMeters;
+      });
+
+      return {
+        best: sorted[0],
+        all: sorted,
+      };
+    },
+    [activeBranches]
+  );
+
+  // Re-evaluate whenever activeBranches changes and we already have gpsCoords
+  useEffect(() => {
+    if (gpsCoords) {
+      const { best, all } = evaluateBranchesDistance(gpsCoords.latitude, gpsCoords.longitude);
+      setMatchedBranchEval(best);
+      setAllBranchEvaluations(all);
+      setDistanceFromOffice(best.distanceMeters);
+    }
+  }, [activeBranches, gpsCoords, evaluateBranchesDistance]);
 
   // Process incoming hardware GeolocationPosition
   const processIncomingPosition = useCallback(
@@ -394,12 +483,8 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
       const lon = pos.coords.longitude;
       const acc = Number((pos.coords.accuracy || 0).toFixed(1));
 
-      const dist = calculateHaversineMeters(
-        lat,
-        lon,
-        OFFICE_REFERENCE_COORDS.latitude,
-        OFFICE_REFERENCE_COORDS.longitude
-      );
+      const { best, all } = evaluateBranchesDistance(lat, lon);
+      const dist = best.distanceMeters;
 
       // Run Multi-Layer Anti-Fake GPS Audit
       const audit = auditGpsPositionForSpoofing(pos, gpsHistoryRef.current);
@@ -418,21 +503,23 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
       gpsHistoryRef.current = [...gpsHistoryRef.current.slice(-7), nextSample];
 
       setGpsCoords({ latitude: lat, longitude: lon, accuracy: acc });
+      setMatchedBranchEval(best);
+      setAllBranchEvaluations(all);
       setDistanceFromOffice(dist);
       setAntiFakeAudit(audit);
       setGpsStatus('locked');
       setGpsErrorMessage(null);
       setLastGpsUpdatedTime(getJakartaTimeString(new Date(), true).replace(/\s*WIB$/i, ''));
 
-      if (dist <= OFFICE_REFERENCE_COORDS.maxRadiusMeters && !audit.isFakeDetected) {
+      if (best.isWithinRadius && !audit.isFakeDetected) {
         setBlockedAttemptAlert(null);
       }
 
       if (triggerReverseGeocode) {
-        reverseGeocodeCoords(lat, lon, dist);
+        reverseGeocodeCoords(lat, lon, best);
       }
     },
-    [reverseGeocodeCoords]
+    [evaluateBranchesDistance, reverseGeocodeCoords]
   );
 
   // 3. Start & Watch Live Phone GPS (with iOS Safari / PWA manual Refresh GPS support)
@@ -698,12 +785,42 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
   );
   const isShiftAttendanceCompletedToday = hasCheckedInToday && hasCheckedOutToday;
 
-  // Geofence <= 25m, Anti-Fake GPS, and Mandatory Live Camera Verification (Both Clock-In & Clock-Out)
+  // Auto-select branch if GPS detects user is inside one of the branches' radius
+  useEffect(() => {
+    if (matchedBranchEval?.isWithinRadius && matchedBranchEval.branch?.id) {
+      setSelectedBranchId(matchedBranchEval.branch.id);
+    }
+  }, [matchedBranchEval?.isWithinRadius, matchedBranchEval?.branch?.id]);
+
+  // Evaluasi cabang yang sedang dipilih oleh karyawan (Pusat vs Cabang)
+  const selectedBranchObj =
+    activeBranches.find((b) => b.id === selectedBranchId) ||
+    matchedBranchEval?.branch ||
+    activeBranches[0];
+  const selectedBranchEval =
+    allBranchEvaluations.find((ev) => ev.branch.id === selectedBranchObj?.id) ||
+    matchedBranchEval;
+
+  // Cabang efektif untuk absensi: utamakan cabang yang dipilih jika valid, atau cabang terdekat yang masuk radius
+  const effectiveValidEval =
+    selectedBranchEval?.isWithinRadius
+      ? selectedBranchEval
+      : matchedBranchEval?.isWithinRadius
+      ? matchedBranchEval
+      : selectedBranchEval || matchedBranchEval;
+
+  // Geofence Multi-Cabang, Anti-Fake GPS, and Mandatory Live Camera Verification (Both Clock-In & Clock-Out)
+  const primaryBranch = effectiveValidEval?.branch || selectedBranchObj || activeBranches[0];
+  const activeMaxRadiusMeters = primaryBranch?.radiusMeters || OFFICE_REFERENCE_COORDS.maxRadiusMeters;
+  const activeBranchDistance =
+    effectiveValidEval && effectiveValidEval.distanceMeters >= 0
+      ? effectiveValidEval.distanceMeters
+      : distanceFromOffice;
   const isGpsLocked = gpsStatus === 'locked' && gpsCoords !== null && distanceFromOffice !== null;
   const isWithinMaxRadius =
     isGpsLocked &&
-    distanceFromOffice !== null &&
-    distanceFromOffice <= OFFICE_REFERENCE_COORDS.maxRadiusMeters;
+    effectiveValidEval !== null &&
+    effectiveValidEval.isWithinRadius;
   const isFakeGpsDetected = antiFakeAudit.isFakeDetected;
   const isLiveCameraReady = Boolean(isCameraActive);
   const canSubmitAttendance =
@@ -728,8 +845,8 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
     const ctx = canvas.getContext('2d');
     if (!ctx) return '';
 
-    const activeLat = gpsCoords ? gpsCoords.latitude : OFFICE_REFERENCE_COORDS.latitude;
-    const activeLon = gpsCoords ? gpsCoords.longitude : OFFICE_REFERENCE_COORDS.longitude;
+    const activeLat = gpsCoords ? gpsCoords.latitude : primaryBranch.latitude;
+    const activeLon = gpsCoords ? gpsCoords.longitude : primaryBranch.longitude;
     const activeDist = distanceFromOffice !== null ? distanceFromOffice : 0;
 
     // A. Draw live camera frame strictly from active video stream
@@ -764,26 +881,26 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
     // Badge Top Left: Tas Grosir Import Verified GPS & Face
     ctx.fillStyle =
       attendanceActionLabel === 'ABSEN MASUK'
-        ? 'rgba(16, 185, 129, 0.92)'
+        ? 'rgba(245, 158, 11, 0.92)'
         : 'rgba(79, 70, 229, 0.92)';
     ctx.beginPath();
-    ctx.roundRect(24, 20, 275, 36, 10);
+    ctx.roundRect(24, 20, 310, 36, 10);
     ctx.fill();
 
     ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 14px Inter, system-ui, sans-serif';
-    ctx.fillText(`● ${attendanceActionLabel} • RADIUS ≤25M VALID`, 38, 43);
+    ctx.font = 'bold 13.5px Inter, system-ui, sans-serif';
+    ctx.fillText(`● ${attendanceActionLabel} • RADIUS ≤${activeMaxRadiusMeters}M VALID`, 38, 43);
 
-    // Top Right: GPS & Distance Verification (Without Satellite Accuracy)
+    // Top Right: GPS & Distance Verification (With Branch Name)
     ctx.fillStyle = 'rgba(15, 23, 42, 0.86)';
     ctx.beginPath();
-    ctx.roundRect(width - 340, 20, 316, 36, 10);
+    ctx.roundRect(width - 390, 20, 366, 36, 10);
     ctx.fill();
-    ctx.fillStyle = '#6ee7b7';
-    ctx.font = 'bold 12.5px JetBrains Mono, monospace';
+    ctx.fillStyle = '#fcd34d';
+    ctx.font = 'bold 12px JetBrains Mono, monospace';
     ctx.fillText(
-      `GPS VALID • JARAK KANTOR: ${activeDist}m / 25m`,
-      width - 324,
+      `CABANG: ${primaryBranch.name.slice(0, 22)} (${activeDist}m/${activeMaxRadiusMeters}m)`,
+      width - 376,
       43
     );
 
@@ -798,7 +915,7 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
     ctx.fillRect(0, boxY - 30, width, boxHeight + 30);
 
     // Left accent bar in bottom watermark
-    ctx.fillStyle = attendanceActionLabel === 'ABSEN MASUK' ? '#10b981' : '#6366f1';
+    ctx.fillStyle = attendanceActionLabel === 'ABSEN MASUK' ? '#f59e0b' : '#6366f1';
     ctx.fillRect(24, boxY + 8, 6, boxHeight - 28);
 
     const { dayDateStr, timeWithSecondsStr } = formatFullIndonesianDateTime(nowDate);
@@ -808,7 +925,7 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
     ctx.font = 'bold 30px JetBrains Mono, monospace';
     ctx.fillText(timeWithSecondsStr, 44, boxY + 38);
 
-    ctx.fillStyle = '#a7f3d0';
+    ctx.fillStyle = '#fde68a';
     ctx.font = 'bold 15.5px Inter, system-ui, sans-serif';
     ctx.fillText(
       `•  ${dayDateStr}  (Jam Tercatat: ${recordedTimeStr} WIB — ${evalStatusText})`,
@@ -828,16 +945,16 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
     ctx.fillStyle = '#cbd5e1';
     ctx.font = '600 13.5px Inter, system-ui, sans-serif';
     ctx.fillText(
-      `Jadwal Shift: ${activeShift.name} (${activeShift.checkInTime} - ${activeShift.checkOutTime} WIB) • Kantor: ${OFFICE_REFERENCE_COORDS.shortAddress}`,
+      `Jadwal Shift: ${activeShift.name} (${activeShift.checkInTime} - ${activeShift.checkOutTime} WIB) • Lokasi Cabang: ${primaryBranch.name}`,
       44,
       boxY + 92
     );
 
-    // GPS Coordinates & Geofence 25m Line
-    ctx.fillStyle = '#34d399';
+    // GPS Coordinates & Geofence Line
+    ctx.fillStyle = '#fbbf24';
     ctx.font = 'bold 13.5px JetBrains Mono, monospace';
     ctx.fillText(
-      `GPS HP: ${activeLat.toFixed(7)}°, ${activeLon.toFixed(7)}° | Jarak Kantor: ${activeDist}m (Maks 25m) | Anti-Fake GPS: 100% Asli`,
+      `GPS HP: ${activeLat.toFixed(7)}°, ${activeLon.toFixed(7)}° | Cabang: ${primaryBranch.name} (${activeDist}m ≤ ${activeMaxRadiusMeters}m)`,
       44,
       boxY + 118
     );
@@ -859,7 +976,7 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
     return canvas.toDataURL('image/jpeg', 0.78);
   };
 
-  // 6. Trigger Photo Capture & Submit Check-In or Check-Out (Strictly Enforcing 1x Check-In & 1x Check-Out, <= 25m & Anti-Fake GPS)
+  // 6. Trigger Photo Capture & Submit Check-In or Check-Out (Strictly Enforcing 1x Check-In & 1x Check-Out, Multi-Branch Radius & Anti-Fake GPS)
   const handleCaptureAndSubmit = (mode: 'check_in' | 'check_out') => {
     // Hard Guard 0: Anti-Duplicate Attendance Validation (Max 1x Check-In & 1x Check-Out per Shift/Day)
     if (mode === 'check_in' && hasCheckedInToday) {
@@ -893,7 +1010,7 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
     }
 
     // Hard Guard 2: Real GPS must be locked on both Check-In and Check-Out
-    if (!isGpsLocked || !gpsCoords || distanceFromOffice === null) {
+    if (!isGpsLocked || !gpsCoords || distanceFromOffice === null || !matchedBranchEval) {
       setBlockedAttemptAlert(
         `ABSEN ${mode === 'check_in' ? 'MASUK' : 'PULANG'} DITOLAK: Sinyal GPS HP asli belum terkunci. Tekan tombol "Refresh GPS" dan pastikan Lokasi/GPS aktif pada HP Anda.`
       );
@@ -911,16 +1028,26 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
       return;
     }
 
-    // Hard Guard 4: Must be strictly <= 25 meters from Office Reference Coordinates (is_in_office_radius = true)
-    if (distanceFromOffice > OFFICE_REFERENCE_COORDS.maxRadiusMeters) {
+    // Hard Guard 4: Must be strictly inside at least ONE active branch's radius (is_in_office_radius = true)
+    const targetEval = effectiveValidEval || matchedBranchEval;
+    if (!targetEval.isWithinRadius) {
+      const closestBranch = targetEval.branch;
       setBlockedAttemptAlert(
-        `ABSEN ${mode === 'check_in' ? 'MASUK' : 'PULANG'} DITOLAK (DI LUAR RADIUS KANTOR/GUDANG): Jarak Anda saat ini ${distanceFromOffice} meter dari titik koordinat kantor (${OFFICE_REFERENCE_COORDS.latitude}, ${OFFICE_REFERENCE_COORDS.longitude}). Clock-In maupun Clock-Out wajib berada di dalam radius maksimal ${OFFICE_REFERENCE_COORDS.maxRadiusMeters} meter (is_in_office_radius = true).`
+        `ABSEN ${mode === 'check_in' ? 'MASUK' : 'PULANG'} DITOLAK (DI LUAR RADIUS LOKASI): Titik "${closestBranch.name}" berjarak ${targetEval.distanceMeters} meter dari posisi Anda (Batas radius: maksimal ${closestBranch.radiusMeters} meter). Clock-In maupun Clock-Out wajib berada di dalam radius Kantor Pusat (25m) atau Kantor Cabang (10m).`
       );
       return;
     }
 
     setBlockedAttemptAlert(null);
     setIsCapturing(true);
+
+    const matchedBranch = targetEval.branch;
+    const matchedDistance = Math.round(targetEval.distanceMeters);
+    const branchLocationLabel = `[${matchedBranch.name}] ${
+      matchedBranch.address
+        ? `${matchedBranch.address} (GPS: ${gpsCoords.latitude.toFixed(6)}, ${gpsCoords.longitude.toFixed(6)} • ${matchedDistance}m ≤ ${matchedBranch.radiusMeters}m)`
+        : gpsDetailedAddress
+    }`;
 
     const { dayDateStr, timeWithSecondsStr, shortHourMinStr } =
       formatFullIndonesianDateTime(nowDate);
@@ -991,15 +1118,20 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
           longitude: gpsCoords.longitude,
           accuracy: gpsCoords.accuracy,
         },
-        locationAddress: gpsDetailedAddress,
+        locationAddress: branchLocationLabel,
+        branchId: matchedBranch.id,
+        branchName: matchedBranch.name,
         checkOutLocationCoords: todayAttendance?.checkOutLocationCoords,
         checkOutLocationAddress: todayAttendance?.checkOutLocationAddress,
         checkOutDistanceMeters: todayAttendance?.checkOutDistanceMeters,
+        checkOutBranchId: todayAttendance?.checkOutBranchId,
+        checkOutBranchName: todayAttendance?.checkOutBranchName,
         isInOfficeRadius: true,
-        distanceMeters: Math.round(distanceFromOffice),
+        distanceMeters: matchedDistance,
         notes:
-          clockInNotes.trim() ||
-          `Absen Masuk Wajah & GPS Valid (${distanceFromOffice}m ≤ 25m • Target ${empStdHours} Jam/Hari) • ${activeShift.code}`,
+          clockInNotes.trim()
+            ? `[Cabang: ${matchedBranch.name}] ${clockInNotes.trim()}`
+            : `Absen Masuk di ${matchedBranch.name} (${matchedDistance}m ≤ ${matchedBranch.radiusMeters}m • Target ${empStdHours} Jam/Hari) • ${activeShift.code}`,
       };
 
       onSubmitAttendance(newRecord, 'check_in');
@@ -1070,19 +1202,24 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
           longitude: gpsCoords.longitude,
           accuracy: gpsCoords.accuracy,
         },
-        checkOutLocationAddress: gpsDetailedAddress,
-        checkOutDistanceMeters: Math.round(distanceFromOffice),
+        checkOutLocationAddress: branchLocationLabel,
+        checkOutDistanceMeters: matchedDistance,
+        branchId: todayAttendance.branchId || matchedBranch.id,
+        branchName: todayAttendance.branchName || matchedBranch.name,
+        checkOutBranchId: matchedBranch.id,
+        checkOutBranchName: matchedBranch.name,
         isInOfficeRadius: true,
         distanceMeters:
           todayAttendance.distanceMeters !== undefined
             ? todayAttendance.distanceMeters
-            : Math.round(distanceFromOffice),
+            : matchedDistance,
         notes:
-          clockInNotes.trim() ||
-          todayAttendance.notes ||
-          `Selesai Shift (${cappedRes.cappedWorkHours}/${empStdHours} Jam Normal${
-            cappedRes.overtimeHours > 0 ? ` + ${cappedRes.overtimeHours} Jam Lembur Disetujui` : ''
-          } • Clock-Out GPS ${distanceFromOffice}m ≤ 25m)`,
+          clockInNotes.trim()
+            ? `[Cabang: ${matchedBranch.name}] ${clockInNotes.trim()}`
+            : todayAttendance.notes ||
+              `Selesai Shift di ${matchedBranch.name} (${cappedRes.cappedWorkHours}/${empStdHours} Jam Normal${
+                cappedRes.overtimeHours > 0 ? ` + ${cappedRes.overtimeHours} Jam Lembur Disetujui` : ''
+              } • Clock-Out GPS ${matchedDistance}m ≤ ${matchedBranch.radiusMeters}m)`,
       };
 
       onSubmitAttendance(updatedRecord, 'check_out');
@@ -1107,48 +1244,49 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
 
   return (
     <div className="bg-slate-900 rounded-2xl border border-slate-800 shadow-xl overflow-hidden text-white max-w-full">
-      {/* Top Bar: Status Kamera Langsung, Titik Kantor Resmi & Sinyal GPS HP Real-Time */}
+      {/* Top Bar: Status Kamera Langsung, Titik Cabang Aktif & Sinyal GPS HP Real-Time */}
       <div className="p-3.5 sm:px-5 sm:py-3.5 bg-slate-950/90 border-b border-slate-800 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
         <div className="flex items-start sm:items-center gap-2.5 min-w-0">
           <span className="relative flex h-3 w-3 shrink-0 mt-1 sm:mt-0">
             <span
               className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
-                canSubmitAttendance ? 'bg-emerald-400' : 'bg-rose-400'
+                canSubmitAttendance ? 'bg-amber-400' : 'bg-rose-400'
               }`}
             />
             <span
               className={`relative inline-flex rounded-full h-3 w-3 ${
-                canSubmitAttendance ? 'bg-emerald-500' : 'bg-rose-500'
+                canSubmitAttendance ? 'bg-amber-500' : 'bg-rose-500'
               }`}
             />
           </span>
           <div className="min-w-0">
-            <h4 className="text-xs sm:text-sm font-bold text-white flex items-center gap-1.5">
-              <Camera className="w-4 h-4 text-emerald-400 shrink-0" />
+            <h4 className="text-xs sm:text-sm font-bold text-white flex items-center gap-1.5 flex-wrap">
+              <Camera className="w-4 h-4 text-amber-400 shrink-0" />
               <span className="truncate sm:whitespace-normal">
-                Kamera Absen Wajah & Geofence GPS HP (Radius ≤ 25m)
+                Kamera Absen Wajah &amp; Geofence Multi-Cabang ({activeBranches.length} Cabang Aktif)
               </span>
             </h4>
             <p className="text-[10px] sm:text-[11px] text-slate-400 break-words mt-0.5">
-              Koordinat Kantor:{' '}
-              <strong className="text-emerald-300 font-mono tabular-nums">
-                {OFFICE_REFERENCE_COORDS.latitude}, {OFFICE_REFERENCE_COORDS.longitude}
-              </strong>{' '}
-              • Maks: <strong className="text-emerald-300">25 Meter</strong>
+              Cabang Terdekat:{' '}
+              <strong className="text-amber-300">{primaryBranch.name}</strong>{' '}
+              <span className="font-mono text-slate-300 tabular-nums">
+                ({primaryBranch.latitude}, {primaryBranch.longitude})
+              </span>{' '}
+              • Radius Maks: <strong className="text-amber-300">{activeMaxRadiusMeters} Meter</strong>
             </p>
           </div>
         </div>
 
         <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-1.5 sm:gap-2 w-full lg:w-auto">
           <a
-            href={OFFICE_REFERENCE_COORDS.mapsUrl}
+            href={`https://maps.google.com/maps?q=${primaryBranch.latitude}%2C${primaryBranch.longitude}&z=18&hl=id`}
             target="_blank"
             rel="noopener noreferrer"
-            className="min-h-[38px] px-2.5 sm:px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-500/30 text-[11px] sm:text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
-            title="Buka Titik Koordinat Kantor Resmi di Google Maps"
+            className="min-h-[38px] px-2.5 sm:px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/30 text-[11px] sm:text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
+            title={`Buka Titik Koordinat ${primaryBranch.name} di Google Maps`}
           >
-            <ExternalLink className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-            <span className="truncate">Maps Kantor</span>
+            <ExternalLink className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+            <span className="truncate">Maps Cabang</span>
           </a>
 
           <button
@@ -1157,7 +1295,7 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
             className="min-h-[38px] px-2.5 sm:px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-[11px] sm:text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
             title="Ganti Kamera Depan / Belakang HP"
           >
-            <SwitchCamera className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+            <SwitchCamera className="w-3.5 h-3.5 text-amber-400 shrink-0" />
             <span className="truncate">{facingMode === 'user' ? 'Kamera Depan' : 'Kamera Belakang'}</span>
           </button>
 
@@ -1168,7 +1306,7 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
             title="Muat Ulang Kamera (iOS Safari / PWA)"
           >
             <RefreshCw
-              className={`w-3.5 h-3.5 text-teal-400 shrink-0 ${
+              className={`w-3.5 h-3.5 text-amber-400 shrink-0 ${
                 isStartingCamera || isReconnectingCamera ? 'animate-spin' : ''
               }`}
             />
@@ -1180,11 +1318,11 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
           <button
             type="button"
             onClick={refreshPhoneGps}
-            className="min-h-[38px] px-2.5 sm:px-3 py-1.5 rounded-xl bg-emerald-950/90 hover:bg-emerald-900 text-emerald-300 border border-emerald-500/60 text-[11px] sm:text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors shadow-xs"
+            className="min-h-[38px] px-2.5 sm:px-3 py-1.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-amber-400 border border-amber-500/40 text-[11px] sm:text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors shadow-xs"
             title="Refresh Titik Koordinat GPS HP (iOS Safari / Android PWA)"
           >
             <RefreshCw
-              className={`w-3.5 h-3.5 text-emerald-400 shrink-0 ${
+              className={`w-3.5 h-3.5 text-amber-400 shrink-0 ${
                 gpsStatus === 'searching' || isRefreshingGps ? 'animate-spin' : ''
               }`}
             />
@@ -1212,14 +1350,14 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
 
             {/* Fallback Visual Portrait when physical webcam is unavailable */}
             {!isCameraActive && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-b from-slate-900 via-slate-900 to-emerald-950/80 p-4 sm:p-6">
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-b from-neutral-950 via-stone-900 to-neutral-900 p-4 sm:p-6">
                 <img
                   src={
                     currentEmployee.avatarUrl ||
                     'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=600&h=600&q=80'
                   }
                   alt={currentEmployee.fullName}
-                  className="w-36 h-36 sm:w-52 sm:h-52 rounded-3xl object-cover ring-4 ring-emerald-500/40 shadow-2xl"
+                  className="w-36 h-36 sm:w-52 sm:h-52 rounded-3xl object-cover ring-4 ring-amber-500/40 shadow-2xl"
                 />
                 {cameraFallbackReason && (
                   <p className="text-[10px] sm:text-[11px] text-slate-300 text-center max-w-md mt-2.5 bg-slate-950/80 px-3 py-1.5 rounded-xl border border-slate-800">
@@ -1233,27 +1371,27 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
               <div
                 className={`w-48 h-60 sm:w-60 sm:h-72 rounded-3xl border-2 border-dashed relative ${
-                  canSubmitAttendance ? 'border-emerald-400/60' : 'border-rose-400/60'
+                  canSubmitAttendance ? 'border-amber-400/60' : 'border-rose-400/60'
                 }`}
               >
                 <div
                   className={`absolute -top-1 -left-1 w-6 h-6 border-t-4 border-l-4 rounded-tl-xl ${
-                    canSubmitAttendance ? 'border-emerald-400' : 'border-rose-400'
+                    canSubmitAttendance ? 'border-amber-400' : 'border-rose-400'
                   }`}
                 />
                 <div
                   className={`absolute -top-1 -right-1 w-6 h-6 border-t-4 border-r-4 rounded-tr-xl ${
-                    canSubmitAttendance ? 'border-emerald-400' : 'border-rose-400'
+                    canSubmitAttendance ? 'border-amber-400' : 'border-rose-400'
                   }`}
                 />
                 <div
                   className={`absolute -bottom-1 -left-1 w-6 h-6 border-b-4 border-l-4 rounded-bl-xl ${
-                    canSubmitAttendance ? 'border-emerald-400' : 'border-rose-400'
+                    canSubmitAttendance ? 'border-amber-400' : 'border-rose-400'
                   }`}
                 />
                 <div
                   className={`absolute -bottom-1 -right-1 w-6 h-6 border-b-4 border-r-4 rounded-br-xl ${
-                    canSubmitAttendance ? 'border-emerald-400' : 'border-rose-400'
+                    canSubmitAttendance ? 'border-amber-400' : 'border-rose-400'
                   }`}
                 />
               </div>
@@ -1262,8 +1400,8 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
             {/* Small Top-Left Badge: LIVE KAMERA */}
             <div className="absolute top-3 left-3 z-10 max-w-[calc(100%-1.5rem)]">
               <div className="inline-flex items-center gap-1.5 bg-slate-950/75 backdrop-blur-md px-2.5 py-1 rounded-lg border border-white/15 shadow-sm max-w-full">
-                <Radio className="w-3 h-3 text-emerald-400 animate-pulse shrink-0" />
-                <span className="text-[10px] font-bold tracking-wide text-emerald-300 uppercase shrink-0">
+                <Radio className="w-3 h-3 text-amber-400 animate-pulse shrink-0" />
+                <span className="text-[10px] font-bold tracking-wide text-amber-300 uppercase shrink-0">
                   {isCameraActive ? 'LIVE KAMERA' : 'SENSOR WAJAH'}
                 </span>
                 <span className="text-slate-500 shrink-0">•</span>
@@ -1277,13 +1415,13 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
             <div className="absolute bottom-3 left-3 z-10 max-w-[calc(100%-1.5rem)] pointer-events-none">
               <div className="bg-slate-950/75 backdrop-blur-md px-2.5 py-1.5 rounded-xl border border-white/15 shadow-sm">
                 <div className="flex items-center gap-1.5">
-                  <Clock className="w-3 h-3 text-emerald-400 shrink-0" />
+                  <Clock className="w-3 h-3 text-amber-400 shrink-0" />
                   <span className="text-xs sm:text-sm font-mono font-extrabold text-white tracking-tight tabular-nums">
                     {timeWithSecondsStr}
                   </span>
                 </div>
-                <div className="flex items-center gap-1 text-[10px] font-medium text-emerald-200 mt-0.5">
-                  <Calendar className="w-2.5 h-2.5 text-emerald-400 shrink-0" />
+                <div className="flex items-center gap-1 text-[10px] font-medium text-amber-200 mt-0.5">
+                  <Calendar className="w-2.5 h-2.5 text-amber-400 shrink-0" />
                   <span className="truncate">{dayDateStr}</span>
                 </div>
               </div>
@@ -1298,12 +1436,12 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
               <div
                 className={`p-2.5 sm:p-3 rounded-xl border flex items-center gap-2.5 ${
                   canSubmitAttendance
-                    ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300'
+                    ? 'bg-amber-950/60 border-amber-500/40 text-amber-300'
                     : 'bg-rose-950/70 border-rose-500/50 text-rose-300'
                 }`}
               >
                 {canSubmitAttendance ? (
-                  <ShieldCheck className="w-5 h-5 text-emerald-400 shrink-0" />
+                  <ShieldCheck className="w-5 h-5 text-amber-400 shrink-0" />
                 ) : (
                   <Lock className="w-5 h-5 text-rose-400 shrink-0" />
                 )}
@@ -1313,27 +1451,27 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
                   </div>
                   <div className="text-xs font-extrabold truncate">
                     {canSubmitAttendance
-                      ? 'RADIUS ≤25M & GPS VALID'
+                      ? `VALID DI ${primaryBranch.name.toUpperCase()}`
                       : isFakeGpsDetected
                       ? 'FAKE GPS — ABSEN DIBLOKIR'
-                      : distanceFromOffice !== null && distanceFromOffice > 25
-                      ? `DI LUAR 25M (${distanceFromOffice}m)`
+                      : distanceFromOffice !== null && !isWithinMaxRadius
+                      ? `DI LUAR RADIUS (${distanceFromOffice}m > ${activeMaxRadiusMeters}m)`
                       : 'MENUNGGU KUNCI GPS HP'}
                   </div>
                 </div>
               </div>
 
-              {/* Badge 2: Dalam Radius Kantor & Koordinat GPS */}
+              {/* Badge 2: Dalam Radius Cabang & Koordinat GPS */}
               <div
                 className={`p-2.5 sm:p-3 rounded-xl border min-w-0 ${
                   canSubmitAttendance
-                    ? 'bg-slate-900/90 border-emerald-500/40'
+                    ? 'bg-slate-900/90 border-amber-500/40'
                     : 'bg-rose-950/60 border-rose-500/50'
                 }`}
               >
                 <div
                   className={`flex items-center gap-1 text-[10px] font-bold uppercase ${
-                    canSubmitAttendance ? 'text-emerald-400' : 'text-rose-300'
+                    canSubmitAttendance ? 'text-amber-400' : 'text-rose-300'
                   }`}
                 >
                   <MapPin className="w-3.5 h-3.5 shrink-0" />
@@ -1342,8 +1480,8 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
                       ? isFakeGpsDetected
                         ? 'Indikasi Fake GPS!'
                         : isWithinMaxRadius
-                        ? 'Dalam Radius Kantor (≤ 25m)'
-                        : 'Di Luar Radius Kantor (> 25m)'
+                        ? `Dalam Radius: ${primaryBranch.name}`
+                        : `Di Luar Radius: ${primaryBranch.name}`
                       : gpsStatus === 'searching'
                       ? 'Membaca Koordinat GPS HP...'
                       : 'GPS HP Belum Aktif'}
@@ -1357,11 +1495,11 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
                 <div className="text-[10px] text-slate-300 font-mono tabular-nums mt-0.5">
                   {gpsCoords && distanceFromOffice !== null ? (
                     <>
-                      Jarak ke Kantor: <strong className="text-white">{distanceFromOffice}m</strong> (Maks:{' '}
-                      <strong className="text-emerald-300">25m</strong>)
+                      Jarak ke Cabang: <strong className="text-white">{distanceFromOffice}m</strong> (Maks:{' '}
+                      <strong className="text-amber-300">{activeMaxRadiusMeters}m</strong>)
                     </>
                   ) : (
-                    <span>Wajib radius ≤ 25m dari titik kantor</span>
+                    <span>Wajib berada di dalam radius cabang aktif</span>
                   )}
                 </div>
               </div>
@@ -1369,11 +1507,11 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
 
             {/* Card 3: Detail Lokasi GPS HP */}
             <div className="bg-slate-900/90 p-2.5 sm:p-3 rounded-xl border border-slate-800 flex items-start gap-2.5">
-              <MapPin className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+              <MapPin className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center justify-between gap-1">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-300">
-                    Detail Lokasi GPS HP:
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-amber-300">
+                    Detail Lokasi GPS HP &amp; Cabang Terdeteksi:
                   </span>
                   {lastGpsUpdatedTime && (
                     <span className="text-[10px] font-mono text-slate-400 tabular-nums">
@@ -1389,31 +1527,33 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
           </div>
         </div>
 
-        {/* RIGHT COLUMN (5 cols): GEOFENCE 25M + ANTI-FAKE GPS SHIELD + SHUTTER CONTROLS */}
+        {/* RIGHT COLUMN (5 cols): GEOFENCE MULTI-CABANG + ANTI-FAKE GPS SHIELD + SHUTTER CONTROLS */}
         <div className="lg:col-span-5 p-3.5 sm:p-5 bg-slate-900 flex flex-col justify-between space-y-4">
           <div className="flex flex-col space-y-3.5">
             {/* Primary Shutter Buttons: Placed First on Mobile (order-1 lg:order-4) for One-Handed Ergonomics */}
             <div className="order-1 lg:order-4 space-y-2.5 pt-1 lg:pt-0">
               {/* Anti-Duplicate Attendance Status Banner */}
               {isShiftAttendanceCompletedToday ? (
-                <div className="p-3 rounded-xl bg-emerald-950/80 border border-emerald-500/50 text-xs text-emerald-200 flex items-start gap-2.5">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                <div className="p-3 rounded-xl bg-amber-950/80 border border-amber-500/50 text-xs text-amber-200 flex items-start gap-2.5">
+                  <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                   <div>
                     <p className="font-extrabold text-white">
                       Presensi Shift Hari Ini Selesai (1x Masuk &amp; 1x Pulang Tercatat)
                     </p>
-                    <p className="text-[11px] text-emerald-300 mt-0.5">
+                    <p className="text-[11px] text-amber-300 mt-0.5">
                       Check-In: <strong>{todayAttendance?.checkIn} WIB</strong> • Check-Out:{' '}
-                      <strong>{todayAttendance?.checkOut} WIB</strong>. Sistem mengunci absensi duplikat pada hari yang sama.
+                      <strong>{todayAttendance?.checkOut} WIB</strong>
+                      {todayAttendance?.branchName ? ` • Cabang: ${todayAttendance.branchName}` : ''}. Sistem mengunci absensi duplikat pada hari yang sama.
                     </p>
                   </div>
                 </div>
               ) : hasCheckedInToday ? (
                 <div className="p-2.5 rounded-xl bg-indigo-950/75 border border-indigo-500/40 text-[11px] text-indigo-200 flex items-center justify-between gap-2">
                   <span className="flex items-center gap-1.5 font-semibold">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                    <CheckCircle2 className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                     <span>
-                      Check-In Tercatat Pukul <strong>{todayAttendance?.checkIn} WIB</strong> (Terkunci 1x/Hari)
+                      Check-In Tercatat Pukul <strong>{todayAttendance?.checkIn} WIB</strong>
+                      {todayAttendance?.branchName ? ` (${todayAttendance.branchName})` : ''}
                     </span>
                   </span>
                   <span className="px-2 py-0.5 rounded bg-indigo-500/30 text-indigo-200 font-bold text-[10px] shrink-0">
@@ -1421,6 +1561,87 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
                   </span>
                 </div>
               ) : null}
+
+              {/* Pilihan Titik Lokasi Absen: Pusat (25m) vs Cabang (10m) */}
+              <div className="p-2.5 rounded-xl bg-neutral-950/90 border border-amber-500/30 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-extrabold text-amber-300 uppercase tracking-wide flex items-center gap-1.5">
+                    <MapPin className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                    <span>Pilih Lokasi Absen (Pusat / Cabang)</span>
+                  </span>
+                  <span className="text-[10px] text-slate-400 font-medium">
+                    Auto-Deteksi GPS Aktif
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {activeBranches.map((branch, idx) => {
+                    const evalItem = allBranchEvaluations.find((ev) => ev.branch.id === branch.id);
+                    const isSelected = primaryBranch?.id === branch.id;
+                    const isInside = Boolean(evalItem?.isWithinRadius);
+                    const isPusat =
+                      branch.id === 'branch-main-tgr' ||
+                      branch.name.toLowerCase().includes('pusat') ||
+                      idx === 0;
+                    const badgeLabel = isPusat
+                      ? `PUSAT • RADIUS ${branch.radiusMeters}M`
+                      : `CABANG • RADIUS ${branch.radiusMeters}M`;
+                    return (
+                      <button
+                        key={branch.id}
+                        type="button"
+                        onClick={() => setSelectedBranchId(branch.id)}
+                        className={`text-left p-2.5 rounded-xl border transition-all cursor-pointer flex flex-col justify-between gap-1.5 ${
+                          isInside
+                            ? 'bg-amber-500/20 border-amber-400 text-amber-200 shadow-md shadow-amber-500/10'
+                            : isSelected
+                            ? 'bg-amber-500/10 border-amber-500/50 text-white'
+                            : 'bg-slate-900/80 border-slate-800 text-slate-300 hover:border-amber-500/30'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-1.5 w-full">
+                          <span
+                            className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold tracking-wider uppercase ${
+                              isInside
+                                ? 'bg-amber-400 text-neutral-950'
+                                : isSelected
+                                ? 'bg-amber-500/25 text-amber-300 border border-amber-500/40'
+                                : 'bg-slate-800 text-slate-400'
+                            }`}
+                          >
+                            {badgeLabel}
+                          </span>
+                          <span
+                            className={`text-[10px] font-mono font-bold tabular-nums ${
+                              isInside
+                                ? 'text-amber-300'
+                                : evalItem && evalItem.distanceMeters >= 0
+                                ? 'text-rose-300'
+                                : 'text-slate-400'
+                            }`}
+                          >
+                            {evalItem && evalItem.distanceMeters >= 0
+                              ? `${evalItem.distanceMeters}m / ${branch.radiusMeters}m`
+                              : `Maks ${branch.radiusMeters}m`}
+                          </span>
+                        </div>
+                        <div className="text-xs font-bold text-white truncate">
+                          {branch.name}
+                        </div>
+                        <div className="flex items-center justify-between gap-1 text-[10px] text-slate-400 font-mono">
+                          <span className="truncate">
+                            {branch.latitude}, {branch.longitude}
+                          </span>
+                          {isInside && (
+                            <span className="text-amber-300 font-sans font-extrabold shrink-0">
+                              ✓ Valid
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
 
               {/* Optional Attendance Notes Input */}
               <div>
@@ -1431,7 +1652,7 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
                   <button
                     type="button"
                     onClick={refreshPhoneGps}
-                    className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-400 hover:text-emerald-300 cursor-pointer"
+                    className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-400 hover:text-amber-300 cursor-pointer"
                   >
                     <RefreshCw
                       className={`w-3 h-3 ${
@@ -1446,8 +1667,8 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
                   value={clockInNotes}
                   disabled={isShiftAttendanceCompletedToday}
                   onChange={(e) => onChangeNotes(e.target.value)}
-                  placeholder={`Hadir ${activeShift.name} di ${OFFICE_REFERENCE_COORDS.shortAddress}...`}
-                  className="w-full px-3.5 py-2.5 text-xs bg-slate-800 border border-slate-700 rounded-xl text-white placeholder:text-slate-500 focus:outline-hidden focus:border-emerald-500 disabled:opacity-50"
+                  placeholder={`Hadir ${activeShift.name} di ${primaryBranch.name}...`}
+                  className="w-full px-3.5 py-2.5 text-xs bg-slate-800 border border-slate-700 rounded-xl text-white placeholder:text-slate-500 focus:outline-hidden focus:border-amber-500 disabled:opacity-50"
                 />
               </div>
 
@@ -1458,14 +1679,14 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
                 onClick={() => handleCaptureAndSubmit('check_in')}
                 className={`w-full min-h-[48px] py-3.5 px-4 rounded-xl text-xs sm:text-sm font-extrabold flex items-center justify-center gap-2 transition-all text-center ${
                   hasCheckedInToday
-                    ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-500/40 cursor-not-allowed'
+                    ? 'bg-amber-950/60 text-amber-300 border border-amber-500/40 cursor-not-allowed'
                     : canSubmitAttendance
-                    ? 'bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white shadow-lg shadow-emerald-600/25 cursor-pointer active:scale-[0.99]'
+                    ? 'bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold shadow-lg shadow-amber-600/25 cursor-pointer active:scale-[0.99]'
                     : 'bg-slate-800 text-slate-400 border border-rose-500/30 cursor-not-allowed'
                 }`}
               >
                 {hasCheckedInToday ? (
-                  <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5 shrink-0 text-emerald-400" />
+                  <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5 shrink-0 text-amber-400" />
                 ) : canSubmitAttendance ? (
                   <Camera className="w-4 h-4 sm:w-5 sm:h-5 shrink-0" />
                 ) : (
@@ -1479,10 +1700,10 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
                       ? 'Absen Masuk Diblokir (Wajib Aktifkan Kamera Selfie Live)'
                       : isFakeGpsDetected
                       ? 'Absen Masuk Diblokir (Fake GPS Terdeteksi)'
-                      : distanceFromOffice !== null && distanceFromOffice > 25
-                      ? `Tidak Bisa Absen Masuk (Di Luar Radius Kantor: ${distanceFromOffice}m > 25m)`
-                      : 'Menunggu Kunci GPS HP (Wajib Radius ≤ 25m)'
-                    : `Jepret Foto Wajah & Absen Masuk (${
+                      : activeBranchDistance !== null && !isWithinMaxRadius
+                      ? `Tidak Bisa Absen Masuk (Di Luar Radius ${primaryBranch.name}: ${activeBranchDistance}m > ${activeMaxRadiusMeters}m)`
+                      : 'Menunggu Kunci GPS HP (Wajib di Dalam Radius Pusat 25m / Cabang 10m)'
+                    : `Jepret Foto Wajah & Absen Masuk di ${primaryBranch.name} (${
                         useCustomClockTime ? customClockInTime : shortHourMinStr
                       } WIB)`}
                 </span>
@@ -1520,10 +1741,10 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
                       ? 'Clock-Out Diblokir (Wajib Aktifkan Kamera Selfie Live)'
                       : isFakeGpsDetected
                       ? 'Clock-Out Diblokir (Fake GPS Terdeteksi)'
-                      : distanceFromOffice !== null && distanceFromOffice > 25
-                      ? `Tidak Bisa Clock-Out (Di Luar Radius Kantor: ${distanceFromOffice}m > 25m)`
-                      : 'Clock-Out Wajib di Dalam Radius ≤ 25m Kantor & Kamera Aktif'
-                    : `Jepret Foto Wajah & Absen Pulang (${
+                      : activeBranchDistance !== null && !isWithinMaxRadius
+                      ? `Tidak Bisa Clock-Out (Di Luar Radius ${primaryBranch.name}: ${activeBranchDistance}m > ${activeMaxRadiusMeters}m)`
+                      : `Clock-Out Wajib di Dalam Radius Cabang & Kamera Aktif`
+                    : `Jepret Foto Wajah & Absen Pulang di ${primaryBranch.name} (${
                         useCustomClockTime ? customClockOutTime : shortHourMinStr
                       } WIB)`}
                 </span>
@@ -1534,7 +1755,7 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
             <div className="order-2 lg:order-2 p-3 rounded-xl bg-slate-800/90 border border-slate-700 space-y-1.5">
               <div className="flex flex-wrap items-center justify-between gap-1 text-xs">
                 <span className="text-slate-400 font-medium">Jadwal Shift Anda:</span>
-                <span className="font-bold text-emerald-400 tabular-nums">
+                <span className="font-bold text-amber-400 tabular-nums">
                   {activeShift.name} ({activeShift.checkInTime} – {activeShift.checkOutTime} WIB)
                 </span>
               </div>
@@ -1544,7 +1765,7 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
                   className={`font-bold px-2 py-0.5 rounded text-[11px] ${
                     liveEvalCheckIn.lateMinutes > 0
                       ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                      : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                      : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
                   }`}
                 >
                   {liveEvalCheckIn.status}
@@ -1555,96 +1776,147 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
               </div>
             </div>
 
-            {/* Official Office Location & 25m Geofence Security Card */}
+            {/* Official Multi-Branch Location & Geofence Security Card */}
             <div
               className={`order-3 lg:order-1 p-3 sm:p-3.5 rounded-xl border space-y-2.5 ${
                 canSubmitAttendance
-                  ? 'bg-emerald-950/30 border-emerald-500/40'
+                  ? 'bg-amber-950/30 border-amber-500/40'
                   : 'bg-rose-950/35 border-rose-500/50'
               }`}
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="flex items-start gap-2 min-w-0">
                   {canSubmitAttendance ? (
-                    <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                    <ShieldCheck className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                   ) : (
                     <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
                   )}
                   <div className="min-w-0">
                     <h5 className="text-[11px] sm:text-xs font-extrabold uppercase tracking-wide text-white">
-                      Geofence Radius 25 Meter & Anti-Fake GPS
+                      Geofence Multi-Cabang (Pusat 25m &amp; Cabang 10m)
                     </h5>
                     <p className="text-[10px] sm:text-[11px] text-slate-300 break-words">
-                      Koordinat Kantor:{' '}
-                      <strong className="font-mono text-emerald-300 tabular-nums">
-                        {OFFICE_REFERENCE_COORDS.latitude}, {OFFICE_REFERENCE_COORDS.longitude}
-                      </strong>
+                      Titik Aktif: <strong className="text-amber-300">{primaryBranch.name}</strong>{' '}
+                      <a
+                        href={`https://www.google.com/maps?q=${primaryBranch.latitude},${primaryBranch.longitude}&z=17&hl=id`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-mono text-amber-400/90 hover:text-amber-300 underline tabular-nums inline-flex items-center gap-0.5"
+                      >
+                        ({primaryBranch.latitude}, {primaryBranch.longitude})
+                        <ExternalLink className="w-2.5 h-2.5 shrink-0" />
+                      </a>
                     </p>
                   </div>
                 </div>
                 <span
                   className={`px-2 py-0.5 rounded-md text-[10px] font-mono font-bold shrink-0 tabular-nums ${
                     canSubmitAttendance
-                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
                       : 'bg-rose-500/25 text-rose-200 border border-rose-500/40'
                   }`}
                 >
-                  {distanceFromOffice !== null ? `${distanceFromOffice}m / 25m` : 'GPS OFF'}
+                  {activeBranchDistance !== null ? `${activeBranchDistance}m / ${activeMaxRadiusMeters}m` : 'GPS OFF'}
                 </span>
               </div>
 
-              {/* Distance Progress Bar vs 25m Limit */}
+              {/* Distance Progress Bar vs Branch Radius Limit */}
               <div className="space-y-1">
                 <div className="flex flex-wrap items-center justify-between gap-1 text-[10px] sm:text-[11px]">
-                  <span className="text-slate-300">Jarak dari Titik Koordinat:</span>
+                  <span className="text-slate-300">Jarak ke {primaryBranch.name}:</span>
                   <span
                     className={`font-mono font-bold tabular-nums ${
-                      distanceFromOffice !== null && distanceFromOffice <= 25
-                        ? 'text-emerald-300'
+                      isWithinMaxRadius
+                        ? 'text-amber-300'
                         : 'text-rose-300'
                     }`}
                   >
-                    {distanceFromOffice !== null
-                      ? `${distanceFromOffice}m (Maks 25m)`
+                    {activeBranchDistance !== null
+                      ? `${activeBranchDistance}m (Maks ${activeMaxRadiusMeters}m)`
                       : 'Belum Terbaca'}
                   </span>
                 </div>
                 <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
                   <div
                     className={`h-full transition-all duration-300 ${
-                      distanceFromOffice !== null && distanceFromOffice <= 25 && !isFakeGpsDetected
-                        ? 'bg-emerald-500'
+                      isWithinMaxRadius && !isFakeGpsDetected
+                        ? 'bg-amber-500'
                         : 'bg-rose-500'
                     }`}
                     style={{
                       width:
-                        distanceFromOffice !== null
-                          ? `${Math.min(100, Math.max(8, (distanceFromOffice / 25) * 100))}%`
+                        activeBranchDistance !== null
+                          ? `${Math.min(100, Math.max(8, (activeBranchDistance / activeMaxRadiusMeters) * 100))}%`
                           : '100%',
                     }}
                   />
                 </div>
               </div>
 
-              {/* 4-Layer GPS Verification Pills (No Satellite Accuracy Requirement) */}
+              {/* Multi-Branch Distance List (Shows distance to all active branches) */}
+              {activeBranches.length > 1 && (
+                <div className="p-2 rounded-lg bg-slate-950/75 border border-slate-800 space-y-1">
+                  <div className="text-[10px] font-bold text-amber-300 uppercase tracking-wider">
+                    Daftar Pilihan Titik Absensi ({activeBranches.length} Lokasi Aktif):
+                  </div>
+                  <div className="space-y-1 max-h-28 overflow-y-auto pr-1">
+                    {(allBranchEvaluations.length > 0
+                      ? allBranchEvaluations
+                      : activeBranches.map((b) => ({
+                          branch: b,
+                          distanceMeters: -1,
+                          isWithinRadius: false,
+                        }))
+                    ).map((ev) => (
+                      <div
+                        key={ev.branch.id}
+                        onClick={() => setSelectedBranchId(ev.branch.id)}
+                        className={`flex items-center justify-between gap-2 px-2 py-1 rounded text-[10px] border cursor-pointer transition-colors ${
+                          ev.isWithinRadius
+                            ? 'bg-amber-500/15 border-amber-500/40 text-amber-200 font-bold'
+                            : primaryBranch?.id === ev.branch.id
+                            ? 'bg-amber-500/10 border-amber-500/30 text-white'
+                            : 'bg-slate-900/70 border-slate-800 text-slate-300 hover:border-slate-700'
+                        }`}
+                      >
+                        <span className="truncate">
+                          {ev.branch.name}{' '}
+                          <span className="text-slate-400 font-mono">
+                            ({ev.branch.latitude}, {ev.branch.longitude})
+                          </span>
+                        </span>
+                        <span className="font-mono shrink-0">
+                          {ev.distanceMeters >= 0
+                            ? `${ev.distanceMeters}m / ${ev.branch.radiusMeters}m ${
+                                ev.isWithinRadius ? '✓ DALAM RADIUS' : ''
+                              }`
+                            : `Radius ${ev.branch.radiusMeters}m`}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 4-Layer GPS Verification Pills */}
               <div className="grid grid-cols-2 gap-1.5 pt-1">
                 <div
                   className={`px-2 py-1.5 rounded-lg border text-[10px] flex items-center gap-1.5 min-w-0 ${
                     isGpsLocked && isWithinMaxRadius
-                      ? 'bg-slate-900/80 border-emerald-500/30 text-emerald-300'
+                      ? 'bg-slate-900/80 border-amber-500/30 text-amber-300'
                       : 'bg-slate-900/80 border-rose-500/30 text-rose-300'
                   }`}
                 >
                   <CheckCircle2 className="w-3 h-3 shrink-0" />
                   <span className="truncate font-semibold">
-                    Radius ≤ 25m {distanceFromOffice !== null ? `(${distanceFromOffice}m)` : ''}
+                    Radius ≤ {activeMaxRadiusMeters}m {distanceFromOffice !== null ? `(${distanceFromOffice}m)` : ''}
                   </span>
                 </div>
 
                 <div
                   className={`px-2 py-1.5 rounded-lg border text-[10px] flex items-center gap-1.5 min-w-0 ${
                     isGpsLocked && antiFakeAudit.checks.timestampSynced
-                      ? 'bg-slate-900/80 border-emerald-500/30 text-emerald-300'
+                      ? 'bg-slate-900/80 border-amber-500/30 text-amber-300'
                       : 'bg-slate-900/80 border-rose-500/30 text-rose-300'
                   }`}
                 >
@@ -1655,7 +1927,7 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
                 <div
                   className={`px-2 py-1.5 rounded-lg border text-[10px] flex items-center gap-1.5 min-w-0 ${
                     isGpsLocked && antiFakeAudit.checks.kinematicsValid
-                      ? 'bg-slate-900/80 border-emerald-500/30 text-emerald-300'
+                      ? 'bg-slate-900/80 border-amber-500/30 text-amber-300'
                       : 'bg-slate-900/80 border-rose-500/30 text-rose-300'
                   }`}
                 >
@@ -1666,7 +1938,7 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
                 <div
                   className={`px-2 py-1.5 rounded-lg border text-[10px] flex items-center gap-1.5 min-w-0 ${
                     isGpsLocked && antiFakeAudit.checks.sensorHardwareValid
-                      ? 'bg-slate-900/80 border-emerald-500/30 text-emerald-300'
+                      ? 'bg-slate-900/80 border-amber-500/30 text-amber-300'
                       : 'bg-slate-900/80 border-rose-500/30 text-rose-300'
                   }`}
                 >
@@ -1675,14 +1947,14 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
                 </div>
               </div>
 
-              {/* Blocking Explanation Banner if Outside 25m or Fake GPS Detected or Camera Inactive */}
+              {/* Blocking Explanation Banner if Outside Branch Radius or Fake GPS Detected or Camera Inactive */}
               {!canSubmitAttendance && (
                 <div className="p-2.5 rounded-lg bg-rose-950/90 border border-rose-500/50 text-[11px] text-rose-200 flex items-start gap-2">
                   <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
                   <div className="space-y-1 min-w-0 break-words">
                     {!isLiveCameraReady ? (
                       <p className="font-semibold leading-snug">
-                        <strong>KAMERA SELFIE WAJIB AKTIF (CLOCK-IN & CLOCK-OUT):</strong>{' '}
+                        <strong>KAMERA SELFIE WAJIB AKTIF (CLOCK-IN &amp; CLOCK-OUT):</strong>{' '}
                         {cameraFallbackReason ||
                           'Izinkan akses kamera pada browser perangkat Anda. Sistem menolak absensi tanpa foto selfie langsung (face_scan_verified = true).'}
                       </p>
@@ -1699,22 +1971,21 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
                           ))}
                         </ul>
                       </>
-                    ) : distanceFromOffice !== null && distanceFromOffice > 25 ? (
+                    ) : distanceFromOffice !== null && !isWithinMaxRadius ? (
                       <p className="font-semibold leading-snug">
                         <strong>
-                          TIDAK BISA {hasCheckedInToday && !hasCheckedOutToday ? 'CLOCK-OUT' : 'CLOCK-IN'} (DI LUAR RADIUS KANTOR/GUDANG):
+                          TIDAK BISA {hasCheckedInToday && !hasCheckedOutToday ? 'CLOCK-OUT' : 'CLOCK-IN'} (DI LUAR RADIUS CABANG):
                         </strong>{' '}
                         Jarak posisi GPS Anda saat ini <strong>{distanceFromOffice} meter</strong>{' '}
-                        dari titik koordinat kantor ({OFFICE_REFERENCE_COORDS.latitude},{' '}
-                        {OFFICE_REFERENCE_COORDS.longitude}). Tombol{' '}
+                        dari cabang terdekat <strong>{primaryBranch.name}</strong> ({primaryBranch.latitude},{' '}
+                        {primaryBranch.longitude}). Tombol{' '}
                         {hasCheckedInToday && !hasCheckedOutToday ? 'Clock-Out' : 'Clock-In'} dikunci
-                        karena Anda berada di luar batas radius maksimal <strong>25 meter</strong>{' '}
-                        (is_in_office_radius = false).
+                        karena Anda berada di luar batas radius maksimal <strong>{activeMaxRadiusMeters} meter</strong>.
                       </p>
                     ) : (
                       <p className="font-semibold leading-snug">
                         Sedang membaca titik koordinat GPS HP Anda... Pastikan Anda berada
-                        maksimal 25 meter dari titik koordinat kantor saat Clock-In maupun Clock-Out.
+                        di dalam radius salah satu cabang kantor/gudang yang aktif saat Clock-In maupun Clock-Out.
                       </p>
                     )}
                   </div>
@@ -1734,14 +2005,14 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
           <div className="pt-3 border-t border-slate-800">
             <div className="flex items-center justify-between mb-2">
               <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Hasil Bukti Foto Wajah + Watermark GPS & Jam</span>
+                <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                <span>Hasil Bukti Foto Wajah + Watermark GPS &amp; Cabang</span>
               </span>
               {lastCapturedPhoto && (
                 <button
                   type="button"
                   onClick={() => setIsPhotoZoomModalOpen(true)}
-                  className="text-[11px] font-bold text-emerald-400 hover:text-emerald-300 flex items-center gap-1 cursor-pointer"
+                  className="text-[11px] font-bold text-amber-400 hover:text-amber-300 flex items-center gap-1 cursor-pointer"
                 >
                   <Eye className="w-3.5 h-3.5" />
                   <span>Perbesar Foto</span>
@@ -1752,15 +2023,15 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
             {lastCapturedPhoto ? (
               <div
                 onClick={() => setIsPhotoZoomModalOpen(true)}
-                className="group relative rounded-xl overflow-hidden border border-emerald-500/40 bg-slate-950 cursor-pointer"
+                className="group relative rounded-xl overflow-hidden border border-amber-500/40 bg-slate-950 cursor-pointer"
               >
                 <img
                   src={lastCapturedPhoto}
                   alt="Bukti Foto Absen Wajah & GPS"
                   className="w-full h-40 object-cover group-hover:scale-[1.02] transition-transform"
                 />
-                <div className="absolute top-2 right-2 bg-slate-950/85 backdrop-blur-xs px-2.5 py-1 rounded-lg text-[10px] font-bold text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
-                  <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                <div className="absolute top-2 right-2 bg-slate-950/85 backdrop-blur-xs px-2.5 py-1 rounded-lg text-[10px] font-bold text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3 text-amber-400" />
                   <span>Bukti Foto {lastCapturedType} Tersimpan</span>
                 </div>
               </div>
@@ -1771,8 +2042,7 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
                   Belum Ada Jepretan Foto Absen Hari Ini
                 </p>
                 <p className="text-[10px] text-slate-400 mt-0.5">
-                  Pastikan Anda berada maksimal <strong>25 meter</strong> dari titik koordinat kantor (
-                  {OFFICE_REFERENCE_COORDS.latitude}, {OFFICE_REFERENCE_COORDS.longitude}) tanpa Fake GPS untuk memotret wajah & absen.
+                  Pastikan Anda berada di dalam radius cabang aktif (terdekat: <strong>{primaryBranch.name}</strong> — maks <strong>{activeMaxRadiusMeters}m</strong>) tanpa Fake GPS untuk memotret wajah &amp; absen.
                 </p>
               </div>
             )}
@@ -1787,7 +2057,7 @@ export const LiveFaceGpsAttendanceScanner: React.FC<LiveFaceGpsAttendanceScanner
             <div className="px-5 py-3.5 border-b border-slate-800 flex items-center justify-between">
               <div>
                 <h4 className="text-sm font-bold text-white flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                  <CheckCircle2 className="w-4 h-4 text-amber-400" />
                   <span>Bukti Foto Wajah Presensi + Watermark Jam & Lokasi GPS HP</span>
                 </h4>
                 <p className="text-xs text-slate-400">

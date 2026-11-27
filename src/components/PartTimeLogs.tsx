@@ -663,7 +663,7 @@ export const PartTimeLogs: React.FC<PartTimeLogsProps> = ({
     <div className="space-y-5">
       {Boolean(toastMessage) && (
         <div className="fixed top-5 right-5 z-50 bg-slate-900 text-white px-4 py-3 rounded-xl shadow-2xl flex items-center gap-2.5 border border-slate-700">
-          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" />
           <span className="text-xs font-medium">{toastMessage}</span>
           <button
             type="button"
@@ -1069,11 +1069,11 @@ export const PartTimeLogs: React.FC<PartTimeLogsProps> = ({
               {formatRupiah(summaryStats.unpaidGross)}
             </span>
           </div>
-          <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200">
-            <span className="text-[10px] font-bold text-emerald-800 uppercase block">
+          <div className="p-3 rounded-xl bg-amber-50 border border-amber-200">
+            <span className="text-[10px] font-bold text-amber-800 uppercase block">
               Sudah Dibayar (Sunday Payout)
             </span>
-            <span className="text-base font-extrabold text-emerald-950">
+            <span className="text-base font-extrabold text-amber-950">
               {formatRupiah(summaryStats.paidGross)}
             </span>
           </div>
@@ -1119,7 +1119,7 @@ export const PartTimeLogs: React.FC<PartTimeLogsProps> = ({
                   <tr key={log.id} className="hover:bg-slate-50/80 transition-colors">
                     <td className="py-3 px-4 font-mono font-semibold text-slate-800 whitespace-nowrap">
                       {formatIndoDate(log.date)}
-                      <span className="block text-[10px] text-emerald-700 font-bold">
+                      <span className="block text-[10px] text-amber-700 font-bold">
                         {Boolean(log.clockIn || log.clock_in)
                           ? `${log.clockIn || log.clock_in} – ${log.clockOut || log.clock_out || 'Aktif'} WIB`
                           : log.date}
@@ -1166,7 +1166,7 @@ export const PartTimeLogs: React.FC<PartTimeLogsProps> = ({
                       <span
                         className={`inline-block px-2 py-0.5 rounded text-[9px] font-bold uppercase mb-0.5 ${
                           log.source === 'portal' || log.source === 'attendance_sync'
-                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            ? 'bg-amber-50 text-amber-700 border border-amber-200'
                             : 'bg-slate-100 text-slate-700'
                         }`}
                       >
@@ -1179,8 +1179,8 @@ export const PartTimeLogs: React.FC<PartTimeLogsProps> = ({
                     <td className="py-3 px-4 text-center">
                       {log.status === 'Paid' ? (
                         <div className="flex flex-col items-center gap-1">
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 text-[10px] font-bold">
-                            <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-300 text-[10px] font-bold">
+                            <CheckCircle2 className="w-3 h-3 text-amber-600" />
                             <span>Paid (Sunday Payout)</span>
                           </span>
                           {Boolean(onResetLogPaid) && (

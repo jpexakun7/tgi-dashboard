@@ -56,7 +56,7 @@ const SIGNATORY_SECTIONS: {
     defaultPlaceholderName: 'Ketik Nama Penandatangan HR...',
     defaultPlaceholderRole: 'HR Department',
     defaultPlaceholderSubtitle: 'Staff HR & Payroll Admin',
-    colorClass: 'border-emerald-200 bg-emerald-50/40',
+    colorClass: 'border-amber-200 bg-amber-50/40',
   },
   {
     key: 'verifiedBy',
@@ -329,7 +329,7 @@ export const SignatoryConfigModal: React.FC<SignatoryConfigModalProps> = ({
         {/* Top Modal Header */}
         <div className="flex items-center justify-between gap-3 px-6 py-4 bg-slate-900 text-white">
           <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+            <div className="p-2.5 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
               <PenTool className="w-5 h-5" />
             </div>
             <div>
@@ -352,15 +352,15 @@ export const SignatoryConfigModal: React.FC<SignatoryConfigModalProps> = ({
 
         <form onSubmit={handleSaveAndApply} className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-5 text-xs">
           {statusMessage && (
-            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-900 font-semibold flex items-center justify-between gap-2">
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 font-semibold flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                <Check className="w-4 h-4 text-amber-600 shrink-0" />
                 <span>{statusMessage}</span>
               </div>
               <button
                 type="button"
                 onClick={() => setStatusMessage(null)}
-                className="text-emerald-700 hover:text-emerald-950 font-bold cursor-pointer"
+                className="text-amber-700 hover:text-amber-950 font-bold cursor-pointer"
               >
                 ✕
               </button>
@@ -371,7 +371,7 @@ export const SignatoryConfigModal: React.FC<SignatoryConfigModalProps> = ({
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 p-4 bg-slate-50 rounded-2xl border border-slate-200">
             <div>
               <label className="block font-bold text-slate-700 mb-1 flex items-center gap-1.5">
-                <MapPin className="w-3.5 h-3.5 text-emerald-600" />
+                <MapPin className="w-3.5 h-3.5 text-amber-600" />
                 <span>Kota Pengesahan Dokumen</span>
               </label>
               <input
@@ -379,7 +379,7 @@ export const SignatoryConfigModal: React.FC<SignatoryConfigModalProps> = ({
                 value={formState.city}
                 onChange={(e) => setFormState({ ...formState, city: e.target.value })}
                 placeholder="Contoh: Jakarta"
-                className="w-full p-2.5 bg-white border border-slate-300 rounded-xl font-semibold text-slate-900 focus:border-emerald-500 focus:outline-hidden"
+                className="w-full p-2.5 bg-white border border-slate-300 rounded-xl font-semibold text-slate-900 focus:border-amber-500 focus:outline-hidden"
               />
               <span className="text-[10px] text-slate-500 mt-1 block">
                 Ditampilkan di atas tanda tangan PDF (misal: Jakarta, 28 Oktober 2026)
@@ -400,7 +400,7 @@ export const SignatoryConfigModal: React.FC<SignatoryConfigModalProps> = ({
                   month: 'long',
                   year: 'numeric',
                 })}
-                className="w-full p-2.5 bg-white border border-slate-300 rounded-xl font-semibold text-slate-900 focus:border-emerald-500 focus:outline-hidden"
+                className="w-full p-2.5 bg-white border border-slate-300 rounded-xl font-semibold text-slate-900 focus:border-amber-500 focus:outline-hidden"
               />
               <span className="text-[10px] text-slate-500 mt-1 block">
                 Kosongkan untuk otomatis mengikuti tanggal cetak hari ini
@@ -412,7 +412,7 @@ export const SignatoryConfigModal: React.FC<SignatoryConfigModalProps> = ({
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <span className="font-bold text-slate-800 flex items-center gap-1.5">
-                    <Stamp className="w-3.5 h-3.5 text-emerald-600" />
+                    <Stamp className="w-3.5 h-3.5 text-amber-600" />
                     <span>Stempel Resmi Perusahaan</span>
                   </span>
                   <span className="text-[10px] text-slate-500 block mt-0.5">
@@ -429,7 +429,7 @@ export const SignatoryConfigModal: React.FC<SignatoryConfigModalProps> = ({
               </div>
 
               <div className="flex flex-wrap items-center gap-1.5 mt-2.5">
-                <label className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-[11px] inline-flex items-center gap-1 cursor-pointer transition-colors">
+                <label className="px-2.5 py-1.5 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold rounded-lg font-bold text-[11px] inline-flex items-center gap-1 cursor-pointer transition-colors">
                   <Upload className="w-3 h-3" />
                   <span>Unggah Stempel</span>
                   <input
@@ -537,7 +537,7 @@ export const SignatoryConfigModal: React.FC<SignatoryConfigModalProps> = ({
                           updateSignatoryField(sec.key, { headerLabel: e.target.value })
                         }
                         placeholder="Disiapkan Oleh,"
-                        className="w-full p-2 bg-white border border-slate-300 rounded-xl font-semibold text-slate-800 focus:border-emerald-500 focus:outline-hidden"
+                        className="w-full p-2 bg-white border border-slate-300 rounded-xl font-semibold text-slate-800 focus:border-amber-500 focus:outline-hidden"
                       />
                     </div>
 
@@ -553,7 +553,7 @@ export const SignatoryConfigModal: React.FC<SignatoryConfigModalProps> = ({
                           updateSignatoryField(sec.key, { topSubtitle: e.target.value })
                         }
                         placeholder={sec.defaultPlaceholderSubtitle}
-                        className="w-full p-2 bg-white border border-slate-300 rounded-xl font-medium text-slate-800 focus:border-emerald-500 focus:outline-hidden"
+                        className="w-full p-2 bg-white border border-slate-300 rounded-xl font-medium text-slate-800 focus:border-amber-500 focus:outline-hidden"
                       />
                     </div>
 
@@ -569,7 +569,7 @@ export const SignatoryConfigModal: React.FC<SignatoryConfigModalProps> = ({
                           updateSignatoryField(sec.key, { name: e.target.value })
                         }
                         placeholder={sec.defaultPlaceholderName}
-                        className="w-full p-2.5 bg-white border-2 border-slate-300 rounded-xl font-extrabold text-slate-900 focus:border-emerald-600 focus:outline-hidden"
+                        className="w-full p-2.5 bg-white border-2 border-slate-300 rounded-xl font-extrabold text-slate-900 focus:border-amber-600 focus:outline-hidden"
                       />
                     </div>
 
@@ -586,7 +586,7 @@ export const SignatoryConfigModal: React.FC<SignatoryConfigModalProps> = ({
                           updateSignatoryField(sec.key, { jobTitle: e.target.value })
                         }
                         placeholder={sec.defaultPlaceholderRole}
-                        className="w-full p-2 bg-white border border-slate-300 rounded-xl font-semibold text-slate-700 focus:border-emerald-500 focus:outline-hidden"
+                        className="w-full p-2 bg-white border border-slate-300 rounded-xl font-semibold text-slate-700 focus:border-amber-500 focus:outline-hidden"
                       />
                     </div>
                   </div>
@@ -656,7 +656,7 @@ export const SignatoryConfigModal: React.FC<SignatoryConfigModalProps> = ({
                         onClick={() => openDrawPad(sec.key)}
                         className="px-2.5 py-1.5 bg-white hover:bg-slate-100 text-slate-800 border border-slate-300 rounded-lg font-bold text-[10px] inline-flex items-center gap-1 cursor-pointer transition-colors"
                       >
-                        <PenTool className="w-3 h-3 text-emerald-600" />
+                        <PenTool className="w-3 h-3 text-amber-600" />
                         <span>Gores TTD</span>
                       </button>
 
@@ -669,10 +669,10 @@ export const SignatoryConfigModal: React.FC<SignatoryConfigModalProps> = ({
                           updateSignatoryField(sec.key, { signatureDataUrl: sigUrl });
                           showTempMessage(`TTD digital otomatis dibuat untuk ${item.name}`);
                         }}
-                        className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-lg font-bold text-[10px] inline-flex items-center gap-1 cursor-pointer transition-colors"
+                        className="px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg font-bold text-[10px] inline-flex items-center gap-1 cursor-pointer transition-colors"
                         title="Buat tanda tangan digital kaligrafi otomatis dari nama"
                       >
-                        <Sparkles className="w-3 h-3 text-emerald-600" />
+                        <Sparkles className="w-3 h-3 text-amber-600" />
                         <span>TTD Otomatis</span>
                       </button>
 
@@ -718,7 +718,7 @@ export const SignatoryConfigModal: React.FC<SignatoryConfigModalProps> = ({
                               updateSignatoryField(sec.key, { showStamp: checked });
                             }
                           }}
-                          className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                          className="rounded border-slate-300 text-amber-600 focus:ring-amber-500"
                         />
                         <span className="text-[11px] font-semibold text-slate-700">
                           Tampilkan Stempel di Kolom Ini
@@ -799,7 +799,7 @@ export const SignatoryConfigModal: React.FC<SignatoryConfigModalProps> = ({
                     <button
                       type="button"
                       onClick={saveCanvasSignature}
-                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs cursor-pointer flex items-center gap-1.5"
+                      className="px-4 py-2 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold rounded-xl font-bold text-xs cursor-pointer flex items-center gap-1.5"
                     >
                       <Check className="w-3.5 h-3.5" />
                       <span>Pakai Tanda Tangan Ini</span>
@@ -811,7 +811,7 @@ export const SignatoryConfigModal: React.FC<SignatoryConfigModalProps> = ({
           )}
 
           {/* Opsi Tambahan untuk Slip Gaji Individual */}
-          <div className="p-3.5 bg-emerald-50/70 border border-emerald-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="p-3.5 bg-amber-50/70 border border-amber-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <label className="inline-flex items-center gap-2.5 cursor-pointer select-none">
               <input
                 type="checkbox"
@@ -819,13 +819,13 @@ export const SignatoryConfigModal: React.FC<SignatoryConfigModalProps> = ({
                 onChange={(e) =>
                   setFormState({ ...formState, showAllThreeOnPayslip: e.target.checked })
                 }
-                className="rounded border-emerald-300 text-emerald-600 focus:ring-emerald-500 w-4 h-4"
+                className="rounded border-amber-300 text-amber-600 focus:ring-amber-500 w-4 h-4"
               />
               <div>
-                <span className="font-bold text-emerald-950 block">
+                <span className="font-bold text-amber-950 block">
                   Terapkan juga Pejabat Penandatangan &amp; Stempel pada Slip Gaji Individual Karyawan
                 </span>
-                <span className="text-[11px] text-emerald-800">
+                <span className="text-[11px] text-amber-800">
                   Menampilkan tanda tangan HRD, Verifikasi Finance, dan Persetujuan Direktur Utama beserta stempel resmi pada setiap Slip Gaji.
                 </span>
               </div>
@@ -894,7 +894,7 @@ export const SignatoryConfigModal: React.FC<SignatoryConfigModalProps> = ({
               </button>
               <button
                 type="submit"
-                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs sm:text-sm inline-flex items-center gap-2 shadow-md shadow-emerald-600/20 cursor-pointer transition-colors"
+                className="px-5 py-2.5 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold rounded-xl font-bold text-xs sm:text-sm inline-flex items-center gap-2 shadow-md shadow-amber-600/20 cursor-pointer transition-colors"
               >
                 <Save className="w-4 h-4" />
                 <span>Simpan Konfigurasi Penandatangan</span>

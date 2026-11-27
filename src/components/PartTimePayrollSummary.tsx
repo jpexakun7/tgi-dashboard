@@ -1233,7 +1233,7 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
     <div className="space-y-6">
       {Boolean(toastMessage) && (
         <div className="fixed top-5 right-5 z-50 bg-slate-900 text-white px-4 py-3 rounded-xl shadow-2xl flex items-center gap-3 border border-slate-700">
-          <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+          <CheckCircle2 className="w-5 h-5 text-amber-400 shrink-0" />
           <span className="text-xs font-medium">{toastMessage}</span>
           <button
             type="button"
@@ -1294,7 +1294,7 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
                 type="button"
                 disabled={isBulkPaying}
                 onClick={handleBulkMarkPaid}
-                className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white text-xs font-extrabold shadow-lg shadow-emerald-600/30 flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold text-xs font-extrabold shadow-lg shadow-amber-600/30 flex items-center gap-2 cursor-pointer disabled:opacity-50"
               >
                 <CheckCircle2 className="w-4 h-4" />
                 <span>
@@ -1359,23 +1359,23 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
                   ✓ Siklus Mingguan Utuh Lintas Cut-Off Tgl 25/26 (Senin–Sabtu Menyatu)
                 </span>
               )}
-              <div className="inline-flex flex-wrap items-center gap-2 px-3.5 py-1.5 rounded-xl bg-emerald-500/20 border border-emerald-400/40 text-emerald-100 text-xs font-bold">
-                <Wallet className="w-4 h-4 text-emerald-400 shrink-0" />
+              <div className="inline-flex flex-wrap items-center gap-2 px-3.5 py-1.5 rounded-xl bg-amber-500/20 border border-amber-400/40 text-amber-100 text-xs font-bold">
+                <Wallet className="w-4 h-4 text-amber-400 shrink-0" />
                 <span>Tanggal Rencana Pencairan (Flexible Payout):</span>
                 <input
                   type="date"
                   value={plannedPayoutDate}
                   onChange={(e) => handleChangePlannedPayoutDate(e.target.value)}
-                  className="px-2.5 py-1 rounded-lg bg-slate-900/90 border border-emerald-400/60 text-emerald-200 text-xs font-extrabold focus:outline-none focus:ring-2 focus:ring-emerald-400 cursor-pointer"
+                  className="px-2.5 py-1 rounded-lg bg-slate-900/90 border border-amber-400/60 text-amber-200 text-xs font-extrabold focus:outline-none focus:ring-2 focus:ring-amber-400 cursor-pointer"
                   title="Ubah manual Tanggal Rencana Pencairan gaji Part-Time kapan saja"
                 />
-                <span className="text-[11px] text-emerald-300 font-semibold">
+                <span className="text-[11px] text-amber-300 font-semibold">
                   ({formatIndoDate(plannedPayoutDate)})
                 </span>
                 <button
                   type="button"
                   onClick={() => handleChangePlannedPayoutDate(getJakartaDateString())}
-                  className="px-2 py-0.5 rounded-md bg-emerald-500/30 hover:bg-emerald-500/50 border border-emerald-300/40 text-[10px] font-extrabold text-white cursor-pointer"
+                  className="px-2 py-0.5 rounded-md bg-amber-500/30 hover:bg-amber-500/50 border border-amber-300/40 text-[10px] font-extrabold text-white cursor-pointer"
                   title="Set Tanggal Rencana Pencairan ke Hari Ini"
                 >
                   Hari Ini
@@ -1465,19 +1465,19 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
           </p>
         </div>
 
-        <div className="bg-white p-4 rounded-2xl border border-emerald-200 shadow-xs">
+        <div className="bg-white p-4 rounded-2xl border border-amber-200 shadow-xs">
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold text-emerald-800 uppercase">
+            <span className="text-[11px] font-bold text-amber-800 uppercase">
               Sudah Dibayar (Flexible Payout)
             </span>
-            <span className="p-2 rounded-xl bg-emerald-100 text-emerald-700">
+            <span className="p-2 rounded-xl bg-amber-100 text-amber-700">
               <CheckCircle2 className="w-4 h-4" />
             </span>
           </div>
-          <p className="text-2xl font-extrabold text-emerald-900 mt-2">
+          <p className="text-2xl font-extrabold text-amber-900 mt-2">
             {formatRupiah(aggregateTotals.totalPaid)}
           </p>
-          <p className="text-[11px] text-emerald-700 mt-0.5">
+          <p className="text-[11px] text-amber-700 mt-0.5">
             Tercatat di Laporan Pengeluaran Mingguan
           </p>
         </div>
@@ -1520,7 +1520,7 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
               : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-50'
           }`}
         >
-          <FileText className="w-4 h-4 text-emerald-400" />
+          <FileText className="w-4 h-4 text-amber-400" />
           <span>3. Laporan Pengeluaran Gaji Mingguan ({safePayouts.length})</span>
         </button>
       </div>
@@ -1538,7 +1538,7 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
                 <strong>
                   Total Gaji Kotor = (Jam Normal × hourly_rate) + (Jam Lembur × overtime_rate)
                 </strong>
-                . Jadwal rencana cair saat ini: <strong className="text-emerald-700">{formatIndoDate(plannedPayoutDate)}</strong> (bebas diubah kapan saja).
+                . Jadwal rencana cair saat ini: <strong className="text-amber-700">{formatIndoDate(plannedPayoutDate)}</strong> (bebas diubah kapan saja).
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2 shrink-0">
@@ -1610,7 +1610,7 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
 
                       <td className="py-3.5 px-4 text-center">
                         <div className="flex items-center justify-center gap-1.5 flex-wrap">
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-900 border border-emerald-200 font-bold text-[11px]">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-50 text-amber-900 border border-amber-200 font-bold text-[11px]">
                             Normal: {row.normalHoursWorked}j
                           </span>
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-indigo-50 text-indigo-900 border border-indigo-200 font-bold text-[11px]">
@@ -1667,8 +1667,8 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
 
                       <td className="py-3.5 px-4 text-center">
                         {row.isFullyPaid ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 text-[10px] font-bold">
-                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-300 text-[10px] font-bold">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-amber-600" />
                             <span>Paid (Flexible Payout)</span>
                           </span>
                         ) : row.totalHoursWorked === 0 ? (
@@ -1710,7 +1710,7 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
                             </div>
                           ) : row.isFullyPaid ? (
                             <div className="inline-flex items-center gap-1.5 flex-wrap justify-center">
-                              <span className="text-[11px] font-bold text-emerald-700 px-1.5">
+                              <span className="text-[11px] font-bold text-amber-700 px-1.5">
                                 ✓ Lunas Minggu Ini
                               </span>
                               <button
@@ -1738,7 +1738,7 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
                               type="button"
                               disabled={isProcessing}
                               onClick={() => handleMarkEmployeePaid(row)}
-                              className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold shadow-xs flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                              className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold text-[11px] font-bold shadow-xs flex items-center gap-1 cursor-pointer disabled:opacity-50"
                               title="Tandai Sudah Dibayar (Sunday Payout) & Masuk Laporan Pengeluaran Mingguan"
                             >
                               <Check className="w-3.5 h-3.5" />
@@ -1871,7 +1871,7 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
                 Rekam jejak seluruh pencairan gaji mingguan karyawan Part-Time beserta Tanggal Aktual Pembayaran yang telah ditandai <strong>Paid</strong>.
               </p>
             </div>
-            <div className="px-3.5 py-1.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-extrabold">
+            <div className="px-3.5 py-1.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs font-extrabold">
               Total Pengeluaran Tercatat:{' '}
               {formatRupiah(
                 safePayouts.reduce((sum, p) => sum + (Number(p.grossPay) || 0), 0)
@@ -1931,7 +1931,7 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
                         </span>
                       )}
                     </td>
-                    <td className="py-3 px-4 text-right font-mono font-extrabold text-emerald-700">
+                    <td className="py-3 px-4 text-right font-mono font-extrabold text-amber-700">
                       {formatRupiah(Number(p.grossPay ?? p.grossSalary ?? p.gross_pay) || 0)}
                     </td>
                     <td className="py-3 px-4 text-slate-700">
@@ -1941,8 +1941,8 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
                       </span>
                     </td>
                     <td className="py-3 px-4 text-center">
-                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 text-[10px] font-bold">
-                        <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300 text-[10px] font-bold">
+                        <CheckCircle2 className="w-3 h-3 text-amber-600" />
                         <span>Paid</span>
                       </span>
                     </td>
@@ -1976,7 +1976,7 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
             <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4">
               <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
                 <div className="flex items-center gap-2.5">
-                  <div className="p-2.5 rounded-xl bg-emerald-100 text-emerald-700">
+                  <div className="p-2.5 rounded-xl bg-amber-100 text-amber-700">
                     <Wallet className="w-5 h-5" />
                   </div>
                   <div>
@@ -1999,7 +1999,7 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
                 </button>
               </div>
 
-              <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 space-y-1">
+              <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 space-y-1">
                 {payoutConfirmModal.mode === 'single' && payoutConfirmModal.row ? (
                   <>
                     <div className="flex items-center justify-between text-xs">
@@ -2024,9 +2024,9 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
                     </span>
                   </div>
                 )}
-                <div className="flex items-center justify-between text-xs pt-1 border-t border-emerald-200/70">
-                  <span className="text-emerald-900 font-bold">Total Nominal Dicairkan:</span>
-                  <span className="font-mono text-sm font-extrabold text-emerald-800">
+                <div className="flex items-center justify-between text-xs pt-1 border-t border-amber-200/70">
+                  <span className="text-amber-900 font-bold">Total Nominal Dicairkan:</span>
+                  <span className="font-mono text-sm font-extrabold text-amber-800">
                     {formatRupiah(totalAmountToPay)}
                   </span>
                 </div>
@@ -2045,7 +2045,7 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
                         prev ? { ...prev, actualPayoutDate: e.target.value } : null
                       )
                     }
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-slate-900 font-bold text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-slate-900 font-bold text-xs focus:outline-none focus:ring-2 focus:ring-amber-500"
                   />
                   <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
                     <button
@@ -2091,7 +2091,7 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
                           : null
                       )
                     }
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-slate-900 font-semibold text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-slate-900 font-semibold text-xs focus:outline-none focus:ring-2 focus:ring-amber-500"
                   >
                     <option value="Transfer Bank">Transfer Bank</option>
                     <option value="Tunai / Kas Operasional">Tunai / Kas Operasional</option>
@@ -2111,7 +2111,7 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
                       )
                     }
                     placeholder="Contoh: Pencairan gaji mingguan Part-Time"
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-slate-800 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-slate-800 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500"
                   />
                 </div>
               </div>
@@ -2144,7 +2144,7 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
                       );
                     }
                   }}
-                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold shadow-md flex items-center gap-1.5 cursor-pointer"
+                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold text-xs font-extrabold shadow-md flex items-center gap-1.5 cursor-pointer"
                 >
                   <CheckCircle2 className="w-4 h-4" />
                   <span>Simpan &amp; Tandai Sudah Dibayar</span>
@@ -2351,7 +2351,7 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
                                   </span>
                                 )}
                               </td>
-                              <td className="py-2 px-3 text-center font-bold text-emerald-800">
+                              <td className="py-2 px-3 text-center font-bold text-amber-800">
                                 {normH} Jam
                               </td>
                               <td className="py-2 px-3 text-center font-bold text-indigo-800">
@@ -2398,35 +2398,35 @@ export const PartTimePayrollSummary: React.FC<PartTimePayrollSummaryProps> = ({
                     </div>
                   )}
                   {viewingSlipRow.bonusPay > 0 && (
-                    <div className="flex items-start justify-between text-xs text-emerald-800 pt-1 border-t border-orange-200/60">
+                    <div className="flex items-start justify-between text-xs text-amber-800 pt-1 border-t border-orange-200/60">
                       <div>
                         <span className="font-bold block">
                           Bonus Tambahan / Apresiasi
                         </span>
                         {Boolean(viewingSlipRow.bonusNotes) && (
-                          <span className="text-[10px] text-emerald-700 block">
+                          <span className="text-[10px] text-amber-700 block">
                             Catatan: {viewingSlipRow.bonusNotes}
                           </span>
                         )}
                       </div>
-                      <span className="font-mono font-bold text-emerald-700">
+                      <span className="font-mono font-bold text-amber-700">
                         +{formatRupiah(viewingSlipRow.bonusPay)}
                       </span>
                     </div>
                   )}
                   {viewingSlipRow.thrShowInPayslip && viewingSlipRow.thrPay > 0 && (
-                    <div className="flex items-start justify-between text-xs text-emerald-900 pt-1 border-t border-orange-200/60">
+                    <div className="flex items-start justify-between text-xs text-amber-900 pt-1 border-t border-orange-200/60">
                       <div>
                         <span className="font-extrabold block">
                           Tunjangan Hari Raya (THR)
                         </span>
                         {Boolean(viewingSlipRow.thrNotes) && (
-                          <span className="text-[10px] text-emerald-700 block">
+                          <span className="text-[10px] text-amber-700 block">
                             {viewingSlipRow.thrNotes}
                           </span>
                         )}
                       </div>
-                      <span className="font-mono font-extrabold text-emerald-700">
+                      <span className="font-mono font-extrabold text-amber-700">
                         +{formatRupiah(viewingSlipRow.thrPay)}
                       </span>
                     </div>

@@ -518,7 +518,7 @@ export const PayrollDeductionPanel: React.FC<PayrollDeductionPanelProps> = ({
               Kelola potongan kehadiran manual (<strong className="text-white">Tanpa Keterangan</strong>
               , <strong className="text-white">Izin Jam/Menit</strong>,{' '}
               <strong className="text-white">Izin Hari</strong>), integrasi otomatis{' '}
-              <strong className="text-teal-300">Sakit (Disetujui)</strong>, serta skema{' '}
+              <strong className="text-amber-300">Sakit (Disetujui)</strong>, serta skema{' '}
               <strong className="text-amber-300">3 Tahap Kasbon</strong> (Sisa Bulan Lalu &rarr;
               Cicilan Bulan Ini &rarr; Sisa Bulan Depan).
             </p>
@@ -575,13 +575,13 @@ export const PayrollDeductionPanel: React.FC<PayrollDeductionPanelProps> = ({
         <div
           className={`p-4 rounded-xl border flex items-center justify-between gap-3 shadow-xs ${
             toastMessage?.type === 'success'
-              ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+              ? 'bg-amber-50 border-amber-200 text-amber-900'
               : 'bg-rose-50 border-rose-200 text-rose-900'
           }`}
         >
           <div className="flex items-center gap-2.5 text-xs sm:text-sm font-semibold">
             {toastMessage?.type === 'success' ? (
-              <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+              <CheckCircle2 className="w-5 h-5 text-amber-600 shrink-0" />
             ) : (
               <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0" />
             )}
@@ -953,22 +953,22 @@ export const PayrollDeductionPanel: React.FC<PayrollDeductionPanelProps> = ({
               </div>
 
               {/* Info Integrasi Otomatis Baris "Sakit" dari Panel Cuti & Izin */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-4 py-3 rounded-xl bg-teal-50/90 border border-teal-200 text-xs">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-4 py-3 rounded-xl bg-amber-50/90 border border-amber-200 text-xs">
                 <div className="flex items-center gap-2.5">
-                  <HeartPulse className="w-4 h-4 text-teal-600 shrink-0" />
+                  <HeartPulse className="w-4 h-4 text-amber-600 shrink-0" />
                   <div>
-                    <span className="font-bold text-teal-950">
+                    <span className="font-bold text-amber-950">
                       Baris &ldquo;Sakit&rdquo; (Otomatis Terhubung dari Panel Cuti &amp; Izin —
                       Approved):
                     </span>{' '}
-                    <span className="text-teal-800">
+                    <span className="text-amber-800">
                       {selectedEmployee
                         ? `Tercatat × ${selectedEmployeeSickSummary.sickDays} Hari Sakit yang disetujui pada periode ini.`
                         : 'Pilih karyawan untuk melihat jumlah hari Sakit yang disetujui.'}
                     </span>
                   </div>
                 </div>
-                <span className="font-mono font-bold text-teal-900 shrink-0">
+                <span className="font-mono font-bold text-amber-900 shrink-0">
                   Potongan: {formatRupiah(selectedEmployeeSickSummary.sickDeductionTotal)}
                 </span>
               </div>
@@ -1100,7 +1100,7 @@ export const PayrollDeductionPanel: React.FC<PayrollDeductionPanelProps> = ({
                   <label className="block text-xs font-bold text-indigo-100 mb-1.5">
                     Sisa Kasbon Bulan Depan (Rp)
                   </label>
-                  <div className="px-3 py-2 rounded-lg bg-white/10 border border-white/15 font-mono text-base font-black text-emerald-300 flex items-center justify-between">
+                  <div className="px-3 py-2 rounded-lg bg-white/10 border border-white/15 font-mono text-base font-black text-amber-300 flex items-center justify-between">
                     <span>{formatRupiah(sisaKasbonDepanOtomatis)}</span>
                     <ArrowRight className="w-4 h-4 text-indigo-300" />
                   </div>
@@ -1408,7 +1408,7 @@ export const PayrollDeductionPanel: React.FC<PayrollDeductionPanelProps> = ({
               }}
               className="w-full py-2.5 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold flex items-center justify-center gap-2 transition-colors cursor-pointer"
             >
-              <FileText className="w-4 h-4 text-emerald-400" />
+              <FileText className="w-4 h-4 text-amber-400" />
               <span>Buka Slip Gaji Resmi {selectedEmployee?.fullName}</span>
             </button>
           )}
@@ -1537,7 +1537,7 @@ export const PayrollDeductionPanel: React.FC<PayrollDeductionPanelProps> = ({
                         </p>
                       </td>
                       <td className="py-3 px-4 text-center">
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-teal-50 text-teal-800 border border-teal-200">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-800 border border-amber-200">
                           × {sickInfo.sickDays} Hari
                         </span>
                       </td>
@@ -1569,7 +1569,7 @@ export const PayrollDeductionPanel: React.FC<PayrollDeductionPanelProps> = ({
                                   onOpenPayslipByEmployeeId(empObj.id);
                                 }
                               }}
-                              className="p-1.5 rounded-lg text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 transition-colors cursor-pointer"
+                              className="p-1.5 rounded-lg text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 transition-colors cursor-pointer"
                               title="Lihat Slip Gaji"
                             >
                               <FileText className="w-3.5 h-3.5" />

@@ -115,9 +115,9 @@ export function CashAdvanceView({
     return employees.find((e) => e.id === newEmployeeId);
   }, [employees, newEmployeeId]);
 
-  // Max plafon for selected employee (100% Gaji Pokok)
-  const maxPlafon = selectedEmpForNew ? selectedEmpForNew.baseSalary : 0;
-  const calculatedMonthly = Math.round(newAmount / newTenor);
+  // Max plafon for admin manual recording (Admin bebas mencatat kapan saja tanpa terkunci tanggal 15-23)
+  const maxPlafon = selectedEmpForNew ? Math.max(500000, selectedEmpForNew.baseSalary) : 500000;
+  const calculatedMonthly = Number((newAmount / newTenor).toFixed(2));
 
   // Calculate Metrics
   const metrics = useMemo(() => {
@@ -211,8 +211,8 @@ export function CashAdvanceView({
       case 'paid':
         return {
           label: 'Lunas',
-          badgeClass: 'bg-emerald-100 text-emerald-800 border-emerald-200',
-          dotClass: 'bg-emerald-500',
+          badgeClass: 'bg-amber-100 text-amber-800 border-amber-200',
+          dotClass: 'bg-amber-500',
         };
       case 'rejected':
         return {
@@ -312,11 +312,11 @@ export function CashAdvanceView({
         department: selectedEmpForNew.department,
         position: selectedEmpForNew.role,
         baseSalary: selectedEmpForNew.baseSalary,
-        maxAllowedAmount: selectedEmpForNew.baseSalary,
-        amount: newAmount,
+        maxAllowedAmount: maxPlafon,
+        amount: Number(newAmount),
         reason: newReason.trim(),
         tenorMonths: newTenor,
-        monthlyInstallment: Math.round(newAmount / newTenor),
+        monthlyInstallment: Number((Number(newAmount) / newTenor).toFixed(2)),
       });
     }
 
@@ -360,14 +360,28 @@ export function CashAdvanceView({
           <button
             onClick={() => {
               setNewEmployeeId(employees[0]?.id || '');
+              setNewAmount(500000);
               setIsCreateModalOpen(true);
             }}
-            className="inline-flex items-center gap-2 px-4 py-2 text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white rounded-xl shadow-xs transition-all cursor-pointer"
+            className="inline-flex items-center gap-2 px-4 py-2 text-xs font-bold bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 rounded-xl shadow-xs transition-all cursor-pointer"
           >
             <Plus className="w-4 h-4" />
-            Input Kasbon Karyawan
+            Input Kasbon Karyawan (Manual Admin)
           </button>
         </div>
+      </div>
+
+      {/* Info Aturan Portal Karyawan vs Akses Penuh Admin */}
+      <div className="p-3.5 rounded-2xl bg-neutral-900 border border-amber-500/35 text-xs text-amber-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div className="flex items-center gap-2.5">
+          <CalendarCheck className="w-4 h-4 text-amber-400 shrink-0" />
+          <span>
+            <strong>Aturan Portal Karyawan:</strong> Pengajuan Kasbon mandiri dibuka setiap <strong>tanggal 15 s/d 23</strong> dengan plafon maksimal <strong>Rp 500.000</strong>.
+          </span>
+        </div>
+        <span className="px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[11px] font-bold shrink-0">
+          Panel Admin: Bebas Input Manual Kapan Saja
+        </span>
       </div>
 
       {/* Banner Cepat Kirim Notifikasi WA ke Karyawan setelah Setujui / Tolak / Cairkan */}
@@ -376,7 +390,7 @@ export function CashAdvanceView({
           className={`p-4 rounded-2xl border shadow-sm flex flex-col gap-3 animate-in fade-in ${
             waQuickPrompt.status === 'rejected'
               ? 'bg-rose-50/90 border-rose-300'
-              : 'bg-emerald-50/90 border-emerald-300'
+              : 'bg-amber-50/90 border-amber-300'
           }`}
         >
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -385,7 +399,7 @@ export function CashAdvanceView({
                 className={`p-2 rounded-xl shrink-0 ${
                   waQuickPrompt.status === 'rejected'
                     ? 'bg-rose-600 text-white'
-                    : 'bg-emerald-600 text-white'
+                    : 'bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 font-bold'
                 }`}
               >
                 <MessageCircle className="w-5 h-5" />
@@ -396,7 +410,7 @@ export function CashAdvanceView({
                   {formatRupiah(waQuickPrompt.advance.amount)}) telah{' '}
                   <span
                     className={
-                      waQuickPrompt.status === 'rejected' ? 'text-rose-700' : 'text-emerald-700'
+                      waQuickPrompt.status === 'rejected' ? 'text-rose-700' : 'text-amber-700'
                     }
                   >
                     {waQuickPrompt.status === 'approved'
@@ -434,7 +448,7 @@ export function CashAdvanceView({
               value={adminWaNote}
               onChange={(e) => setAdminWaNote(e.target.value)}
               placeholder="Catatan admin / finance untuk disertakan di pesan WhatsApp..."
-              className="flex-1 px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-800 focus:outline-hidden focus:border-emerald-600"
+              className="flex-1 px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-800 focus:outline-hidden focus:border-amber-600"
             />
             <a
               href={getCashAdvanceStatusWhatsAppUrl(
@@ -446,7 +460,7 @@ export function CashAdvanceView({
               )}
               target="_blank"
               rel="noopener noreferrer"
-              className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl text-xs inline-flex items-center justify-center gap-1.5 shadow-sm shrink-0 transition-colors"
+              className="px-4 py-2 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold font-bold rounded-xl text-xs inline-flex items-center justify-center gap-1.5 shadow-sm shrink-0 transition-colors"
             >
               <MessageCircle className="w-4 h-4" />
               <span>Kirim Notifikasi WA ke Karyawan</span>
@@ -517,13 +531,13 @@ export function CashAdvanceView({
               Potongan Kasbon {companyConfig.currentPayrollPeriod}
             </span>
             <div className="mt-1">
-              <span className="text-xl font-black text-emerald-700">{formatRupiah(metrics.currentMonthInstallmentDue)}</span>
+              <span className="text-xl font-black text-amber-700">{formatRupiah(metrics.currentMonthInstallmentDue)}</span>
             </div>
-            <span className="text-[11px] text-emerald-600 font-medium mt-0.5 block">
+            <span className="text-[11px] text-amber-600 font-medium mt-0.5 block">
               Otomatis terpotong di payroll
             </span>
           </div>
-          <div className="p-3 bg-emerald-50 text-emerald-600 rounded-2xl border border-emerald-100">
+          <div className="p-3 bg-amber-50 text-amber-600 rounded-2xl border border-amber-100">
             <Receipt className="w-6 h-6" />
           </div>
         </div>
@@ -689,7 +703,7 @@ export function CashAdvanceView({
                         <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
                           <div
                             className={`h-full rounded-full transition-all duration-300 ${
-                              adv.status === 'paid' ? 'bg-emerald-600' : 'bg-indigo-600'
+                              adv.status === 'paid' ? 'bg-amber-600' : 'bg-indigo-600'
                             }`}
                             style={{ width: `${progressPct}%` }}
                           />
@@ -758,7 +772,7 @@ export function CashAdvanceView({
                                     emp,
                                   });
                                 }}
-                                className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold cursor-pointer transition-all flex items-center gap-1 shadow-xs"
+                                className="px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold text-xs font-bold cursor-pointer transition-all flex items-center gap-1 shadow-xs"
                               >
                                 <Check className="w-3.5 h-3.5" />
                                 <span>Setujui</span>
@@ -818,7 +832,7 @@ export function CashAdvanceView({
                               )}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="px-2.5 py-1.5 rounded-lg bg-green-600 hover:bg-green-700 text-white text-xs font-bold inline-flex items-center gap-1 shadow-2xs transition-colors"
+                              className="px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold text-xs font-bold inline-flex items-center gap-1 shadow-2xs transition-colors"
                               title={`Kirim Notifikasi WA Status Kasbon ke ${adv.employeeName}`}
                             >
                               <MessageCircle className="w-3.5 h-3.5" />
@@ -874,7 +888,7 @@ export function CashAdvanceView({
               </div>
               <div>
                 <span className="text-slate-500 block">Total Terbayar</span>
-                <span className="font-bold text-emerald-600">{formatRupiah(selectedAdvanceForSchedule.totalPaid)}</span>
+                <span className="font-bold text-amber-600">{formatRupiah(selectedAdvanceForSchedule.totalPaid)}</span>
               </div>
               <div>
                 <span className="text-slate-500 block">Sisa Pinjaman</span>
@@ -917,8 +931,8 @@ export function CashAdvanceView({
                         <td className="py-2.5 px-3 font-semibold text-slate-900">{formatRupiah(inst.amount)}</td>
                         <td className="py-2.5 px-3 text-right">
                           {inst.status === 'deducted' ? (
-                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-amber-600" />
                               Terpotong di Slip Gaji
                             </span>
                           ) : (

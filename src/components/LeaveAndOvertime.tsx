@@ -20,7 +20,7 @@ import {
   ExternalLink,
   AlertTriangle,
 } from 'lucide-react';
-import { Employee, LeaveRequest, OvertimeRequest } from '../types';
+import { Employee, LeaveRequest, OvertimeRequest, SundayWorkType } from '../types';
 import {
   formatIndoDate,
   formatRupiah,
@@ -35,6 +35,9 @@ import {
   calculateWorkingDaysBetweenDates,
   getEmployeeDailySalary,
   getEmployeeStandardDailyHours,
+  getEmployeeWorkDaysPerWeek,
+  isSundayDateString,
+  resolveSundayWorkType,
   isUnpaidLeaveType,
 } from '../utils/formatters';
 import {
@@ -55,6 +58,7 @@ interface LeaveAndOvertimeProps {
   onApproveOvertime: (id: string) => void;
   onRejectOvertime: (id: string) => void;
   onAddOvertime: (req: OvertimeRequest) => void;
+  onUpdateOvertimeWorkType?: (id: string, sundayWorkType: SundayWorkType) => void;
 }
 
 export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
@@ -67,6 +71,7 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
   onApproveOvertime,
   onRejectOvertime,
   onAddOvertime,
+  onUpdateOvertimeWorkType,
 }) => {
   const [activeSubTab, setActiveSubTab] = useState<'leave' | 'overtime'>('leave');
   const [isLeaveModalOpen, setIsLeaveModalOpen] = useState(false);
@@ -133,10 +138,15 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
   const [otStartTime, setOtStartTime] = useState<string>('17:30');
   const [otEndTime, setOtEndTime] = useState<string>('19:00');
   const [otTask, setOtTask] = useState('');
+  const [otSundayWorkType, setOtSundayWorkType] = useState<SundayWorkType>('overtime');
 
   const selectedOtEmployee = employees.find((e) => e.id === otEmpId);
   const selectedOtBreakdown = calculateOvertimeBreakdown(selectedOtEmployee, otMinutes);
-  const previewOvertimePay = selectedOtBreakdown.totalOvertimePay;
+  const isOtDateSunday = isSundayDateString(otDate);
+  const previewOvertimePay =
+    isOtDateSunday && otSundayWorkType === 'day_off_replacement'
+      ? 0
+      : selectedOtBreakdown.totalOvertimePay;
 
   const handleTimeRangeChange = (newStart: string, newEnd: string) => {
     setOtStartTime(newStart);
@@ -203,7 +213,12 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
     const emp = employees.find((e) => e.id === otEmpId);
     const validMinutes = Math.max(1, Math.min(720, Math.round(Number(otMinutes) || 0)));
     const ratePerMinute = Math.max(0, getOvertimeRatePerMinute(emp, 1.5));
-    const calculatedPay = Math.max(0, calculateOvertimePayByMinutes(emp, validMinutes, 1.5));
+    const isSundayOt = isSundayDateString(otDate);
+    const effectiveSundayType: SundayWorkType = isSundayOt ? otSundayWorkType : 'overtime';
+    const calculatedPay =
+      effectiveSundayType === 'day_off_replacement'
+        ? 0
+        : Math.max(0, calculateOvertimePayByMinutes(emp, validMinutes, 1.5));
     const safeTask = sanitizeSafeText(otTask, 400) || 'Pekerjaan operasional lembur';
 
     const newOt: OvertimeRequest = {
@@ -218,6 +233,8 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
       taskDescription: safeTask,
       calculatedPay,
       status: 'Menunggu Persetujuan',
+      sunday_work_type: effectiveSundayType,
+      sundayWorkType: effectiveSundayType,
     };
     onAddOvertime(newOt);
     setIsOvertimeModalOpen(false);
@@ -230,7 +247,7 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
-            <CalendarDays className="w-6 h-6 text-emerald-600" />
+            <CalendarDays className="w-6 h-6 text-amber-600" />
             Manajemen Cuti & Klaim Lembur (Hitungan Per Menit)
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">
@@ -241,7 +258,7 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
           {activeSubTab === 'leave' ? (
             <button
               onClick={openManualLeaveModal}
-              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-md shadow-emerald-600/30"
+              className="px-4 py-2 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-md shadow-amber-600/30"
             >
               <Plus className="w-4 h-4" />
               + Input Cuti / Izin Manual
@@ -263,7 +280,7 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
         <div
           className={`p-4 rounded-2xl border shadow-sm flex flex-col gap-3 animate-in fade-in ${
             waQuickPrompt.status === 'Disetujui'
-              ? 'bg-emerald-50/90 border-emerald-300'
+              ? 'bg-amber-50/90 border-amber-300'
               : 'bg-rose-50/90 border-rose-300'
           }`}
         >
@@ -272,7 +289,7 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
               <div
                 className={`p-2 rounded-xl shrink-0 ${
                   waQuickPrompt.status === 'Disetujui'
-                    ? 'bg-emerald-600 text-white'
+                    ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 font-bold'
                     : 'bg-rose-600 text-white'
                 }`}
               >
@@ -284,7 +301,7 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
                   {waQuickPrompt.emp?.fullName || 'Karyawan'} telah{' '}
                   <span
                     className={
-                      waQuickPrompt.status === 'Disetujui' ? 'text-emerald-700' : 'text-rose-700'
+                      waQuickPrompt.status === 'Disetujui' ? 'text-amber-700' : 'text-rose-700'
                     }
                   >
                     {waQuickPrompt.status.toUpperCase()}
@@ -318,7 +335,7 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
               value={adminWaNote}
               onChange={(e) => setAdminWaNote(e.target.value)}
               placeholder="Ketik catatan admin HRD untuk disertakan di pesan WhatsApp (opsional)..."
-              className="flex-1 px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-800 focus:outline-hidden focus:border-emerald-600"
+              className="flex-1 px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-800 focus:outline-hidden focus:border-amber-600"
             />
             <a
               href={
@@ -340,7 +357,7 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
               }
               target="_blank"
               rel="noopener noreferrer"
-              className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl text-xs inline-flex items-center justify-center gap-1.5 shadow-sm shrink-0 transition-colors"
+              className="px-4 py-2 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold font-bold rounded-xl text-xs inline-flex items-center justify-center gap-1.5 shadow-sm shrink-0 transition-colors"
             >
               <MessageCircle className="w-4 h-4" />
               <span>Kirim Notifikasi WA ke Karyawan</span>
@@ -356,7 +373,7 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
           onClick={() => setActiveSubTab('leave')}
           className={`py-3 px-5 text-xs font-semibold border-b-2 flex items-center gap-2 transition-colors cursor-pointer ${
             activeSubTab === 'leave'
-              ? 'border-emerald-600 text-emerald-700'
+              ? 'border-amber-600 text-amber-700'
               : 'border-transparent text-slate-500 hover:text-slate-800'
           }`}
         >
@@ -390,13 +407,13 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
           <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
               <h3 className="font-bold text-xs text-slate-800 flex items-center gap-2">
-                <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                <ShieldCheck className="w-4 h-4 text-amber-600" />
                 Sisa Saldo Cuti Tahunan Karyawan
               </h3>
               <button
                 type="button"
                 onClick={openManualLeaveModal}
-                className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer shadow-2xs self-start sm:self-center"
+                className="px-3.5 py-1.5 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold rounded-xl text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer shadow-2xs self-start sm:self-center"
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>+ Input Cuti / Izin Manual</span>
@@ -410,7 +427,7 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
                   </span>
                   <span
                     className={`text-base font-bold block mt-0.5 ${
-                      (emp.remainingLeaveDays ?? 0) > 0 ? 'text-emerald-600' : 'text-amber-600'
+                      (emp.remainingLeaveDays ?? 0) > 0 ? 'text-amber-600' : 'text-amber-600'
                     }`}
                   >
                     {emp.remainingLeaveDays ?? 0}
@@ -456,7 +473,7 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
                           </div>
                         </td>
                         <td className="py-3 px-4">
-                          <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 font-medium">
+                          <span className="px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 font-medium">
                             {leave.type}
                           </span>
                         </td>
@@ -496,7 +513,7 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
                           <span
                             className={`inline-block px-2.5 py-1 rounded-full text-[10px] font-semibold ${
                               leave.status === 'Disetujui'
-                                ? 'bg-emerald-100 text-emerald-800'
+                                ? 'bg-amber-100 text-amber-800'
                                 : leave.status === 'Ditolak'
                                 ? 'bg-rose-100 text-rose-800'
                                 : 'bg-amber-100 text-amber-800'
@@ -521,7 +538,7 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
                                     leave: { ...leave, status: 'Disetujui' },
                                   });
                                 }}
-                                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-lg text-xs cursor-pointer"
+                                className="px-2.5 py-1 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold font-medium rounded-lg text-xs cursor-pointer"
                               >
                                 Setujui
                               </button>
@@ -554,7 +571,7 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
                                 )}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="px-2.5 py-1 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-lg text-[11px] inline-flex items-center gap-1 shadow-2xs transition-colors"
+                                className="px-2.5 py-1 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold font-semibold rounded-lg text-[11px] inline-flex items-center gap-1 shadow-2xs transition-colors"
                                 title={`Kirim Notifikasi WA Status Cuti (${leave.status}) ke ${emp?.fullName}`}
                               >
                                 <MessageCircle className="w-3 h-3" />
@@ -615,8 +632,28 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
                     const emp = employees.find((e) => e.id === ot.employeeId);
                     const totalMins = getOvertimeMinutes(ot);
                     const breakdown = calculateOvertimeBreakdown(emp, totalMins);
+                    const isSundayOt = isSundayDateString(ot.date);
+                    const empWorkDays = getEmployeeWorkDaysPerWeek(emp);
+                    const sundayWorkType = resolveSundayWorkType(
+                      ot,
+                      ot.employeeId,
+                      ot.date,
+                      ot.id
+                    );
+                    const isDayOffReplacement =
+                      isSundayOt && sundayWorkType === 'day_off_replacement';
+
                     return (
-                      <tr key={ot.id} className="hover:bg-slate-50/70 transition-colors">
+                      <tr
+                        key={ot.id}
+                        className={`hover:bg-slate-50/70 transition-colors ${
+                          isSundayOt
+                            ? isDayOffReplacement
+                              ? 'bg-indigo-50/35'
+                              : 'bg-amber-50/35'
+                            : ''
+                        }`}
+                      >
                         <td className="py-3 px-4">
                           <div className="flex items-center gap-2.5">
                             <img
@@ -625,15 +662,24 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
                               className="w-7 h-7 rounded-full object-cover shrink-0"
                             />
                             <div>
-                              <span className="font-semibold text-slate-900 block">{emp?.fullName}</span>
-                              <span className="text-[10px] text-slate-400">{emp?.role}</span>
+                              <span className="font-semibold text-slate-900 block">
+                                {emp?.fullName}
+                              </span>
+                              <span className="text-[10px] text-slate-400">
+                                {emp?.role} • <strong className="text-amber-700">{empWorkDays} Hr/Mgg</strong>
+                              </span>
                             </div>
                           </div>
                         </td>
                         <td className="py-3 px-4 text-slate-700">
                           <span className="block font-medium">{formatIndoDate(ot.date)}</span>
+                          {isSundayOt && (
+                            <span className="inline-flex items-center gap-1 mt-0.5 px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300 text-[9px] font-extrabold">
+                              HARI MINGGU
+                            </span>
+                          )}
                           {ot.startTime && ot.endTime && (
-                            <span className="text-[10px] font-mono text-slate-500">
+                            <span className="block text-[10px] font-mono text-slate-500">
                               Pukul {ot.startTime} - {ot.endTime} WIB
                             </span>
                           )}
@@ -647,22 +693,45 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
                           </span>
                         </td>
                         <td className="py-3 px-4 font-mono text-slate-700">
-                          <span className="block text-[11px]">
-                            Jam 1 (1.5×): {breakdown.firstHourMinutes} mnt ({formatRupiah(breakdown.firstHourPay)})
-                          </span>
-                          {breakdown.subsequentMinutes > 0 && (
-                            <span className="block text-[10px] text-indigo-700 font-semibold">
-                              Jam 2+ (2.0×): {breakdown.subsequentMinutes} mnt ({formatRupiah(breakdown.subsequentPay)})
+                          {isDayOffReplacement ? (
+                            <span className="inline-block px-2 py-0.5 rounded bg-indigo-100 text-indigo-900 border border-indigo-300 font-sans font-bold text-[10px]">
+                              🔄 Tukar Hari Libur (Tidak Dihitung Lembur)
                             </span>
+                          ) : (
+                            <>
+                              <span className="block text-[11px]">
+                                Jam 1 (1.5×): {breakdown.firstHourMinutes} mnt (
+                                {formatRupiah(breakdown.firstHourPay)})
+                              </span>
+                              {breakdown.subsequentMinutes > 0 && (
+                                <span className="block text-[10px] text-indigo-700 font-semibold">
+                                  Jam 2+ (2.0×): {breakdown.subsequentMinutes} mnt (
+                                  {formatRupiah(breakdown.subsequentPay)})
+                                </span>
+                              )}
+                            </>
                           )}
                         </td>
                         <td className="py-3 px-4">
-                          <span className="font-bold text-slate-900 block">
-                            {formatRupiah(ot.calculatedPay || breakdown.totalOvertimePay)}
-                          </span>
-                          <span className="text-[10px] text-emerald-700 font-mono">
-                            Sesuai UU Ketenagakerjaan
-                          </span>
+                          {isDayOffReplacement ? (
+                            <>
+                              <span className="font-bold text-indigo-700 block">
+                                Rp 0 (Ganti 1 Hari Absen)
+                              </span>
+                              <span className="text-[10px] text-indigo-600 font-semibold">
+                                Pulihkan Gaji &amp; Tunj. Kerajinan
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              <span className="font-bold text-slate-900 block">
+                                {formatRupiah(ot.calculatedPay || breakdown.totalOvertimePay)}
+                              </span>
+                              <span className="text-[10px] text-amber-700 font-mono">
+                                Sesuai UU Ketenagakerjaan
+                              </span>
+                            </>
+                          )}
                         </td>
                         <td className="py-3 px-4 text-slate-600 max-w-[220px] truncate" title={ot.taskDescription}>
                           {ot.taskDescription}
@@ -671,7 +740,7 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
                           <span
                             className={`inline-block px-2.5 py-1 rounded-full text-[10px] font-semibold ${
                               ot.status === 'Disetujui'
-                                ? 'bg-emerald-100 text-emerald-800'
+                                ? 'bg-amber-100 text-amber-800'
                                 : ot.status === 'Ditolak'
                                 ? 'bg-rose-100 text-rose-800'
                                 : 'bg-amber-100 text-amber-800'
@@ -679,6 +748,40 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
                           >
                             {ot.status}
                           </span>
+                          {isSundayOt && (
+                            <div className="mt-1.5 flex flex-col items-center gap-1">
+                              <span
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[9px] font-extrabold border ${
+                                  isDayOffReplacement
+                                    ? 'bg-indigo-100 text-indigo-900 border-indigo-300'
+                                    : 'bg-neutral-900 text-amber-300 border-amber-500/40'
+                                }`}
+                              >
+                                {isDayOffReplacement ? '🔄 TUKAR HARI LIBUR' : '⚡ LEMBUR MURNI'}
+                              </span>
+                              {onUpdateOvertimeWorkType && (
+                                <select
+                                  value={sundayWorkType}
+                                  onChange={(e) =>
+                                    onUpdateOvertimeWorkType(
+                                      ot.id,
+                                      e.target.value as SundayWorkType
+                                    )
+                                  }
+                                  className={`px-2 py-1 rounded-lg text-[10px] font-bold border cursor-pointer focus:outline-hidden ${
+                                    isDayOffReplacement
+                                      ? 'bg-indigo-50 text-indigo-900 border-indigo-300'
+                                      : 'bg-amber-50 text-amber-900 border-amber-300'
+                                  }`}
+                                >
+                                  <option value="overtime">⚡ Lembur Murni (Overtime)</option>
+                                  <option value="day_off_replacement">
+                                    🔄 Tukar Hari Libur (Ganti Absen)
+                                  </option>
+                                </select>
+                              )}
+                            </div>
+                          )}
                         </td>
                         <td className="py-3 px-4 text-center">
                           {ot.status === 'Menunggu Persetujuan' ? (
@@ -729,7 +832,7 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
                                 )}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="px-2.5 py-1 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-lg text-[11px] inline-flex items-center gap-1 shadow-2xs transition-colors"
+                                className="px-2.5 py-1 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold font-semibold rounded-lg text-[11px] inline-flex items-center gap-1 shadow-2xs transition-colors"
                                 title={`Kirim Notifikasi WA Status Lembur (${ot.status}) ke ${emp?.fullName}`}
                               >
                                 <MessageCircle className="w-3 h-3" />
@@ -756,7 +859,7 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
             <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
               <div>
                 <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                  <CalendarDays className="w-5 h-5 text-emerald-600" />
+                  <CalendarDays className="w-5 h-5 text-amber-600" />
                   Input Cuti / Izin Manual (Panel Admin)
                 </h3>
                 <p className="text-[11px] text-slate-500 mt-0.5">
@@ -780,7 +883,7 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
                     <span
                       className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                         selectedLeaveEmpRemainingQuota > 0
-                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                          ? 'bg-amber-100 text-amber-800 border border-amber-200'
                           : 'bg-amber-100 text-amber-800 border border-amber-200'
                       }`}
                     >
@@ -901,7 +1004,7 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
                     <label className="block text-slate-700 font-semibold">
                       Jumlah Hari Kerja *
                     </label>
-                    <span className="text-[10px] text-emerald-700 font-semibold">
+                    <span className="text-[10px] text-amber-700 font-semibold">
                       Otomatis Dihitung
                     </span>
                   </div>
@@ -912,7 +1015,7 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
                     max={365}
                     value={leaveDays}
                     onChange={(e) => setLeaveDays(Math.max(0.5, Number(e.target.value) || 1))}
-                    className="w-full p-2 bg-emerald-50/40 border border-emerald-300 rounded-xl text-emerald-950 font-extrabold"
+                    className="w-full p-2 bg-amber-50/40 border border-amber-300 rounded-xl text-amber-950 font-extrabold"
                   />
                 </div>
 
@@ -927,7 +1030,7 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
                     }
                     className={`w-full p-2 border rounded-xl font-bold ${
                       leaveStatus === 'Disetujui'
-                        ? 'bg-emerald-50 border-emerald-400 text-emerald-900'
+                        ? 'bg-amber-50 border-amber-400 text-amber-900'
                         : 'bg-amber-50 border-amber-300 text-amber-900'
                     }`}
                   >
@@ -978,8 +1081,8 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
                     </button>
                   </div>
                 ) : (
-                  <label className="flex flex-col items-center justify-center p-3 border-2 border-dashed border-slate-300 hover:border-emerald-500 rounded-xl bg-slate-50 hover:bg-emerald-50/40 cursor-pointer transition-colors">
-                    <Upload className="w-4 h-4 text-emerald-600 mb-1" />
+                  <label className="flex flex-col items-center justify-center p-3 border-2 border-dashed border-slate-300 hover:border-amber-500 rounded-xl bg-slate-50 hover:bg-amber-50/40 cursor-pointer transition-colors">
+                    <Upload className="w-4 h-4 text-amber-600 mb-1" />
                     <span className="text-xs font-semibold text-slate-700">
                       {isCompressingAttachment
                         ? 'Mengompresi gambar...'
@@ -1007,7 +1110,7 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
                 <button
                   type="submit"
                   disabled={isCompressingAttachment}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl cursor-pointer disabled:opacity-50"
+                  className="px-4 py-2 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold font-semibold rounded-xl cursor-pointer disabled:opacity-50"
                 >
                   {leaveStatus === 'Disetujui'
                     ? 'Simpan & Langsung Setujui'
@@ -1114,26 +1217,64 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
                 </div>
               </div>
 
+              {isOtDateSunday && (
+                <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-300 space-y-2">
+                  <label className="block text-amber-950 font-bold text-xs">
+                    Status Kehadiran Hari Minggu (Karyawan 6 Hari/Minggu)
+                  </label>
+                  <select
+                    value={otSundayWorkType}
+                    onChange={(e) => setOtSundayWorkType(e.target.value as SundayWorkType)}
+                    className="w-full p-2.5 bg-white border border-amber-300 rounded-xl font-bold text-slate-900 cursor-pointer"
+                  >
+                    <option value="overtime">
+                      ⚡ Lembur Murni (Overtime — Dihitung Upah Lembur di Luar Gaji 26 Hari)
+                    </option>
+                    <option value="day_off_replacement">
+                      🔄 Tukar Hari Libur (Day-Off Replacement — Gantikan 1 Hari Absen/Alpha)
+                    </option>
+                  </select>
+                  <p className="text-[11px] text-amber-900 leading-relaxed">
+                    {otSundayWorkType === 'day_off_replacement'
+                      ? 'Tukar Hari Libur: Kehadiran Minggu TIDAK dihitung upah lembur (Rp 0), melainkan memulihkan 1 hari absen/alfa/izin di hari biasa pada periode cut-off yang sama.'
+                      : 'Lembur Murni: Kehadiran Minggu dihitung penuh sebagai upah lembur tambahan di luar gaji pokok 26 hari kerja.'}
+                  </p>
+                </div>
+              )}
+
               {/* Simulasi Rincian Kalkulasi Sesuai UU Ketenagakerjaan (1.5x & 2.0x) */}
               <div className="p-3.5 bg-indigo-50/80 border border-indigo-200 rounded-xl space-y-1.5">
-                <div className="flex items-center justify-between text-[11px] text-indigo-800">
-                  <span>Jam Pertama ({selectedOtBreakdown.firstHourMinutes} mnt × 1,5×):</span>
-                  <span className="font-mono font-bold">
-                    {formatRupiah(selectedOtBreakdown.firstHourPay)}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between text-[11px] text-indigo-800">
-                  <span>Jam Berikutnya ({selectedOtBreakdown.subsequentMinutes} mnt × 2,0×):</span>
-                  <span className="font-mono font-bold">
-                    {formatRupiah(selectedOtBreakdown.subsequentPay)}
-                  </span>
-                </div>
-                <div className="pt-1.5 border-t border-indigo-200/80 flex items-center justify-between">
-                  <span className="font-bold text-indigo-950">Total Estimasi Upah Lembur:</span>
-                  <span className="text-sm font-black text-indigo-700">
-                    {formatRupiah(previewOvertimePay)}
-                  </span>
-                </div>
+                {isOtDateSunday && otSundayWorkType === 'day_off_replacement' ? (
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-indigo-950">
+                      Status Tukar Hari Libur (Minggu):
+                    </span>
+                    <span className="text-xs font-black text-indigo-700">
+                      Rp 0 Lembur (Pulihkan 1 Hari Absen/Alpha)
+                    </span>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between text-[11px] text-indigo-800">
+                      <span>Jam Pertama ({selectedOtBreakdown.firstHourMinutes} mnt × 1,5×):</span>
+                      <span className="font-mono font-bold">
+                        {formatRupiah(selectedOtBreakdown.firstHourPay)}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-[11px] text-indigo-800">
+                      <span>Jam Berikutnya ({selectedOtBreakdown.subsequentMinutes} mnt × 2,0×):</span>
+                      <span className="font-mono font-bold">
+                        {formatRupiah(selectedOtBreakdown.subsequentPay)}
+                      </span>
+                    </div>
+                    <div className="pt-1.5 border-t border-indigo-200/80 flex items-center justify-between">
+                      <span className="font-bold text-indigo-950">Total Estimasi Upah Lembur:</span>
+                      <span className="text-sm font-black text-indigo-700">
+                        {formatRupiah(previewOvertimePay)}
+                      </span>
+                    </div>
+                  </>
+                )}
               </div>
 
               <div>
@@ -1192,15 +1333,15 @@ export const LeaveAndOvertime: React.FC<LeaveAndOvertimeProps> = ({
               />
             </div>
             <div className="flex items-center justify-between gap-2 pt-1 flex-wrap">
-              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-amber-700">
+                <CheckCircle2 className="w-3.5 h-3.5 text-amber-600" />
                 Tersinkronisasi dari Portal Karyawan
               </span>
               <div className="flex items-center gap-2">
                 <a
                   href={previewEvidenceModal.imageUrl}
                   download={previewEvidenceModal.fileName || 'Bukti-Cuti-Izin.jpg'}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl transition-colors"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold rounded-xl transition-colors"
                 >
                   <Download className="w-3.5 h-3.5" />
                   <span>Unduh Bukti</span>

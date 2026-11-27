@@ -18,6 +18,7 @@ import {
   CashAdvance,
   CompanyConfig,
   ThrPayoutRecord,
+  SundayWorkType,
 } from '../types';
 import {
   normalizeEmploymentType,
@@ -33,6 +34,8 @@ import {
   getJakartaDateParts,
   getCurrentRealTimePayrollPeriod,
   normalizePeriodToYearMonth,
+  getEmployeeBranch,
+  normalizeEmployeeBranch,
 } from '../utils/formatters';
 import {
   sanitizeEmployeesListForStorage,
@@ -95,6 +98,10 @@ export interface PersistedEmploymentMeta {
   overtime_rate?: number;
   standard_daily_hours?: number;
   standardDailyHours?: number;
+  hari_kerja_per_minggu?: number;
+  workDaysPerWeek?: number;
+  branch?: string;
+  cabang?: string;
   updatedAt: string;
 }
 
@@ -212,6 +219,10 @@ export function saveEmployeeEmploymentMetaLocal(emp: Partial<Employee>): void {
   const hRate = Math.max(0, Number(emp.hourlyRate ?? emp.hourly_rate) || 0);
   const oRate = Math.max(0, Number(emp.overtimeRate ?? emp.overtime_rate) || 0);
   const stdHours = getEmployeeStandardDailyHours(emp, STANDARD_WORK_HOURS_PER_DAY);
+  const rawWorkDays = Number(emp.hari_kerja_per_minggu ?? emp.workDaysPerWeek);
+  const resolvedWorkDaysPerWeek =
+    rawWorkDays === 7 ? 7 : rawWorkDays === 6 ? 6 : undefined;
+  const resolvedBranch = getEmployeeBranch(emp);
 
   try {
     const map = getSavedEmploymentMetaMap();
@@ -226,6 +237,10 @@ export function saveEmployeeEmploymentMetaLocal(emp: Partial<Employee>): void {
       overtime_rate: oRate > 0 ? oRate : undefined,
       standard_daily_hours: stdHours,
       standardDailyHours: stdHours,
+      hari_kerja_per_minggu: resolvedWorkDaysPerWeek,
+      workDaysPerWeek: resolvedWorkDaysPerWeek,
+      branch: resolvedBranch,
+      cabang: resolvedBranch,
       updatedAt: new Date().toISOString(),
     };
     if (emp.id) map[emp.id] = entry;
@@ -246,6 +261,8 @@ export function saveEmployeeEmploymentMetaLocal(emp: Partial<Employee>): void {
       overtimeRate: oRate > 0 ? oRate : undefined,
       standard_daily_hours: stdHours,
       standardDailyHours: stdHours,
+      hari_kerja_per_minggu: resolvedWorkDaysPerWeek,
+      workDaysPerWeek: resolvedWorkDaysPerWeek,
       updatedAt: new Date().toISOString(),
     };
     if (emp.id) overrides[emp.id] = overridePayload;
@@ -285,6 +302,10 @@ export function saveEmployeeEmploymentMetaLocal(emp: Partial<Employee>): void {
             overtime_rate: nextOt > 0 ? nextOt : item.overtime_rate,
             standard_daily_hours: stdHours,
             standardDailyHours: stdHours,
+            hari_kerja_per_minggu: resolvedWorkDaysPerWeek,
+            workDaysPerWeek: resolvedWorkDaysPerWeek,
+            branch: resolvedBranch,
+            cabang: resolvedBranch,
             ...(emp.remainingLeaveDays !== undefined && emp.remainingLeaveDays !== null
               ? {
                   remainingLeaveDays: Math.max(0, Math.round(Number(emp.remainingLeaveDays) || 0)),
@@ -352,11 +373,36 @@ export function applyPartTimeOverridesToEmployees(employees: Employee[]): Employ
         Number(savedEmp?.standard_daily_hours ?? savedEmp?.standardDailyHours) ||
         STANDARD_WORK_HOURS_PER_DAY;
 
+      const rawWorkDays =
+        Number(emp.hari_kerja_per_minggu ?? emp.workDaysPerWeek) ||
+        Number(meta?.hari_kerja_per_minggu ?? meta?.workDaysPerWeek) ||
+        Number(savedEmp?.hari_kerja_per_minggu ?? savedEmp?.workDaysPerWeek) ||
+        0;
+      const resolvedWorkDays = rawWorkDays === 7 ? 7 : rawWorkDays === 6 ? 6 : undefined;
+      const resolvedBranch = normalizeEmployeeBranch(
+        emp.branch ||
+          emp.cabang ||
+          (emp.allowances as any)?._branch ||
+          (emp.allowances as any)?._cabang ||
+          meta?.branch ||
+          meta?.cabang ||
+          savedEmp?.branch ||
+          savedEmp?.cabang
+      );
+
       if (!isPt) {
         return {
           ...emp,
+          branch: resolvedBranch,
+          cabang: resolvedBranch,
           standard_daily_hours: resolvedStdHours,
           standardDailyHours: resolvedStdHours,
+          ...(resolvedWorkDays !== undefined
+            ? {
+                hari_kerja_per_minggu: resolvedWorkDays,
+                workDaysPerWeek: resolvedWorkDays,
+              }
+            : {}),
         };
       }
 
@@ -395,6 +441,8 @@ export function applyPartTimeOverridesToEmployees(employees: Employee[]): Employ
 
       return {
         ...emp,
+        branch: resolvedBranch,
+        cabang: resolvedBranch,
         employmentType: 'Part-Time' as const,
         employment_type: 'Part-Time' as const,
         employmentStatus: 'Part-Time' as const,
@@ -507,12 +555,52 @@ export function employeeToDb(emp: Employee) {
       transport: Number(rawAllowances.transport) || 0,
       meal: Number(rawAllowances.meal) || 0,
       communication: Number(rawAllowances.communication) || 0,
+      tunjangan_kerajinan:
+        emp.tunjangan_kerajinan !== undefined ||
+        emp.tunjanganKerajinan !== undefined ||
+        rawAllowances.tunjangan_kerajinan !== undefined
+          ? Math.max(
+              0,
+              Number(
+                emp.tunjangan_kerajinan ??
+                  emp.tunjanganKerajinan ??
+                  rawAllowances.tunjangan_kerajinan
+              ) || 0
+            )
+          : (Number(rawAllowances.transport) || 0) + (Number(rawAllowances.communication) || 0),
+      tunjangan_kedisiplinan:
+        emp.tunjangan_kedisiplinan !== undefined ||
+        emp.tunjanganKedisiplinan !== undefined ||
+        rawAllowances.tunjangan_kedisiplinan !== undefined
+          ? Math.max(
+              0,
+              Number(
+                emp.tunjangan_kedisiplinan ??
+                  emp.tunjanganKedisiplinan ??
+                  rawAllowances.tunjangan_kedisiplinan
+              ) || 0
+            )
+          : Number(rawAllowances.meal) || 0,
       _hourlyRate: resolvedHourlyRate,
       _overtimeRate: resolvedOvertimeRate,
       _dailySalary: resolvedDailySalary,
       _standardDailyHours: resolvedStandardDailyHours,
+      _hari_kerja_per_minggu:
+        Number(emp.hari_kerja_per_minggu ?? emp.workDaysPerWeek) === 7
+          ? 7
+          : Number(emp.hari_kerja_per_minggu ?? emp.workDaysPerWeek) === 6
+          ? 6
+          : undefined,
+      _workDaysPerWeek:
+        Number(emp.hari_kerja_per_minggu ?? emp.workDaysPerWeek) === 7
+          ? 7
+          : Number(emp.hari_kerja_per_minggu ?? emp.workDaysPerWeek) === 6
+          ? 6
+          : undefined,
       _employmentType: resolvedEmploymentType,
       _employmentStatus: resolvedEmploymentStatus,
+      _branch: getEmployeeBranch(emp),
+      _cabang: getEmployeeBranch(emp),
       _isLiveStreamHost: Boolean(emp.isLiveStreamHost ?? emp.is_host),
       _salesCommissionPercentage:
         Number(emp.salesCommissionPercentage ?? emp.host_commission_pct) || 0,
@@ -717,10 +805,22 @@ export function dbToEmployee(row: any): Employee {
         localMeta?.standard_daily_hours ??
         localMeta?.standardDailyHours
     ) || STANDARD_WORK_HOURS_PER_DAY;
+  const rawWorkDaysPerWeek = Number(
+    row.hari_kerja_per_minggu ??
+      row.work_days_per_week ??
+      row.workDaysPerWeek ??
+      rawAllowances._hari_kerja_per_minggu ??
+      rawAllowances._workDaysPerWeek ??
+      localMeta?.hari_kerja_per_minggu ??
+      localMeta?.workDaysPerWeek
+  );
+  const resolvedWorkDaysPerWeek =
+    rawWorkDaysPerWeek === 7 ? 7 : rawWorkDaysPerWeek === 6 ? 6 : undefined;
+  const resolvedMonthlyDivisor = resolvedWorkDaysPerWeek === 7 ? 30 : 26;
   const baseSalary = Number(row.base_salary) || 0;
   const rawDaily =
     Number(row.daily_salary ?? rawAllowances._dailySalary) ||
-    (baseSalary > 0 ? Number((baseSalary / 25).toFixed(2)) : 0);
+    (baseSalary > 0 ? Number((baseSalary / resolvedMonthlyDivisor).toFixed(2)) : 0);
   const hourlyRate =
     Number(row.hourly_rate ?? rawAllowances._hourlyRate ?? localMeta?.hourlyRate) ||
     (rawDaily > 0 ? Number((rawDaily / standardDailyHours).toFixed(2)) : 0);
@@ -850,25 +950,121 @@ export function dbToEmployee(row: any): Employee {
     role: row.role || 'Staff',
     gender: row.gender || 'Laki-laki',
     department: row.department || 'Operasional',
+    branch: normalizeEmployeeBranch(
+      row.branch ??
+        row.cabang ??
+        rawAllowances._branch ??
+        rawAllowances._cabang ??
+        localMeta?.branch ??
+        localMeta?.cabang
+    ),
+    cabang: normalizeEmployeeBranch(
+      row.branch ??
+        row.cabang ??
+        rawAllowances._branch ??
+        rawAllowances._cabang ??
+        localMeta?.branch ??
+        localMeta?.cabang
+    ),
     employmentStatus: resolvedEmploymentStatus,
     status: resolvedEmploymentStatus,
     employmentType: resolvedEmploymentType,
     employment_type: resolvedEmploymentType,
     joinDate: row.join_date || getJakartaDateString(),
-    baseSalary: baseSalary || dailySalary * 25,
+    baseSalary: baseSalary || dailySalary * resolvedMonthlyDivisor,
     hourlyRate,
     hourly_rate: hourlyRate,
     overtimeRate,
     overtime_rate: overtimeRate,
     standard_daily_hours: standardDailyHours,
     standardDailyHours,
+    hari_kerja_per_minggu: resolvedWorkDaysPerWeek,
+    workDaysPerWeek: resolvedWorkDaysPerWeek,
     dailySalary,
     daily_salary: dailySalary,
+    tunjangan_kerajinan:
+      row.tunjangan_kerajinan !== undefined ||
+      rawAllowances.tunjangan_kerajinan !== undefined ||
+      rawAllowances._tunjangan_kerajinan !== undefined
+        ? Math.max(
+            0,
+            Number(
+              row.tunjangan_kerajinan ??
+                rawAllowances.tunjangan_kerajinan ??
+                rawAllowances._tunjangan_kerajinan
+            ) || 0
+          )
+        : (Number(rawAllowances.transport) || 0) + (Number(rawAllowances.communication) || 0),
+    tunjanganKerajinan:
+      row.tunjangan_kerajinan !== undefined ||
+      rawAllowances.tunjangan_kerajinan !== undefined ||
+      rawAllowances._tunjangan_kerajinan !== undefined
+        ? Math.max(
+            0,
+            Number(
+              row.tunjangan_kerajinan ??
+                rawAllowances.tunjangan_kerajinan ??
+                rawAllowances._tunjangan_kerajinan
+            ) || 0
+          )
+        : (Number(rawAllowances.transport) || 0) + (Number(rawAllowances.communication) || 0),
+    tunjangan_kedisiplinan:
+      row.tunjangan_kedisiplinan !== undefined ||
+      rawAllowances.tunjangan_kedisiplinan !== undefined ||
+      rawAllowances._tunjangan_kedisiplinan !== undefined
+        ? Math.max(
+            0,
+            Number(
+              row.tunjangan_kedisiplinan ??
+                rawAllowances.tunjangan_kedisiplinan ??
+                rawAllowances._tunjangan_kedisiplinan
+            ) || 0
+          )
+        : Number(rawAllowances.meal) || 0,
+    tunjanganKedisiplinan:
+      row.tunjangan_kedisiplinan !== undefined ||
+      rawAllowances.tunjangan_kedisiplinan !== undefined ||
+      rawAllowances._tunjangan_kedisiplinan !== undefined
+        ? Math.max(
+            0,
+            Number(
+              row.tunjangan_kedisiplinan ??
+                rawAllowances.tunjangan_kedisiplinan ??
+                rawAllowances._tunjangan_kedisiplinan
+            ) || 0
+          )
+        : Number(rawAllowances.meal) || 0,
     allowances: {
       position: Number(rawAllowances.position) || 0,
       transport: Number(rawAllowances.transport) || 0,
       meal: Number(rawAllowances.meal) || 0,
       communication: Number(rawAllowances.communication) || 0,
+      tunjangan_kerajinan:
+        row.tunjangan_kerajinan !== undefined ||
+        rawAllowances.tunjangan_kerajinan !== undefined ||
+        rawAllowances._tunjangan_kerajinan !== undefined
+          ? Math.max(
+              0,
+              Number(
+                row.tunjangan_kerajinan ??
+                  rawAllowances.tunjangan_kerajinan ??
+                  rawAllowances._tunjangan_kerajinan
+              ) || 0
+            )
+          : (Number(rawAllowances.transport) || 0) + (Number(rawAllowances.communication) || 0),
+      tunjangan_kedisiplinan:
+        row.tunjangan_kedisiplinan !== undefined ||
+        rawAllowances.tunjangan_kedisiplinan !== undefined ||
+        rawAllowances._tunjangan_kedisiplinan !== undefined
+          ? Math.max(
+              0,
+              Number(
+                row.tunjangan_kedisiplinan ??
+                  rawAllowances.tunjangan_kedisiplinan ??
+                  rawAllowances._tunjangan_kedisiplinan
+              ) || 0
+            )
+          : Number(rawAllowances.meal) || 0,
     },
     bankName: row.bank_name || 'BCA',
     bankAccountNumber: row.bank_account_number || '',
@@ -1358,8 +1554,11 @@ export async function syncEmployeeLiveColumnsToSupabase(emp: Employee): Promise<
   const resolvedContractStart =
     (emp.contractStartDate || emp.contract_start_date || '').trim() || null;
 
+  const resolvedBranch = getEmployeeBranch(emp);
   const extendedPayload = {
     ...partTimePayload,
+    branch: resolvedBranch,
+    cabang: resolvedBranch,
     overtime_rate: overtimeVal,
     contract_start_date: resolvedContractStart,
     contract_end_date: resolvedContractEnd,
@@ -1377,6 +1576,8 @@ export async function syncEmployeeLiveColumnsToSupabase(emp: Employee): Promise<
       new CustomEvent('tgi_employee_live_updated', {
         detail: {
           ...emp,
+          branch: resolvedBranch,
+          cabang: resolvedBranch,
           employmentStatus: empStatus,
           status: empStatus,
           employmentType: empType,
@@ -1991,6 +2192,73 @@ export function getEmployeeTargetDailyHoursLocal(
   return STANDARD_WORK_HOURS_PER_DAY;
 }
 
+const SUNDAY_WORK_TYPE_STORAGE_KEY = 'tgi_sunday_work_type_map_v1';
+
+export function saveSundayWorkTypeLocal(
+  employeeId: string,
+  date: string,
+  type: SundayWorkType,
+  id?: string
+): void {
+  try {
+    const raw = localStorage.getItem(SUNDAY_WORK_TYPE_STORAGE_KEY);
+    const map: Record<string, SundayWorkType> = raw ? JSON.parse(raw) : {};
+    if (employeeId && date) {
+      map[`${employeeId}__${date}`] = type;
+    }
+    if (id) {
+      map[id] = type;
+    }
+    localStorage.setItem(SUNDAY_WORK_TYPE_STORAGE_KEY, JSON.stringify(map));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+export function getSavedSundayWorkType(
+  employeeId?: string,
+  date?: string,
+  id?: string
+): SundayWorkType | undefined {
+  try {
+    const raw = localStorage.getItem(SUNDAY_WORK_TYPE_STORAGE_KEY);
+    if (!raw) return undefined;
+    const map: Record<string, SundayWorkType> = JSON.parse(raw);
+    if (employeeId && date && map[`${employeeId}__${date}`]) {
+      return map[`${employeeId}__${date}`];
+    }
+    if (id && map[id]) {
+      return map[id];
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function normalizeSundayWorkTypeVal(
+  raw?: unknown,
+  notes?: string,
+  employeeId?: string,
+  date?: string,
+  id?: string
+): SundayWorkType {
+  if (raw === 'day_off_replacement' || raw === 'tukar_hari_libur') {
+    return 'day_off_replacement';
+  }
+  if (raw === 'overtime' || raw === 'lembur_murni') {
+    return 'overtime';
+  }
+  const saved = getSavedSundayWorkType(employeeId, date, id);
+  if (saved === 'day_off_replacement' || saved === 'overtime') {
+    return saved;
+  }
+  if (typeof notes === 'string' && notes.includes('[TUKAR_HARI_LIBUR_MINGGU]')) {
+    return 'day_off_replacement';
+  }
+  return 'overtime';
+}
+
 export function attendanceToDb(att: AttendanceRecord) {
   const empStdHours = getEmployeeTargetDailyHoursLocal(att.employeeId);
   const approvedOtHours = getApprovedOvertimeHoursForEmployeeDate(att.employeeId, att.date);
@@ -2004,6 +2272,14 @@ export function attendanceToDb(att: AttendanceRecord) {
   );
   const photoInVal = att.facePhotoSnapshot || att.photoIn || null;
   const photoOutVal = att.checkOutPhotoSnapshot || att.facePhotoOut || att.photoOut || null;
+  const sundayWorkTypeVal = normalizeSundayWorkTypeVal(
+    att.sunday_work_type ?? att.sundayWorkType,
+    att.notes,
+    att.employeeId,
+    att.date,
+    att.id
+  );
+  saveSundayWorkTypeLocal(att.employeeId, att.date, sundayWorkTypeVal, att.id);
 
   return {
     id: att.id,
@@ -2033,6 +2309,7 @@ export function attendanceToDb(att: AttendanceRecord) {
       att.checkOutDistanceMeters !== undefined
         ? Number(att.checkOutDistanceMeters) || 0
         : Number(att.distanceMeters) || 0,
+    sunday_work_type: sundayWorkTypeVal,
     updated_at: new Date().toISOString(),
   };
 }
@@ -2055,6 +2332,16 @@ export function dbToAttendance(row: any): AttendanceRecord {
   const photoInVal = row.face_photo_snapshot || row.photo_in || undefined;
   const photoOutVal =
     row.check_out_photo_snapshot || row.face_photo_out || row.photo_out || undefined;
+  const sundayWorkTypeVal = normalizeSundayWorkTypeVal(
+    row.sunday_work_type ?? row.sundayWorkType,
+    row.notes,
+    empId,
+    dateStr,
+    row.id
+  );
+  if (row.sunday_work_type === 'day_off_replacement' || row.sunday_work_type === 'overtime') {
+    saveSundayWorkTypeLocal(empId, dateStr, row.sunday_work_type, row.id);
+  }
 
   return {
     id: row.id,
@@ -2084,6 +2371,8 @@ export function dbToAttendance(row: any): AttendanceRecord {
         : undefined,
     isInOfficeRadius: row.is_in_office_radius ?? true,
     distanceMeters: Number(row.distance_meters) || 0,
+    sunday_work_type: sundayWorkTypeVal,
+    sundayWorkType: sundayWorkTypeVal,
   };
 }
 
@@ -2226,7 +2515,7 @@ export async function upsertAttendanceToSupabase(att: AttendanceRecord): Promise
       error = retry.error;
     }
 
-    // Sinkronkan juga ke tabel attendance_logs (lengkap dengan photo_in, photo_out, face_photo_out, is_in_office_radius, distance_meters)
+    // Sinkronkan juga ke tabel attendance_logs (lengkap dengan photo_in, photo_out, face_photo_out, is_in_office_radius, distance_meters, sunday_work_type)
     try {
       const logRow = {
         id: row.id,
@@ -2247,10 +2536,15 @@ export async function upsertAttendanceToSupabase(att: AttendanceRecord): Promise
         location_lng: row.location_coords?.longitude ?? null,
         distance_meters: row.distance_meters,
         check_out_distance_meters: row.check_out_distance_meters,
+        sunday_work_type: row.sunday_work_type,
         notes: row.notes,
         updated_at: row.updated_at,
       };
-      await supabase.from('attendance_logs').upsert(logRow, { onConflict: 'id' });
+      const logRes = await supabase.from('attendance_logs').upsert(logRow, { onConflict: 'id' });
+      if (logRes.error && logRes.error.message?.includes('column')) {
+        const { sunday_work_type: _unused, ...legacyLogRow } = logRow;
+        await supabase.from('attendance_logs').upsert(legacyLogRow, { onConflict: 'id' });
+      }
     } catch {
       // ignore if attendance_logs table has different schema
     }
@@ -2435,6 +2729,15 @@ export function overtimeToDb(ot: OvertimeRequest) {
       ? Math.round(ot.minutes)
       : Math.round((Number(ot.hours) || 1) * 60);
   const hoursDecimal = Number((totalMinutes / 60).toFixed(2));
+  const sundayWorkTypeVal = normalizeSundayWorkTypeVal(
+    ot.sunday_work_type ?? ot.sundayWorkType,
+    ot.taskDescription,
+    ot.employeeId,
+    ot.date,
+    ot.id
+  );
+  saveSundayWorkTypeLocal(ot.employeeId, ot.date, sundayWorkTypeVal, ot.id);
+
   return {
     id: ot.id,
     employee_id: ot.employeeId,
@@ -2443,6 +2746,7 @@ export function overtimeToDb(ot: OvertimeRequest) {
     task_description: ot.taskDescription || '',
     calculated_pay: Number(ot.calculatedPay) || 0,
     status: ot.status || 'Menunggu Persetujuan',
+    sunday_work_type: sundayWorkTypeVal,
     updated_at: new Date().toISOString(),
   };
 }
@@ -2453,6 +2757,16 @@ export function dbToOvertime(row: any): OvertimeRequest {
     row.minutes !== undefined && Number(row.minutes) > 0
       ? Math.round(Number(row.minutes))
       : Math.round(hoursVal * 60);
+  const sundayWorkTypeVal = normalizeSundayWorkTypeVal(
+    row.sunday_work_type ?? row.sundayWorkType,
+    row.task_description,
+    row.employee_id,
+    row.date,
+    row.id
+  );
+  if (row.sunday_work_type === 'day_off_replacement' || row.sunday_work_type === 'overtime') {
+    saveSundayWorkTypeLocal(row.employee_id, row.date, row.sunday_work_type, row.id);
+  }
   return {
     id: row.id,
     employeeId: row.employee_id,
@@ -2462,6 +2776,8 @@ export function dbToOvertime(row: any): OvertimeRequest {
     taskDescription: row.task_description || '',
     calculatedPay: Number(row.calculated_pay) || 0,
     status: row.status || 'Menunggu Persetujuan',
+    sunday_work_type: sundayWorkTypeVal,
+    sundayWorkType: sundayWorkTypeVal,
   };
 }
 
@@ -2483,7 +2799,12 @@ export async function fetchOvertimeRequestsFromSupabase(): Promise<OvertimeReque
 export async function upsertOvertimeRequestToSupabase(ot: OvertimeRequest): Promise<boolean> {
   try {
     const row = overtimeToDb(ot);
-    const { error } = await supabase.from('overtime_requests').upsert(row, { onConflict: 'id' });
+    let { error } = await supabase.from('overtime_requests').upsert(row, { onConflict: 'id' });
+    if (error && error.message?.includes('column')) {
+      const { sunday_work_type: _unused, ...legacyRow } = row;
+      const retry = await supabase.from('overtime_requests').upsert(legacyRow, { onConflict: 'id' });
+      error = retry.error;
+    }
     if (error) {
       console.warn('Supabase upsert overtime request error:', error.message);
       return false;
@@ -2710,6 +3031,8 @@ export async function fetchEmployeeByIdFromSupabase(employeeId: string): Promise
 // -----------------------------------------------------------------------------
 export const TGI_LIVESTREAM_SQL_MIGRATION = `-- Tambahan kolom role dan komisi pada tabel employees / profile
 ALTER TABLE tgi_employees 
+ADD COLUMN IF NOT EXISTS branch TEXT DEFAULT 'Sumber Mas',
+ADD COLUMN IF NOT EXISTS cabang TEXT DEFAULT 'Sumber Mas',
 ADD COLUMN IF NOT EXISTS is_host BOOLEAN DEFAULT FALSE,
 ADD COLUMN IF NOT EXISTS is_co_host BOOLEAN DEFAULT FALSE,
 ADD COLUMN IF NOT EXISTS host_commission_pct DECIMAL(5,2) DEFAULT 2.50,
@@ -2719,6 +3042,8 @@ ADD COLUMN IF NOT EXISTS co_host_commission_per_pcs DECIMAL(10,2) DEFAULT 1000.0
 
 -- Tambahan kolom yang sama pada tabel employees utama
 ALTER TABLE employees 
+ADD COLUMN IF NOT EXISTS branch TEXT DEFAULT 'Sumber Mas',
+ADD COLUMN IF NOT EXISTS cabang TEXT DEFAULT 'Sumber Mas',
 ADD COLUMN IF NOT EXISTS is_host BOOLEAN DEFAULT FALSE,
 ADD COLUMN IF NOT EXISTS is_co_host BOOLEAN DEFAULT FALSE,
 ADD COLUMN IF NOT EXISTS host_commission_pct DECIMAL(5,2) DEFAULT 2.50,
@@ -3857,6 +4182,16 @@ export function getSavedEmployeeAdjustments(): EmployeeAdjustment[] {
         period_month: String(item.period_month || getJakartaYearMonth()),
         tunjangan_kerajinan: Math.max(0, Number(item.tunjangan_kerajinan) || 0),
         tunjangan_kedisiplinan: Math.max(0, Number(item.tunjangan_kedisiplinan) || 0),
+        base_tunjangan_kerajinan:
+          item.base_tunjangan_kerajinan !== undefined
+            ? Math.max(0, Number(item.base_tunjangan_kerajinan) || 0)
+            : Math.max(0, Number(item.tunjangan_kerajinan) || 0),
+        base_tunjangan_kedisiplinan:
+          item.base_tunjangan_kedisiplinan !== undefined
+            ? Math.max(0, Number(item.base_tunjangan_kedisiplinan) || 0)
+            : Math.max(0, Number(item.tunjangan_kedisiplinan) || 0),
+        is_manual_kerajinan: Boolean(item.is_manual_kerajinan),
+        is_manual_kedisiplinan: Boolean(item.is_manual_kedisiplinan),
         kesalahan_count: Math.max(0, Number(item.kesalahan_count) || 0),
         kesalahan_rate:
           item.kesalahan_rate !== undefined && !isNaN(Number(item.kesalahan_rate))
@@ -3905,6 +4240,16 @@ function dbToEmployeeAdjustment(row: any): EmployeeAdjustment {
       0,
       Number(row.tunjangan_kedisiplinan ?? row.tunjanganKedisiplinan) || 0
     ),
+    base_tunjangan_kerajinan:
+      row.base_tunjangan_kerajinan !== undefined || row.baseTunjanganKerajinan !== undefined
+        ? Math.max(0, Number(row.base_tunjangan_kerajinan ?? row.baseTunjanganKerajinan) || 0)
+        : Math.max(0, Number(row.tunjangan_kerajinan ?? row.tunjanganKerajinan) || 0),
+    base_tunjangan_kedisiplinan:
+      row.base_tunjangan_kedisiplinan !== undefined || row.baseTunjanganKedisiplinan !== undefined
+        ? Math.max(0, Number(row.base_tunjangan_kedisiplinan ?? row.baseTunjanganKedisiplinan) || 0)
+        : Math.max(0, Number(row.tunjangan_kedisiplinan ?? row.tunjanganKedisiplinan) || 0),
+    is_manual_kerajinan: Boolean(row.is_manual_kerajinan ?? row.isManualKerajinan),
+    is_manual_kedisiplinan: Boolean(row.is_manual_kedisiplinan ?? row.isManualKedisiplinan),
     kesalahan_count: Math.max(
       0,
       Number(row.kesalahan_count ?? row.kesalahanCount) || 0
@@ -4015,6 +4360,22 @@ export async function upsertEmployeeAdjustment(
       500_000_000,
       Math.max(0, Number(payload.tunjangan_kedisiplinan) || 0)
     ),
+    base_tunjangan_kerajinan:
+      payload.base_tunjangan_kerajinan !== undefined
+        ? Math.min(500_000_000, Math.max(0, Number(payload.base_tunjangan_kerajinan) || 0))
+        : Math.min(500_000_000, Math.max(0, Number(payload.tunjangan_kerajinan) || 0)),
+    base_tunjangan_kedisiplinan:
+      payload.base_tunjangan_kedisiplinan !== undefined
+        ? Math.min(500_000_000, Math.max(0, Number(payload.base_tunjangan_kedisiplinan) || 0))
+        : Math.min(500_000_000, Math.max(0, Number(payload.tunjangan_kedisiplinan) || 0)),
+    is_manual_kerajinan:
+      payload.is_manual_kerajinan !== undefined
+        ? Boolean(payload.is_manual_kerajinan)
+        : Boolean(existingRecord?.is_manual_kerajinan),
+    is_manual_kedisiplinan:
+      payload.is_manual_kedisiplinan !== undefined
+        ? Boolean(payload.is_manual_kedisiplinan)
+        : Boolean(existingRecord?.is_manual_kedisiplinan),
     kesalahan_count: Math.min(
       1000,
       Math.max(0, Number(payload.kesalahan_count) || 0)

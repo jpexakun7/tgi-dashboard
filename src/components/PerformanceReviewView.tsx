@@ -43,7 +43,11 @@ import {
   CompanyConfig,
   GoogleAdminUser,
   Department,
+  AttendanceRecord,
+  PayrollDeductionRecord,
+  EmployeeDisciplineLeaderboardRow,
 } from '../types';
+import { DisciplineLeaderboardTable } from './DisciplineLeaderboardTable';
 import {
   formatRupiah,
   formatIndoDate,
@@ -56,8 +60,11 @@ interface PerformanceReviewViewProps {
   reviews: PerformanceReview[];
   employees: Employee[];
   payrolls: PayrollRecord[];
+  attendances?: AttendanceRecord[];
+  payrollDeductions?: PayrollDeductionRecord[];
   companyConfig: CompanyConfig;
   adminUser?: GoogleAdminUser | null;
+  onChangePayrollPeriod?: (newPeriod: string) => void;
   onAddReview: (review: PerformanceReview, applyToPayrollImmediately?: boolean) => void;
   onUpdateReview: (review: PerformanceReview, applyToPayrollImmediately?: boolean) => void;
   onDeleteReview: (reviewId: string) => void;
@@ -92,9 +99,9 @@ export const calculatePerformanceGrade = (score: number): {
     return {
       grade: 'A+',
       label: 'Istimewa / Luar Biasa',
-      badgeBg: 'bg-emerald-100',
-      badgeText: 'text-emerald-800',
-      badgeBorder: 'border-emerald-300',
+      badgeBg: 'bg-amber-100',
+      badgeText: 'text-amber-800',
+      badgeBorder: 'border-amber-300',
       bonusPercent: 20, // 20% dari gaji pokok
     };
   }
@@ -102,9 +109,9 @@ export const calculatePerformanceGrade = (score: number): {
     return {
       grade: 'A',
       label: 'Sangat Baik',
-      badgeBg: 'bg-teal-100',
-      badgeText: 'text-teal-800',
-      badgeBorder: 'border-teal-300',
+      badgeBg: 'bg-amber-100',
+      badgeText: 'text-amber-800',
+      badgeBorder: 'border-amber-300',
       bonusPercent: 15,
     };
   }
@@ -142,8 +149,11 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
   reviews,
   employees,
   payrolls,
+  attendances = [],
+  payrollDeductions = [],
   companyConfig,
   adminUser,
+  onChangePayrollPeriod,
   onAddReview,
   onUpdateReview,
   onDeleteReview,
@@ -537,7 +547,7 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
       {/* Toast Notification */}
       {toastMessage && (
         <div className="fixed bottom-6 right-6 z-50 bg-slate-900 text-white px-4 py-3 rounded-xl text-xs font-semibold shadow-2xl flex items-center gap-2.5 border border-slate-700 animate-in slide-in-from-bottom-3">
-          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" />
           <span>{toastMessage}</span>
         </div>
       )}
@@ -564,10 +574,10 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
           {onNavigateToPayroll && (
             <button
               onClick={onNavigateToPayroll}
-              className="px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+              className="px-3.5 py-2 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
               title="Buka Halaman Penggajian (Payroll)"
             >
-              <WalletCards className="w-4 h-4 text-emerald-600" />
+              <WalletCards className="w-4 h-4 text-amber-600" />
               <span>Buka Modul Payroll</span>
             </button>
           )}
@@ -637,7 +647,7 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
               <span className="text-2xl font-bold text-slate-900">{stats.avgScore}</span>
               <span className="text-xs text-slate-400">/ 100</span>
             </div>
-            <span className="text-[11px] text-emerald-600 font-medium flex items-center gap-1 mt-0.5">
+            <span className="text-[11px] text-amber-600 font-medium flex items-center gap-1 mt-0.5">
               <TrendingUp className="w-3.5 h-3.5" />
               {stats.gradeAplusCount} staf Grade A+ & A
             </span>
@@ -663,14 +673,14 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
         <div className="bg-white p-4.5 rounded-2xl border border-slate-200 shadow-xs flex items-center justify-between">
           <div>
             <span className="text-[11px] font-semibold text-slate-500 block">Total Alokasi Bonus Insentif</span>
-            <span className="text-xl font-bold text-emerald-700 mt-1 block">
+            <span className="text-xl font-bold text-amber-700 mt-1 block">
               {formatRupiah(stats.totalBonusAllocated)}
             </span>
-            <span className="text-[11px] text-emerald-600 font-medium mt-0.5 block">
+            <span className="text-[11px] text-amber-600 font-medium mt-0.5 block">
               {stats.syncedCount} / {stats.totalCount} tersinkron ke payroll
             </span>
           </div>
-          <div className="p-3 bg-emerald-50 text-emerald-600 rounded-2xl border border-emerald-100">
+          <div className="p-3 bg-amber-50 text-amber-600 rounded-2xl border border-amber-100">
             <WalletCards className="w-6 h-6" />
           </div>
         </div>
@@ -690,7 +700,7 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
       </div>
 
       {/* Info Banner Integrasi Bonus */}
-      <div className="bg-gradient-to-r from-indigo-50 via-purple-50 to-emerald-50 p-4 rounded-2xl border border-indigo-100 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 text-xs">
+      <div className="bg-gradient-to-r from-indigo-50 via-purple-50 to-amber-50 p-4 rounded-2xl border border-indigo-100 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 text-xs">
         <div className="flex items-center gap-3">
           <div className="p-2 bg-indigo-600 text-white rounded-xl shrink-0">
             <Award className="w-4 h-4" />
@@ -711,6 +721,50 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
           </span>
         </div>
       </div>
+
+      {/* Tabel Peringkat / Leaderboard "Karyawan Terajin & Disiplin" (Real-Time Supabase) */}
+      <DisciplineLeaderboardTable
+        employees={employees}
+        attendances={attendances}
+        companyConfig={companyConfig}
+        payrolls={payrolls}
+        payrollDeductions={payrollDeductions}
+        onChangePayrollPeriod={onChangePayrollPeriod}
+        onSelectEmployeeForBonusOrReview={(row: EmployeeDisciplineLeaderboardRow) => {
+          setEditingReview(null);
+          setFormEmployeeId(row.employeeId);
+          setFormPeriodType('Bulanan');
+          setFormPeriod(companyConfig.currentPayrollPeriod || getCurrentRealTimePayrollPeriod());
+          setFormReviewDate(getJakartaDateString());
+          const autoDisciplineScore =
+            row.badgeCategory === 'teladan'
+              ? 100
+              : row.badgeCategory === 'cukup_disiplin'
+              ? Math.max(75, 95 - row.totalLateMinutes)
+              : Math.max(40, 70 - row.alphaDaysCount * 15 - Math.floor(row.totalLateMinutes / 10));
+          setFormDisciplineScore(autoDisciplineScore);
+          setFormKpiScore(row.badgeCategory === 'teladan' ? 92 : 85);
+          setFormTeamworkScore(row.badgeCategory === 'teladan' ? 90 : 85);
+          setFormInitiativeScore(row.badgeCategory === 'teladan' ? 90 : 85);
+          setFormStrengths(
+            `Peringkat #${row.rank} Karyawan Terajin & Disiplin (${row.badgeLabel}) • Hadir ${row.presentDaysCount}/${row.requiredWorkDays} Hari (${row.attendancePercentage}%), Alpha ${row.alphaDaysCount} Hari, Terlambat ${row.totalLateMinutes} Menit.`
+          );
+          setFormImprovements(
+            row.badgeCategory === 'teladan'
+              ? 'Pertahankan kedisiplinan waktu dan keteladanan kehadiran 100%.'
+              : 'Tingkatkan ketepatan waktu jam masuk dan hindari ketidakhadiran tanpa keterangan.'
+          );
+          setFormGeneralFeedback(
+            `Evaluasi berbasis data presensi real-time Supabase periode ${
+              companyConfig.currentPayrollPeriod || getCurrentRealTimePayrollPeriod()
+            } (Cabang ${row.branchDisplayLabel}).`
+          );
+          setIsCustomBonus(false);
+          setCustomBonusAmount(0);
+          setAutoApplyToPayroll(true);
+          setIsAddModalOpen(true);
+        }}
+      />
 
       {/* Filter and Search Bar */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
@@ -865,7 +919,7 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
                             </div>
                             <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
                               <div
-                                className="h-full bg-teal-500 rounded-full"
+                                className="h-full bg-amber-500 rounded-full"
                                 style={{ width: `${Math.min(100, rev.disciplineScore)}%` }}
                               />
                             </div>
@@ -916,7 +970,7 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
 
                       {/* Bonus Insentif */}
                       <td className="py-3.5 px-4">
-                        <span className="font-bold text-emerald-700 text-xs block">
+                        <span className="font-bold text-amber-700 text-xs block">
                           {formatRupiah(rev.recommendedBonus)}
                         </span>
                         <span className="text-[10px] text-slate-400 block mt-0.5">
@@ -928,8 +982,8 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
                       <td className="py-3.5 px-4">
                         {rev.isBonusAppliedToPayroll ? (
                           <div className="space-y-1">
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full font-semibold text-[10px]">
-                              <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded-full font-semibold text-[10px]">
+                              <CheckCircle2 className="w-3 h-3 text-amber-600" />
                               Tersinkron ke Gaji
                             </span>
                             <span className="block text-[10px] text-slate-400">
@@ -1153,7 +1207,7 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
                     <div className="flex items-center justify-between mb-1.5">
                       <div>
                         <span className="font-bold text-slate-900 text-xs">
-                          B. Kedisiplinan & Presensi • <span className="text-teal-600">Bobot 20%</span>
+                          B. Kedisiplinan & Presensi • <span className="text-amber-600">Bobot 20%</span>
                         </span>
                         <p className="text-[11px] text-slate-500">
                           Ketepatan jam masuk kerja/presensi, kepatuhan SOP perusahaan, dan integritas kehadiran.
@@ -1167,7 +1221,7 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
                           max={100}
                           value={formDisciplineScore}
                           onChange={(e) => setFormDisciplineScore(Number(e.target.value))}
-                          className="w-16 p-1.5 text-center font-bold text-sm bg-teal-50 border border-teal-300 rounded-lg text-teal-900"
+                          className="w-16 p-1.5 text-center font-bold text-sm bg-amber-50 border border-amber-300 rounded-lg text-amber-900"
                         />
                         <span className="font-bold text-slate-400">/ 100</span>
                       </div>
@@ -1178,7 +1232,7 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
                       max={100}
                       value={formDisciplineScore}
                       onChange={(e) => setFormDisciplineScore(Number(e.target.value))}
-                      className="w-full accent-teal-600 cursor-pointer"
+                      className="w-full accent-amber-600 cursor-pointer"
                     />
                   </div>
 
@@ -1261,7 +1315,7 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
                 <div className="space-y-2.5">
                   <div>
                     <label className="block font-semibold text-slate-700 mb-1 flex items-center gap-1.5">
-                      <ThumbsUp className="w-3.5 h-3.5 text-emerald-600" />
+                      <ThumbsUp className="w-3.5 h-3.5 text-amber-600" />
                       Kelebihan & Prestasi Karyawan (Strengths) *
                     </label>
                     <textarea
@@ -1307,13 +1361,13 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
               </div>
 
               {/* Seksi 4: Integrasi Bonus Insentif ke Payroll */}
-              <div className="p-4 bg-emerald-50/70 rounded-xl border border-emerald-200 space-y-3">
-                <div className="flex items-center justify-between border-b border-emerald-200/80 pb-1.5">
-                  <span className="font-bold text-emerald-950 flex items-center gap-1.5 text-xs">
-                    <WalletCards className="w-4 h-4 text-emerald-700" />
+              <div className="p-4 bg-amber-50/70 rounded-xl border border-amber-200 space-y-3">
+                <div className="flex items-center justify-between border-b border-amber-200/80 pb-1.5">
+                  <span className="font-bold text-amber-950 flex items-center gap-1.5 text-xs">
+                    <WalletCards className="w-4 h-4 text-amber-700" />
                     4. Rekomendasi Bonus Insentif Payroll
                   </span>
-                  <span className="text-[11px] text-emerald-800 font-semibold bg-emerald-100 px-2 py-0.5 rounded-full">
+                  <span className="text-[11px] text-amber-800 font-semibold bg-amber-100 px-2 py-0.5 rounded-full">
                     {calculatedGradeInfo.bonusPercent}% dari Gaji Pokok
                   </span>
                 </div>
@@ -1321,7 +1375,7 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div>
                     <span className="text-slate-600 text-xs block">Nominal Bonus Insentif Hasil Kinerja:</span>
-                    <span className="text-xl font-extrabold text-emerald-800 block">
+                    <span className="text-xl font-extrabold text-amber-800 block">
                       {formatRupiah(isCustomBonus ? customBonusAmount : recommendedBonusAmount)}
                     </span>
                     <p className="text-[11px] text-slate-500 mt-0.5">
@@ -1348,7 +1402,7 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
                 </div>
 
                 {isCustomBonus && (
-                  <div className="pt-2 border-t border-emerald-200/70">
+                  <div className="pt-2 border-t border-amber-200/70">
                     <label className="block font-semibold text-slate-700 mb-1">
                       Masukkan Nominal Bonus Insentif Kustom (IDR)
                     </label>
@@ -1357,18 +1411,18 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
                       step="any"
                       value={customBonusAmount}
                       onChange={(e) => setCustomBonusAmount(Number(e.target.value))}
-                      className="w-full p-2.5 bg-white border border-emerald-300 rounded-xl text-emerald-900 font-bold"
+                      className="w-full p-2.5 bg-white border border-amber-300 rounded-xl text-amber-900 font-bold"
                     />
                   </div>
                 )}
 
-                <div className="pt-2.5 border-t border-emerald-200/70">
+                <div className="pt-2.5 border-t border-amber-200/70">
                   <label className="flex items-center gap-2 cursor-pointer select-none">
                     <input
                       type="checkbox"
                       checked={autoApplyToPayroll}
                       onChange={(e) => setAutoApplyToPayroll(e.target.checked)}
-                      className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500"
+                      className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500"
                     />
                     <span className="font-semibold text-slate-800 text-xs">
                       Langsung sinkronkan bonus insentif ini ke komponen gaji (Payroll) periode {formPeriod}
@@ -1481,9 +1535,9 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
                       {viewingReview.kpiScore}
                     </span>
                   </div>
-                  <div className="bg-white p-3 rounded-xl border border-teal-100 text-center">
+                  <div className="bg-white p-3 rounded-xl border border-amber-100 text-center">
                     <span className="text-[10px] text-slate-500 block">Disiplin (20%)</span>
-                    <span className="text-lg font-bold text-teal-700 block mt-1">
+                    <span className="text-lg font-bold text-amber-700 block mt-1">
                       {viewingReview.disciplineScore}
                     </span>
                   </div>
@@ -1504,9 +1558,9 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
 
               {/* Feedback Atasan */}
               <div className="space-y-3">
-                <div className="p-3.5 bg-emerald-50/60 rounded-xl border border-emerald-100">
-                  <span className="font-bold text-emerald-900 flex items-center gap-1.5 text-xs">
-                    <ThumbsUp className="w-3.5 h-3.5 text-emerald-700" />
+                <div className="p-3.5 bg-amber-50/60 rounded-xl border border-amber-100">
+                  <span className="font-bold text-amber-900 flex items-center gap-1.5 text-xs">
+                    <ThumbsUp className="w-3.5 h-3.5 text-amber-700" />
                     Kelebihan & Prestasi Karyawan (Strengths)
                   </span>
                   <p className="text-slate-700 mt-1 leading-relaxed text-xs">
@@ -1539,18 +1593,18 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
               </div>
 
               {/* Bonus Insentif Info */}
-              <div className="p-4 bg-emerald-50/80 rounded-2xl border border-emerald-200 flex items-center justify-between">
+              <div className="p-4 bg-amber-50/80 rounded-2xl border border-amber-200 flex items-center justify-between">
                 <div>
-                  <span className="text-[11px] font-semibold text-emerald-900 block">
+                  <span className="text-[11px] font-semibold text-amber-900 block">
                     Bonus Insentif Berdasarkan Kinerja
                   </span>
-                  <span className="text-lg font-black text-emerald-800">
+                  <span className="text-lg font-black text-amber-800">
                     {formatRupiah(viewingReview.recommendedBonus)}
                   </span>
                 </div>
                 <div>
                   {viewingReview.isBonusAppliedToPayroll ? (
-                    <span className="inline-flex items-center gap-1 px-3 py-1 bg-emerald-600 text-white rounded-full font-bold text-xs shadow-2xs">
+                    <span className="inline-flex items-center gap-1 px-3 py-1 bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 font-bold rounded-full font-bold text-xs shadow-2xs">
                       <CheckCircle2 className="w-3.5 h-3.5" />
                       Tersinkron ke Payroll ({viewingReview.payrollPeriodApplied || viewingReview.period})
                     </span>
@@ -1565,7 +1619,7 @@ export const PerformanceReviewView: React.FC<PerformanceReviewViewProps> = ({
                         });
                         showToast(`Bonus berhasil diterapkan ke slip gaji ${viewingReview.employeeName}!`);
                       }}
-                      className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl font-bold text-xs shadow-xs transition-colors cursor-pointer"
+                      className="px-3 py-1.5 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold rounded-xl font-bold text-xs shadow-xs transition-colors cursor-pointer"
                     >
                       Terapkan ke Payroll Sekarang
                     </button>

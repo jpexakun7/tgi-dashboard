@@ -627,7 +627,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
       {/* Toast popup */}
       {toastMessage && (
         <div className="fixed bottom-6 right-6 z-50 bg-slate-900 text-white px-4 py-2.5 rounded-xl text-xs font-semibold shadow-xl flex items-center gap-2 border border-slate-700">
-          <CheckCircle className="w-4 h-4 text-emerald-400" />
+          <CheckCircle className="w-4 h-4 text-amber-400" />
           <span>{toastMessage}</span>
         </div>
       )}
@@ -637,7 +637,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
         <div>
           <div className="flex flex-wrap items-center gap-2.5">
             <h1 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
-              <WalletCards className="w-6 h-6 text-emerald-600" />
+              <WalletCards className="w-6 h-6 text-amber-600" />
               Penggajian (Payroll) &amp; Slip Gaji
             </h1>
             {isCurrentPeriodLocked ? (
@@ -646,8 +646,8 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                 Periode Terkunci (Arsip)
               </span>
             ) : (
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-[11px] font-semibold">
-                <Unlock className="w-3.5 h-3.5 text-emerald-600" />
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-50 text-amber-800 border border-amber-200 text-[11px] font-semibold">
+                <Unlock className="w-3.5 h-3.5 text-amber-600" />
                 Periode Aktif Berjalan (Cut-off Tgl {companyConfig.cutOffEndDay || 25})
               </span>
             )}
@@ -660,7 +660,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
         <div className="flex flex-wrap items-center gap-2">
           {/* Pemilih Periode Bulan Payroll (Terisolasi Rentang Cut-Off Tgl 26 – Tgl 25) */}
           <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-xl px-3 py-1.5 shadow-2xs">
-            <Calendar className="w-4 h-4 text-emerald-600 shrink-0" />
+            <Calendar className="w-4 h-4 text-amber-600 shrink-0" />
             <span className="text-[11px] font-semibold text-slate-500 hidden sm:inline">
               Periode &amp; Arsip:
             </span>
@@ -744,7 +744,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
           <button
             type="button"
             onClick={() => setIsBroadcastModalOpen(true)}
-            className="px-3.5 py-2 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
+            className="px-3.5 py-2 bg-gradient-to-r from-amber-600 to-amber-600 hover:from-amber-700 hover:to-amber-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
             title="Broadcast WhatsApp Pengumuman Slip Gaji Terbit ke seluruh karyawan Tas Grosir Import"
           >
             <MessageCircle className="w-4 h-4 text-white" />
@@ -824,10 +824,10 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
               }
               setIsUploadModalOpen(true);
             }}
-            className="px-3 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+            className="px-3 py-2 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
             title="Import data gaji dari file Excel atau CSV"
           >
-            <Upload className="w-4 h-4 text-emerald-600" />
+            <Upload className="w-4 h-4 text-amber-600" />
             <span className="hidden sm:inline">Upload Payroll</span>
           </button>
 
@@ -857,11 +857,11 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                     setIsExportMenuOpen(false);
                     handleDownloadBankTransferCSV('BCA_MANDIRI');
                   }}
-                  className="w-full px-3 py-2.5 text-left text-xs font-medium text-slate-800 hover:bg-emerald-50 hover:text-emerald-950 flex items-start gap-2.5 cursor-pointer bg-emerald-50/40"
+                  className="w-full px-3 py-2.5 text-left text-xs font-medium text-slate-800 hover:bg-amber-50 hover:text-amber-950 flex items-start gap-2.5 cursor-pointer bg-amber-50/40"
                 >
-                  <Building2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                  <Building2 className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                   <div>
-                    <span className="block font-bold text-emerald-900">
+                    <span className="block font-bold text-amber-900">
                       Unduh Format Transfer Bank (CSV BCA/Mandiri)
                     </span>
                     <span className="text-[10px] text-slate-500 block leading-snug mt-0.5">
@@ -877,7 +877,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                   }}
                   className="w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
                 >
-                  <Download className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <Download className="w-4 h-4 text-amber-600 shrink-0" />
                   <span>Khusus Rekening KlikBCA Bisnis (CSV)</span>
                 </button>
                 <button
@@ -901,9 +901,9 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                 <button
                   type="button"
                   onClick={() => handleExportCSV(payrolls)}
-                  className="w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-emerald-50 hover:text-emerald-900 flex items-center gap-2 cursor-pointer"
+                  className="w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-amber-50 hover:text-amber-900 flex items-center gap-2 cursor-pointer"
                 >
-                  <FileSpreadsheet className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <FileSpreadsheet className="w-4 h-4 text-amber-600 shrink-0" />
                   <div>
                     <span className="block font-semibold">Laporan Payroll Lengkap (CSV)</span>
                     <span className="text-[10px] text-slate-400">Format tabel lengkap untuk Microsoft Excel</span>
@@ -912,7 +912,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                 <button
                   type="button"
                   onClick={() => handleExportPDF(payrolls)}
-                  className="w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-emerald-50 hover:text-emerald-900 flex items-center gap-2 cursor-pointer"
+                  className="w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-amber-50 hover:text-amber-900 flex items-center gap-2 cursor-pointer"
                 >
                   <FileText className="w-4 h-4 text-indigo-600 shrink-0" />
                   <div>
@@ -926,7 +926,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                     setIsExportMenuOpen(false);
                     setIsReportModalOpen(true);
                   }}
-                  className="w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-emerald-50 hover:text-emerald-900 flex items-center gap-2 cursor-pointer"
+                  className="w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-amber-50 hover:text-amber-900 flex items-center gap-2 cursor-pointer"
                 >
                   <Printer className="w-4 h-4 text-purple-600 shrink-0" />
                   <div>
@@ -981,7 +981,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
             className={`px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-md ${
               isCurrentPeriodLocked
                 ? 'bg-slate-200 text-slate-500 cursor-not-allowed'
-                : 'bg-emerald-700 hover:bg-emerald-800 text-white shadow-emerald-700/20'
+                : 'bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold shadow-amber-700/20'
             }`}
           >
             <Calculator className="w-4 h-4" />
@@ -1021,20 +1021,20 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
       )}
 
       {/* Payroll Summary Stats Card */}
-      <div className="bg-gradient-to-r from-emerald-800 to-teal-900 rounded-2xl p-6 text-white shadow-lg">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center pb-5 border-b border-emerald-700/60 gap-3">
+      <div className="bg-gradient-to-r from-amber-800 to-amber-900 rounded-2xl p-6 text-white shadow-lg">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center pb-5 border-b border-amber-700/60 gap-3">
           <div>
-            <span className="text-emerald-200 text-xs font-semibold uppercase tracking-wider">
+            <span className="text-amber-200 text-xs font-semibold uppercase tracking-wider">
               TOTAL ESTIMASI PENGELUARAN GAJI BERSIH (TAKE HOME PAY)
             </span>
             <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight mt-1">
               {formatRupiah(totalTakeHomePay)}
             </h2>
-            <p className="text-xs text-emerald-200 mt-0.5">
+            <p className="text-xs text-amber-200 mt-0.5">
               Untuk {validPayrolls.length} Karyawan Aktif {companyConfig.companyName} • Periode {companyConfig.currentPayrollPeriod}
             </p>
           </div>
-          <div className="bg-emerald-950/60 px-4 py-3 rounded-xl border border-emerald-600/40 text-xs text-emerald-100 space-y-2">
+          <div className="bg-amber-950/60 px-4 py-3 rounded-xl border border-amber-600/40 text-xs text-amber-100 space-y-2">
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div className="flex items-center gap-2">
                 {isCurrentPeriodLocked ? (
@@ -1046,7 +1046,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                   </>
                 ) : (
                   <>
-                    <Clock className="w-4 h-4 text-emerald-400" />
+                    <Clock className="w-4 h-4 text-amber-400" />
                     <span className="font-semibold">
                       Tahapan Slip Gaji:{' '}
                       {validPayrolls.filter((p) => p.paymentStatus === 'Lunas').length}/
@@ -1067,29 +1067,29 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                   <button
                     type="button"
                     onClick={() => handleBulkUpdatePaymentStatus('Lunas')}
-                    className="px-2.5 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-[10px] font-extrabold cursor-pointer"
+                    className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-[10px] font-extrabold cursor-pointer"
                   >
                     Tandai Semua Lunas
                   </button>
                 </div>
               )}
             </div>
-            <div className="pt-1.5 border-t border-emerald-700/50 flex flex-wrap items-center gap-2 text-[11px] text-emerald-200">
+            <div className="pt-1.5 border-t border-amber-700/50 flex flex-wrap items-center gap-2 text-[11px] text-amber-200">
               <span className="font-bold text-white flex items-center gap-1">
-                <Calendar className="w-3.5 h-3.5 text-emerald-300" />
+                <Calendar className="w-3.5 h-3.5 text-amber-300" />
                 Tanggal Pencairan Gaji Bulanan:
               </span>
               <input
                 type="date"
                 value={manualMonthlyPayoutDateStr}
                 onChange={(e) => handleSetPeriodManualPayoutDate(e.target.value)}
-                className="px-2 py-1 rounded-lg bg-slate-900/90 border border-emerald-400/50 text-emerald-200 text-[11px] font-bold focus:outline-none focus:ring-2 focus:ring-emerald-400 cursor-pointer"
+                className="px-2 py-1 rounded-lg bg-slate-900/90 border border-amber-400/50 text-amber-200 text-[11px] font-bold focus:outline-none focus:ring-2 focus:ring-amber-400 cursor-pointer"
                 title="Pilih Tanggal Pencairan Gaji Bulanan secara manual (tampil di Header Slip Gaji)"
               />
               <button
                 type="button"
                 onClick={() => handleSetPeriodManualPayoutDate(getJakartaDateString())}
-                className="px-2 py-0.5 rounded-md bg-emerald-500/30 hover:bg-emerald-500/40 border border-emerald-300/40 text-white text-[10px] font-bold cursor-pointer"
+                className="px-2 py-0.5 rounded-md bg-amber-500/30 hover:bg-amber-500/40 border border-amber-300/40 text-white text-[10px] font-bold cursor-pointer"
                 title="Atur Tanggal Pencairan ke Hari Ini"
               >
                 Hari Ini
@@ -1104,14 +1104,14 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                 className={`px-2.5 py-0.5 rounded-md border text-[10px] font-extrabold cursor-pointer transition-colors ${
                   isFlexibleMonthlyPayout
                     ? 'bg-amber-400 text-slate-950 border-amber-300'
-                    : 'bg-white/10 hover:bg-white/20 text-emerald-100 border-white/20'
+                    : 'bg-white/10 hover:bg-white/20 text-amber-100 border-white/20'
                 }`}
                 title="Mode Fleksibel / Tidak Menentu (tanpa warning keterlambatan jika tanggal gajian bergeser)"
               >
                 {isFlexibleMonthlyPayout ? '✓ Mode Fleksibel / Tidak Menentu' : 'Set Fleksibel / Tidak Menentu'}
               </button>
             </div>
-            <p className="text-[11px] text-emerald-300">
+            <p className="text-[11px] text-amber-300">
               Jadwal Pencairan di Slip Gaji: <strong className="text-white">{resolvedMonthlyPayoutDisplayLabel}</strong> (Cut-Off Absensi Tetap Tgl {companyConfig.cutOffEndDay || 25}) • Berita: &ldquo;{formatBankTransferRemark(companyConfig.currentPayrollPeriod, 'Tas Grosir Import')}&rdquo;
             </p>
           </div>
@@ -1119,20 +1119,20 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
 
         {/* Breakdown bar */}
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3 pt-5 text-xs">
-          <div className="bg-emerald-700/40 p-2.5 rounded-xl border border-emerald-600/30">
-            <span className="text-emerald-200 block text-[11px]">Total Gaji Pokok</span>
+          <div className="bg-amber-700/40 p-2.5 rounded-xl border border-amber-600/30">
+            <span className="text-amber-200 block text-[11px]">Total Gaji Pokok</span>
             <span className="font-bold text-sm">{formatRupiah(totalBaseSalary)}</span>
           </div>
-          <div className="bg-emerald-700/40 p-2.5 rounded-xl border border-emerald-600/30">
-            <span className="text-emerald-200 block text-[11px]">Total Tunjangan</span>
+          <div className="bg-amber-700/40 p-2.5 rounded-xl border border-amber-600/30">
+            <span className="text-amber-200 block text-[11px]">Total Tunjangan</span>
             <span className="font-bold text-sm">{formatRupiah(totalAllowances)}</span>
           </div>
-          <div className="bg-emerald-700/40 p-2.5 rounded-xl border border-emerald-600/30">
-            <span className="text-emerald-200 block text-[11px]">Total Lembur</span>
+          <div className="bg-amber-700/40 p-2.5 rounded-xl border border-amber-600/30">
+            <span className="text-amber-200 block text-[11px]">Total Lembur</span>
             <span className="font-bold text-sm">{formatRupiah(totalOvertime)}</span>
           </div>
-          <div className="bg-emerald-700/40 p-2.5 rounded-xl border border-emerald-600/30">
-            <span className="text-emerald-200 block text-[11px]">Total Bonus &amp; Komisi Live</span>
+          <div className="bg-amber-700/40 p-2.5 rounded-xl border border-amber-600/30">
+            <span className="text-amber-200 block text-[11px]">Total Bonus &amp; Komisi Live</span>
             <span className="font-bold text-sm">{formatRupiah(totalBonus + totalSalesCommission)}</span>
             {totalSalesCommission > 0 && (
               <span className="block text-[10px] text-pink-200 font-semibold mt-0.5">
@@ -1140,18 +1140,18 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
               </span>
             )}
           </div>
-          <div className="bg-emerald-700/40 p-2.5 rounded-xl border border-emerald-600/30">
-            <span className="text-emerald-200 block text-[11px]">Total PPh 21 TER</span>
+          <div className="bg-amber-700/40 p-2.5 rounded-xl border border-amber-600/30">
+            <span className="text-amber-200 block text-[11px]">Total PPh 21 TER</span>
             <span className="font-bold text-sm text-amber-200">{formatRupiah(totalPph21)}</span>
           </div>
-          <div className="bg-emerald-700/40 p-2.5 rounded-xl border border-emerald-600/30">
-            <span className="text-emerald-200 block text-[11px]">Denda Terlambat &amp; Absen</span>
+          <div className="bg-amber-700/40 p-2.5 rounded-xl border border-amber-600/30">
+            <span className="text-amber-200 block text-[11px]">Denda Terlambat &amp; Absen</span>
             <span className="font-bold text-sm text-rose-200">
               ({formatRupiah(totalLateAndAlphaDeductions)})
             </span>
           </div>
-          <div className="bg-emerald-700/40 p-2.5 rounded-xl border border-emerald-600/30">
-            <span className="text-emerald-200 block text-[11px]">Total Seluruh Potongan</span>
+          <div className="bg-amber-700/40 p-2.5 rounded-xl border border-amber-600/30">
+            <span className="text-amber-200 block text-[11px]">Total Seluruh Potongan</span>
             <span className="font-bold text-sm text-rose-200">({formatRupiah(totalDeductions)})</span>
           </div>
         </div>
@@ -1161,12 +1161,12 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
       <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
         <div className="px-5 py-3.5 bg-slate-900 text-white flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-2.5 text-xs">
-            <Settings2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            <Settings2 className="w-4 h-4 text-amber-400 shrink-0" />
             <div>
               <span className="font-bold text-white">
                 Aturan Denda Keterlambatan &amp; Potongan Absen:
               </span>{' '}
-              <span className="text-emerald-300 font-semibold">
+              <span className="text-amber-300 font-semibold">
                 Toleransi {penaltyPolicy.gracePeriodMinutes} mnt •{' '}
                 {penaltyPolicy.latePenaltyScheme === 'flat_per_incident'
                   ? `Flat ${formatRupiah(penaltyPolicy.flatLatePenaltyAmount)}/hari terlambat`
@@ -1183,7 +1183,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
           <button
             type="button"
             onClick={() => setIsPenaltyConfigOpen((prev) => !prev)}
-            className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold cursor-pointer shrink-0"
+            className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold text-xs font-bold cursor-pointer shrink-0"
           >
             {isPenaltyConfigOpen ? 'Tutup Konfigurasi' : 'Kustomisasi Aturan Denda'}
           </button>
@@ -1218,7 +1218,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                   onChange={(e) =>
                     handleUpdatePolicy({ useShiftGracePeriod: e.target.checked })
                   }
-                  className="rounded text-emerald-600"
+                  className="rounded text-amber-600"
                 />
                 <span>Ikuti toleransi masing-masing Shift Kerja</span>
               </label>
@@ -1345,7 +1345,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
             placeholder="Cari nama, NIK, atau no referensi slip..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-9 pr-4 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20 text-slate-700"
+            className="w-full pl-9 pr-4 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500/20 text-slate-700"
           />
         </div>
 
@@ -1353,7 +1353,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
           <select
             value={selectedDept}
             onChange={(e) => setSelectedDept(e.target.value)}
-            className="px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-700 focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20 cursor-pointer"
+            className="px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-700 focus:outline-hidden focus:ring-2 focus:ring-amber-500/20 cursor-pointer"
           >
             <option value="ALL">Semua Departemen ({employees.length})</option>
             {uniqueDepartments.map((dept) => {
@@ -1381,10 +1381,10 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
           <button
             type="button"
             onClick={() => handleExportCSV(filteredPayrolls)}
-            className="px-3 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+            className="px-3 py-2 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
             title="Unduh data terfilter ke format CSV"
           >
-            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+            <FileSpreadsheet className="w-3.5 h-3.5 text-amber-600" />
             <span>Ekspor CSV</span>
           </button>
 
@@ -1395,7 +1395,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
             className="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
             title="Unduh data terfilter ke format PDF resmi"
           >
-            <FileText className="w-3.5 h-3.5 text-emerald-400" />
+            <FileText className="w-3.5 h-3.5 text-amber-400" />
             <span>Ekspor PDF</span>
           </button>
 
@@ -1516,7 +1516,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                       <span className="font-bold text-slate-900 block">
                         Pokok: {formatRupiah(record.baseSalary)}
                       </span>
-                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 mt-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200 font-semibold text-[10px]">
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 mt-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 font-semibold text-[10px]">
                         {record.totalActualWorkHours ?? 0} Jam Kerja ({record.presentDaysCount ?? 0} Hr) ×{' '}
                         {formatRupiah(
                           record.hourlyRate ||
@@ -1532,6 +1532,22 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                         )}
                         /hari
                       </span>
+                      {(record.restDayOvertimeDaysCount || 0) > 0 && (
+                        <span className="block text-[10px] font-bold text-amber-800 bg-amber-50/80 border border-amber-300/80 px-1.5 py-0.5 rounded mt-0.5">
+                          ⚡ Lembur Minggu: {record.restDayOvertimeDaysCount} Hr (
+                          {Math.round(((record.restDayOvertimeMinutes || 0) / 60) * 10) / 10} Jam)
+                        </span>
+                      )}
+                      {(record.dayOffReplacementDaysCount || 0) > 0 && (
+                        <span className="block text-[10px] font-bold text-indigo-800 bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 rounded mt-0.5">
+                          🔄 Tukar Hari Libur Minggu: {record.dayOffReplacementDaysCount} Hr
+                          {(record.alphaDaysReplacedCount || 0) > 0
+                            ? ` (Pulihkan ${record.alphaDaysReplacedCount} Hr Alpha)`
+                            : (record.unpaidLeaveDaysReplacedCount || 0) > 0
+                            ? ` (Pulihkan ${record.unpaidLeaveDaysReplacedCount} Hr Izin)`
+                            : ' (Pulihkan Absen)'}
+                        </span>
+                      )}
                       {(record.alphaDaysCount || 0) > 0 && (
                         <span className="block text-[10px] font-bold text-rose-600 mt-0.5">
                           Alpha {record.alphaDaysCount} Hr (0 Jam) dipotong (-
@@ -1544,9 +1560,49 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                           )
                         </span>
                       )}
-                      <span className="text-[11px] text-slate-500 block mt-0.5">
-                        Tunjangan: +{formatRupiah(totalTunjangan)}
+                      <span className="text-[11px] font-semibold text-slate-700 block mt-0.5">
+                        Tunjangan Aktif: +{formatRupiah(totalTunjangan)}
                       </span>
+                      <div className="mt-1 space-y-0.5">
+                        <span
+                          className={`block text-[10px] px-1.5 py-0.5 rounded border ${
+                            record.isKerajinanForfeited
+                              ? 'bg-rose-50 text-rose-700 border-rose-200 font-semibold'
+                              : (record.tunjanganKerajinan ?? 0) > 0
+                              ? 'bg-amber-50/80 text-amber-900 border-amber-300/80 font-semibold'
+                              : 'bg-slate-50 text-slate-500 border-slate-200'
+                          }`}
+                        >
+                          Kerajinan:{' '}
+                          {record.isKerajinanForfeited
+                            ? `Rp 0 — Hangus (Alpha ${record.alphaDaysCount || 0} Hr)`
+                            : `${formatRupiah(record.tunjanganKerajinan ?? 0)} ${
+                                record.isManualKerajinanOverride
+                                  ? '(Manual)'
+                                  : (record.alphaDaysReplacedCount || 0) > 0
+                                  ? '(Aman • Tukar Hari Minggu ✓)'
+                                  : '(Alpha 0 Hr ✓)'
+                              }`}
+                        </span>
+                        <span
+                          className={`block text-[10px] px-1.5 py-0.5 rounded border ${
+                            record.isKedisiplinanForfeited
+                              ? 'bg-rose-50 text-rose-700 border-rose-200 font-semibold'
+                              : (record.tunjanganKedisiplinan ?? 0) > 0
+                              ? 'bg-amber-50/80 text-amber-900 border-amber-300/80 font-semibold'
+                              : 'bg-slate-50 text-slate-500 border-slate-200'
+                          }`}
+                        >
+                          Kedisiplinan:{' '}
+                          {record.isKedisiplinanForfeited
+                            ? `Rp 0 — Hangus (Telat ${record.totalLateMinutes || 0} Mnt)`
+                            : `${formatRupiah(record.tunjanganKedisiplinan ?? 0)} ${
+                                record.isManualKedisiplinanOverride
+                                  ? '(Manual)'
+                                  : '(Telat 0 Mnt ✓)'
+                              }`}
+                        </span>
+                      </div>
                     </td>
                     <td className="py-3 px-4">
                       <div>
@@ -1555,7 +1611,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                             record.overtimePay + record.bonus + (record.salesCommission || 0)
                           )}
                         </span>
-                        <span className="text-[10px] text-emerald-600 block">
+                        <span className="text-[10px] text-amber-600 block">
                           OT: {formatRupiah(record.overtimePay)}{' '}
                           {record.overtimeMinutes ? `(${record.overtimeMinutes} mnt)` : ''} | Bns:{' '}
                           {formatRupiah(record.bonus)}
@@ -1606,7 +1662,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                             <span
                               className={`inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded border ${
                                 record.bonus === matchingRev.recommendedBonus && matchingRev.recommendedBonus > 0
-                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                  ? 'bg-amber-50 text-amber-700 border-amber-200'
                                   : 'bg-indigo-50 text-indigo-700 border-indigo-200/80'
                               }`}
                               title={`Skor KPI: ${matchingRev.kpiScore}, Skor Akhir: ${matchingRev.finalScore} (Grade ${matchingRev.grade}) • Rekomendasi: ${formatRupiah(matchingRev.recommendedBonus)}`}
@@ -1666,7 +1722,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                             </span>
                           </div>
                         ) : (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">
+                          <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded">
                             Rp 0 (Disiplin Penuh)
                           </span>
                         )}
@@ -1713,7 +1769,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                       <span className="font-bold text-slate-900 text-sm block">
                         {formatRupiah(Math.max(0, record.takeHomePay))}
                       </span>
-                      <span className="text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded font-medium block w-fit">
+                      <span className="text-[10px] text-amber-700 bg-amber-50 px-1.5 py-0.2 rounded font-medium block w-fit">
                         Bruto: {formatRupiah(record.totalGrossSalary)}
                       </span>
                       {record.totalDeductions > record.totalGrossSalary && (
@@ -1731,14 +1787,14 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                         <span
                           className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full font-semibold text-[10px] ${
                             record.paymentStatus === 'Lunas'
-                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                              ? 'bg-amber-100 text-amber-800 border border-amber-200'
                               : record.paymentStatus === 'Menunggu Transfer'
                               ? 'bg-amber-100 text-amber-900 border border-amber-300'
                               : 'bg-slate-100 text-slate-700 border border-slate-300'
                           }`}
                         >
                           {record.paymentStatus === 'Lunas' ? (
-                            <CheckCircle className="w-3 h-3 text-emerald-600" />
+                            <CheckCircle className="w-3 h-3 text-amber-600" />
                           ) : (
                             <Clock className="w-3 h-3 text-amber-600" />
                           )}
@@ -1754,7 +1810,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                               )
                             }
                             aria-label="Tahapan Status Pembayaran Slip Gaji"
-                            className="px-2 py-0.5 text-[10px] font-bold rounded-md border border-slate-300 bg-white text-slate-700 hover:border-emerald-500 focus:outline-none cursor-pointer"
+                            className="px-2 py-0.5 text-[10px] font-bold rounded-md border border-slate-300 bg-white text-slate-700 hover:border-amber-500 focus:outline-none cursor-pointer"
                           >
                             <option value="Draft">1. Draft (Verifikasi)</option>
                             <option value="Menunggu Transfer">2. Menunggu Transfer</option>
@@ -1803,7 +1859,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                         <button
                           type="button"
                           onClick={() => onOpenPayslip(record)}
-                          className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer shadow-2xs"
+                          className="px-2.5 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer shadow-2xs"
                         >
                           <Eye className="w-3.5 h-3.5" />
                           <span>Slip Gaji</span>
@@ -1824,7 +1880,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                               title={`Kirim Notifikasi WA Slip Gaji ke ${emp.fullName} (${
                                 emp.phone || 'No HP kosong'
                               })`}
-                              className="px-2.5 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-semibold inline-flex items-center gap-1 transition-colors shadow-2xs"
+                              className="px-2.5 py-1.5 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold rounded-lg text-xs font-semibold inline-flex items-center gap-1 transition-colors shadow-2xs"
                             >
                               <MessageCircle className="w-3.5 h-3.5" />
                               <span>Kirim Notifikasi WA</span>
@@ -1963,7 +2019,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                   <div className="pt-2 border-t border-indigo-200/80 flex items-center justify-between">
                     <div>
                       <span className="text-[10px] text-slate-500 block">Rekomendasi Bonus KPI:</span>
-                      <span className="font-bold text-emerald-800 text-xs">
+                      <span className="font-bold text-amber-800 text-xs">
                         {formatRupiah(activeReview.recommendedBonus)}
                       </span>
                     </div>
@@ -2022,8 +2078,8 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                       onClick={() => setOvertimeMinutesInput(preset)}
                       className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border transition-colors cursor-pointer ${
                         overtimeMinutesInput === preset
-                          ? 'bg-emerald-600 text-white border-emerald-600'
-                          : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-emerald-50'
+                          ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 border-amber-500 font-bold'
+                          : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-amber-50'
                       }`}
                     >
                       {preset} mnt
@@ -2042,11 +2098,11 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                     companyConfig.defaultOvertimeMultiplier || 1.5
                   );
                   return (
-                    <div className="mt-2 p-2.5 bg-emerald-50/80 border border-emerald-200 rounded-xl flex items-center justify-between text-[11px]">
-                      <span className="text-emerald-800">
+                    <div className="mt-2 p-2.5 bg-amber-50/80 border border-amber-200 rounded-xl flex items-center justify-between text-[11px]">
+                      <span className="text-amber-800">
                         {overtimeMinutesInput} menit × {formatRupiah(ratePerMin)}/menit:
                       </span>
-                      <span className="font-bold text-emerald-950">
+                      <span className="font-bold text-amber-950">
                         {formatRupiah(previewPay)}
                       </span>
                     </div>
@@ -2064,7 +2120,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
               </button>
               <button
                 onClick={handleSaveBonus}
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl cursor-pointer"
+                className="px-4 py-2 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold font-semibold rounded-xl cursor-pointer"
               >
                 Simpan & Perbarui
               </button>
@@ -2131,7 +2187,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
           <div className="bg-white rounded-2xl max-w-3xl w-full p-6 shadow-2xl border border-slate-200 max-h-[90vh] overflow-y-auto space-y-5">
             <div className="flex items-start justify-between gap-3 pb-3 border-b border-slate-100">
               <div className="flex items-center gap-3">
-                <div className="p-2.5 rounded-xl bg-green-100 text-green-700">
+                <div className="p-2.5 rounded-xl bg-amber-100 text-amber-700">
                   <MessageCircle className="w-5 h-5" />
                 </div>
                 <div>
@@ -2140,7 +2196,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                   </h3>
                   <p className="text-xs text-slate-500">
                     Periode {companyConfig.currentPayrollPeriod} • {validPayrolls.length} Karyawan Aktif • Total THP:{' '}
-                    <strong className="text-emerald-700">{formatRupiah(totalTakeHomePay)}</strong>
+                    <strong className="text-amber-700">{formatRupiah(totalTakeHomePay)}</strong>
                   </p>
                 </div>
               </div>
@@ -2154,13 +2210,13 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
             </div>
 
             {/* Bagian 1: Template Pengumuman Grup WhatsApp Perusahaan */}
-            <div className="p-4 bg-green-50/70 border border-green-200 rounded-xl space-y-3">
+            <div className="p-4 bg-amber-50/70 border border-amber-200 rounded-xl space-y-3">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div>
-                  <h4 className="text-xs font-bold text-green-950">
+                  <h4 className="text-xs font-bold text-amber-950">
                     1. Pengumuman Grup WhatsApp Karyawan ({companyConfig.companyName})
                   </h4>
-                  <p className="text-[11px] text-green-800">
+                  <p className="text-[11px] text-amber-800">
                     Bagikan pengumuman resmi ke grup WhatsApp kantor atau salin teks pesan di bawah ini
                   </p>
                 </div>
@@ -2177,7 +2233,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                       navigator.clipboard?.writeText(text);
                       showToast('Teks Broadcast WA berhasil disalin ke clipboard!');
                     }}
-                    className="px-3 py-1.5 bg-white hover:bg-green-100 text-green-800 border border-green-300 rounded-xl text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"
+                    className="px-3 py-1.5 bg-white hover:bg-amber-100 text-amber-800 border border-amber-300 rounded-xl text-xs font-bold inline-flex items-center gap-1.5 cursor-pointer"
                   >
                     <Copy className="w-3.5 h-3.5" />
                     <span>Salin Teks</span>
@@ -2191,7 +2247,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                     )}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="px-3.5 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5 shadow-2xs"
+                    className="px-3.5 py-1.5 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold rounded-xl text-xs font-bold inline-flex items-center gap-1.5 shadow-2xs"
                   >
                     <MessageCircle className="w-3.5 h-3.5" />
                     <span>Buka WhatsApp Broadcast</span>
@@ -2199,7 +2255,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                   </a>
                 </div>
               </div>
-              <pre className="p-3 bg-white border border-green-200 rounded-xl text-[11px] text-slate-700 font-sans whitespace-pre-wrap max-h-40 overflow-y-auto">
+              <pre className="p-3 bg-white border border-amber-200 rounded-xl text-[11px] text-slate-700 font-sans whitespace-pre-wrap max-h-40 overflow-y-auto">
                 {buildBroadcastPayslipWaMessage(
                   companyConfig.currentPayrollPeriod,
                   validPayrolls.length,
@@ -2240,7 +2296,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                           <div className="font-bold text-slate-900 flex items-center gap-2 flex-wrap">
                             <span>{emp.fullName}</span>
                             <span className="text-[10px] font-mono text-slate-500">({emp.nik})</span>
-                            <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold">
+                            <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-bold">
                               THP: {formatRupiah(rec.takeHomePay)}
                             </span>
                           </div>
@@ -2264,7 +2320,7 @@ export const PayrollManagement: React.FC<PayrollManagementProps> = ({
                           href={getPayslipWhatsAppUrl(emp, rec, companyConfig)}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5 shadow-2xs"
+                          className="px-3 py-1.5 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold rounded-xl text-xs font-bold inline-flex items-center gap-1.5 shadow-2xs"
                         >
                           <MessageCircle className="w-3.5 h-3.5" />
                           <span>Kirim Notifikasi WA</span>

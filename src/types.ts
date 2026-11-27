@@ -6,6 +6,8 @@ export type EmploymentType = 'Full-Time' | 'Contract' | 'Part-Time';
 
 export type PTKPStatus = 'TK/0' | 'TK/1' | 'TK/2' | 'TK/3' | 'K/0' | 'K/1' | 'K/2' | 'K/3';
 
+export type EmployeeBranchName = 'Sumber Mas' | 'Green Lake City';
+
 export interface Employee {
   id: string;
   nik: string; // Nomor Induk Karyawan
@@ -35,6 +37,8 @@ export interface Employee {
   generatedLetters?: GeneratedHrLetterRecord[]; // Riwayat surat HR (PKWT, PKWTT, SP1, SP2, SP3) yang diterbitkan
   role: string;
   department: Department;
+  branch?: EmployeeBranchName | string; // Cabang / Lokasi Kerja: 'Sumber Mas' | 'Green Lake City'
+  cabang?: EmployeeBranchName | string; // Alias kolom Supabase cabang
   employmentStatus: EmploymentStatus;
   status?: string; // Alias status kontrak / kepegawaian
   employmentType?: EmploymentType; // Tipe Karyawan: Full-Time | Contract | Part-Time
@@ -47,13 +51,21 @@ export interface Employee {
   overtime_rate?: number; // Alias kolom Supabase overtime_rate
   standard_daily_hours?: number; // Standar Jam Kerja Harian per karyawan (default: 9 jam/hari, bisa diisi 6 jam/hari atau angka manual)
   standardDailyHours?: number; // Alias camelCase untuk standard_daily_hours
+  hari_kerja_per_minggu?: number; // Skema Hari Kerja per Minggu per karyawan: 6 ("6 Hari/Minggu" -> pembagi 26 hari), 7 ("7 Hari/Minggu" -> pembagi 30 hari), atau 0/undefined (mengikuti default sistem/shift)
+  workDaysPerWeek?: number; // Alias camelCase untuk hari_kerja_per_minggu
   dailySalary?: number; // Gaji Per Hari (daily_salary = standard_daily_hours × hourly_rate)
   daily_salary?: number; // Alias kolom Supabase daily_salary
+  tunjangan_kerajinan?: number; // Nominal dasar Tunjangan Kerajinan bulanan (Rp, otomatis cair jika Alpha = 0 hari, hangus Rp 0 jika Alpha >= 1 hari)
+  tunjanganKerajinan?: number; // Alias camelCase untuk tunjangan_kerajinan
+  tunjangan_kedisiplinan?: number; // Nominal dasar Tunjangan Kedisiplinan bulanan (Rp, otomatis cair jika Terlambat = 0 menit, hangus Rp 0 jika Terlambat > 0 menit)
+  tunjanganKedisiplinan?: number; // Alias camelCase untuk tunjangan_kedisiplinan
   allowances: {
     position: number; // Tunjangan Jabatan
-    transport: number; // Tunjangan Transport
-    meal: number; // Tunjangan Makan
+    transport: number; // Tunjangan Transport / Kerajinan
+    meal: number; // Tunjangan Makan / Kedisiplinan
     communication: number; // Tunjangan Komunikasi
+    tunjangan_kerajinan?: number; // Nominal dasar Tunjangan Kerajinan
+    tunjangan_kedisiplinan?: number; // Nominal dasar Tunjangan Kedisiplinan
   };
   bankName: 'BCA' | 'Mandiri' | 'BRI' | 'BNI';
   bankAccountNumber: string;
@@ -168,6 +180,8 @@ export interface DecemberPPh21ReconciliationResult {
   decemberPph21Payable: number; // PPh 21 Masa Desember (Kurang / Lebih Bayar)
 }
 
+export type SundayWorkType = 'overtime' | 'day_off_replacement';
+
 export interface DailyWorkWageItem {
   date: string;
   checkIn: string;
@@ -176,6 +190,11 @@ export interface DailyWorkWageItem {
   rawDurationHours?: number; // Durasi mentah (clockOut - clockIn) sebelum dibatasi maksimal 9 jam
   isCappedToMax?: boolean; // true apabila durasi aktual > batas maksimal jam kerja harian (9 jam)
   isMissingClockOut?: boolean; // true apabila belum Clock-Out atau Jam Masuk === Jam Pulang
+  isRestDayOvertime?: boolean; // true apabila karyawan 6 Hari/Minggu masuk pada hari Minggu / libur mingguan (otomatis dihitung Lembur)
+  isDayOffReplacement?: boolean; // true apabila kehadiran hari Minggu dipilih sebagai Tukar Hari Libur (menggantikan 1 hari absen/alfa/izin di hari biasa)
+  sunday_work_type?: SundayWorkType; // 'overtime' (Lembur Murni) | 'day_off_replacement' (Tukar Hari Libur)
+  sundayWorkType?: SundayWorkType;
+  restDayOvertimeHours?: number; // Jam lembur otomatis dari kehadiran di hari Minggu / libur mingguan (khusus 6 Hari/Minggu)
   dailyWage: number;
   status: string;
 }
@@ -189,10 +208,17 @@ export interface PayrollRecord {
   hourlyRate?: number; // Tarif Gaji Per Jam (hourly_rate)
   totalActualWorkHours?: number; // Akumulasi jam kerja riil seluruh hari masuk
   standardWorkHoursPerDay?: number; // Standar jam kerja per hari (9 jam)
+  workDaysPerWeek?: number; // Skema hari kerja per minggu karyawan (6 atau 7 Hari/Minggu)
   dailyWorkBreakdown?: DailyWorkWageItem[]; // Rincian gaji harian = Jam Kerja Aktual Hari Tersebut × Tarif Per Jam
   dailySalary?: number; // Tarif Gaji Per Hari (9 jam × hourly_rate)
   presentDaysCount?: number; // Jumlah Hari Hadir Aktual pada periode ini
-  standardWorkingDays?: number; // Standar hari kerja (misal: 25 hari)
+  standardWorkingDays?: number; // Standar pembagi hari kerja bulanan (26 hari untuk 6 Hari/Minggu, 30 hari untuk 7 Hari/Minggu)
+  restDayOvertimeMinutes?: number; // Menit lembur otomatis dari masuk di hari Minggu/libur (khusus 6 Hari/Minggu)
+  restDayOvertimeDaysCount?: number; // Jumlah hari Minggu/libur yang masuk kerja sebagai Lembur Murni (khusus 6 Hari/Minggu)
+  dayOffReplacementDaysCount?: number; // Jumlah hari Minggu yang masuk kerja sebagai Tukar Hari Libur (khusus 6 Hari/Minggu)
+  rawAlphaDaysBeforeReplacement?: number; // Jumlah hari Alpha sebelum dipulihkan oleh Tukar Hari Libur Minggu
+  alphaDaysReplacedCount?: number; // Jumlah hari Alpha yang dipulihkan oleh Tukar Hari Libur Minggu
+  unpaidLeaveDaysReplacedCount?: number; // Jumlah hari Izin/Libur tidak dibayar yang dipulihkan oleh Tukar Hari Libur Minggu
   allowancePosition: number;
   allowanceTransport: number;
   allowanceMeal: number;
@@ -245,6 +271,12 @@ export interface PayrollRecord {
   otherDeductions: number;
   tunjanganKerajinan?: number;
   tunjanganKedisiplinan?: number;
+  baseTunjanganKerajinan?: number; // Nominal dasar Tunjangan Kerajinan sebelum evaluasi Alpha periode cut-off (26-25)
+  baseTunjanganKedisiplinan?: number; // Nominal dasar Tunjangan Kedisiplinan sebelum evaluasi Keterlambatan periode cut-off (26-25)
+  isKerajinanForfeited?: boolean; // true jika Tunjangan Kerajinan hangus (Rp 0) karena Alpha >= 1 hari
+  isKedisiplinanForfeited?: boolean; // true jika Tunjangan Kedisiplinan hangus (Rp 0) karena Terlambat > 0 menit
+  isManualKerajinanOverride?: boolean; // true jika di-override manual oleh Admin
+  isManualKedisiplinanOverride?: boolean; // true jika di-override manual oleh Admin
   kesalahanCount?: number;
   kesalahanRate?: number;
   catatanKesalahan?: string;
@@ -317,13 +349,29 @@ export interface AttendanceRecord {
   checkOutDistanceMeters?: number;
   isInOfficeRadius?: boolean;
   distanceMeters?: number;
+  branchId?: string;
+  branchName?: string;
+  checkOutBranchId?: string;
+  checkOutBranchName?: string;
   shiftId?: string;
   shiftName?: string;
   scheduledCheckIn?: string; // Jam masuk sesuai jadwal shift (contoh: '09:00')
   scheduledCheckOut?: string; // Jam pulang sesuai jadwal shift (contoh: '17:30')
   earlyLeaveMinutes?: number; // Pulang lebih cepat dalam menit
   isManualStatus?: boolean; // Status diatur manual oleh Admin HR
+  sunday_work_type?: SundayWorkType; // 'overtime' (Lembur Murni) | 'day_off_replacement' (Tukar Hari Libur)
+  sundayWorkType?: SundayWorkType;
   updated_at?: string;
+}
+
+export interface OfficeBranchLocation {
+  id: string;
+  name: string; // Nama Cabang (e.g. "Kantor Pusat & Gudang Utama Tangerang")
+  latitude: number; // Titik Latitude GPS
+  longitude: number; // Titik Longitude GPS
+  radiusMeters: number; // Batas Radius Geofence dalam Meter (misal: 25, 50, 100)
+  address?: string; // Alamat singkat cabang (opsional)
+  isActive: boolean; // Status cabang aktif
 }
 
 export interface GoogleUserAccount {
@@ -402,6 +450,8 @@ export interface OvertimeRequest {
   taskDescription: string;
   calculatedPay: number;
   status: 'Menunggu Persetujuan' | 'Disetujui' | 'Ditolak';
+  sunday_work_type?: SundayWorkType; // 'overtime' (Lembur Murni) | 'day_off_replacement' (Tukar Hari Libur)
+  sundayWorkType?: SundayWorkType;
 }
 
 export type DashboardModule =
@@ -644,6 +694,7 @@ export interface CompanyConfig {
   defaultOvertimeRatePerHour?: number;
   defaultOvertimeRatePerMinute?: number;
   workShifts?: WorkShift[];
+  officeBranches?: OfficeBranchLocation[]; // Daftar Lokasi Cabang Kantor / Gudang / Toko untuk Geofence GPS Multi-Cabang
   attendancePenaltyPolicy?: AttendancePenaltyPolicy;
   lockedPayrollPeriods?: string[]; // Daftar periode bulan payroll yang sudah dikunci / difinalisasi
   waivedLateEmployeeIds?: Record<string, string[]>; // Map periode -> array employeeId yang diberi dispensasi denda
@@ -1020,6 +1071,10 @@ export interface EmployeeAdjustment {
   period_month: string; // Format YYYY-MM, default periode aktif
   tunjangan_kerajinan: number; // Nominal Rp, default 0
   tunjangan_kedisiplinan: number; // Nominal Rp, default 0
+  base_tunjangan_kerajinan?: number; // Nominal dasar Tunjangan Kerajinan karyawan pada periode ini
+  base_tunjangan_kedisiplinan?: number; // Nominal dasar Tunjangan Kedisiplinan karyawan pada periode ini
+  is_manual_kerajinan?: boolean; // true jika Admin mengaktifkan Override Manual untuk Tunjangan Kerajinan
+  is_manual_kedisiplinan?: boolean; // true jika Admin mengaktifkan Override Manual untuk Tunjangan Kedisiplinan
   kesalahan_count: number; // Jumlah kesalahan dalam bulan tersebut, default 0
   kesalahan_rate: number; // Tarif denda per kesalahan dalam Rp, misal default Rp 10.000
   catatan_kesalahan: string; // Opsional, keterangan detail kesalahan
@@ -1130,3 +1185,39 @@ export interface DivisionAccountingJournalRow {
   creditNetPayPayable: number;
   totalCredit: number;
 }
+
+export type DisciplineBadgeCategory = 'teladan' | 'cukup_disiplin' | 'perlu_evaluasi';
+
+export interface EmployeeDisciplineLeaderboardRow {
+  rank: number;
+  employee: Employee;
+  employeeId: string;
+  nik: string;
+  fullName: string;
+  role: string;
+  department: string;
+  branchCategory: EmployeeBranchName;
+  branchDisplayLabel: string;
+  workDaysPerWeek: number; // 6 atau 7 hari/minggu
+  requiredWorkDays: number; // Total Hari Kerja Wajib pada periode cut-off (26 atau 30/31)
+  presentDaysCount: number; // Total Hari Hadir (termasuk Tukar Hari Libur Minggu)
+  onTimeDaysCount: number; // Jumlah Hadir Tepat Waktu
+  dayOffReplacementDaysCount: number; // Jumlah kehadiran Minggu berstatus Tukar Hari Libur
+  restDayOvertimeDaysCount: number; // Jumlah kehadiran Minggu berstatus Lembur Murni
+  alphaDaysCount: number; // Jumlah Alpha efektif (setelah dikurangi Tukar Hari Libur Minggu)
+  rawAlphaDaysBeforeReplacement: number;
+  alphaDaysReplacedCount: number;
+  sickOrLeaveDaysCount: number;
+  totalLateMinutes: number; // Total Menit Terlambat
+  lateFrequency: number; // Frekuensi Terlambat (kali)
+  totalActualWorkHours: number; // Total Jam Kerja Aktual
+  avgCheckInMinutes: number | null; // Rata-rata menit jam masuk sejak 00:00 (tie-breaker jam masuk paling pagi)
+  avgCheckInTimeLabel: string; // e.g. "07:52 WIB" atau "-"
+  attendancePercentage: number; // (Total Hari Hadir / Total Hari Kerja Wajib) * 100%
+  badgeCategory: DisciplineBadgeCategory;
+  badgeLabel: 'Teladan / 100% Disiplin' | 'Cukup Disiplin' | 'Perlu Evaluasi / SP';
+  badgeSubtext: string;
+  isKerajinanEligible: boolean;
+  isKedisiplinanEligible: boolean;
+}
+

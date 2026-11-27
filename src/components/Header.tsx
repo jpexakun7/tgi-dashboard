@@ -537,7 +537,7 @@ export const Header: React.FC<HeaderProps> = ({
           title: `Jadwal Gaji ${activePeriod}: Mode Fleksibel`,
           description: `Cut-off absensi tetap Tgl ${cutOffDay}. Pencairan gaji mengikuti jadwal fleksibel Admin tanpa batas tanggal tetap / peringatan keterlambatan.`,
           categoryLabel: 'Jadwal Payroll Fleksibel',
-          badgeColor: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+          badgeColor: 'bg-amber-100 text-amber-800 border-amber-300',
           targetTab: 'payroll',
           actionLabel: 'Buka Penggajian',
           requiresAction: false,
@@ -562,8 +562,8 @@ export const Header: React.FC<HeaderProps> = ({
           )} (dapat disesuaikan kapan saja secara fleksibel).`,
           categoryLabel: 'Jadwal Pencairan Manual',
           badgeColor: isNearPayout
-            ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
-            : 'bg-teal-50 text-teal-800 border-teal-200',
+            ? 'bg-amber-100 text-amber-900 border-amber-300'
+            : 'bg-amber-50 text-amber-800 border-amber-200',
           targetTab: 'payroll',
           actionLabel: 'Buka Penggajian',
           requiresAction: isNearPayout,
@@ -603,7 +603,7 @@ export const Header: React.FC<HeaderProps> = ({
         badgeColor:
           n.priority === 'urgent' || n.priority === 'high'
             ? 'bg-rose-100 text-rose-800 border-rose-300'
-            : 'bg-emerald-50 text-emerald-800 border-emerald-200',
+            : 'bg-amber-50 text-amber-800 border-amber-200',
         targetTab,
         actionLabel: n.actionLabel || 'Lihat Detail',
         requiresAction: Boolean(!n.isRead || n.priority === 'urgent' || n.priority === 'high'),
@@ -722,7 +722,7 @@ export const Header: React.FC<HeaderProps> = ({
                   }
                 >
                   {isSidebarCollapsed ? (
-                    <PanelLeftOpen className="w-4 h-4 text-emerald-600" />
+                    <PanelLeftOpen className="w-4 h-4 text-amber-600" />
                   ) : (
                     <PanelLeftClose className="w-4 h-4 text-slate-600" />
                   )}
@@ -745,8 +745,8 @@ export const Header: React.FC<HeaderProps> = ({
                 {companyConfig?.companyName || 'Tas Grosir Import'}
               </h2>
               <div className="flex flex-wrap items-center gap-1.5 text-[10px] sm:text-[11px] text-slate-500 mt-0.5">
-                <span className="inline-flex items-center gap-1 text-emerald-700 font-semibold whitespace-nowrap">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+                <span className="inline-flex items-center gap-1 text-amber-700 font-semibold whitespace-nowrap">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
                   <span>Periode: {companyConfig?.currentPayrollPeriod || '-'}</span>
                 </span>
                 <span className="hidden sm:inline text-slate-300">•</span>
@@ -760,11 +760,11 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Center: Live Real-Time Date & Clock Badge (Wide Desktop Only) */}
         <div className="hidden 2xl:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-700 shadow-2xs shrink-0 whitespace-nowrap">
-          <Calendar className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+          <Calendar className="w-3.5 h-3.5 text-amber-600 shrink-0" />
           <span className="font-medium text-slate-800">{formattedDate}</span>
           <span className="text-slate-300">|</span>
-          <Clock className="w-3.5 h-3.5 text-emerald-600 animate-pulse shrink-0" />
-          <span className="font-mono font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded text-[11px] border border-emerald-200/60 tabular-nums">
+          <Clock className="w-3.5 h-3.5 text-amber-600 animate-pulse shrink-0" />
+          <span className="font-mono font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded text-[11px] border border-amber-200/60 tabular-nums">
             {formattedTime} WIB
           </span>
         </div>
@@ -794,7 +794,7 @@ export const Header: React.FC<HeaderProps> = ({
                     setSearchQuery?.(val);
                     setIsSearchDropdownOpen(val.trim().length >= 2);
                   }}
-                  className="w-full pl-9 pr-8 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition-all text-slate-700 placeholder-slate-400"
+                  className="w-full pl-9 pr-8 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-all text-slate-700 placeholder-slate-400"
                 />
                 {Boolean(localSearchQuery && localSearchQuery.length > 0) && (
                   <button
@@ -817,7 +817,7 @@ export const Header: React.FC<HeaderProps> = ({
                 <div className="absolute left-0 sm:left-auto sm:right-0 mt-2 w-full sm:w-96 lg:w-[430px] max-w-[calc(100vw-1.5rem)] bg-white rounded-2xl shadow-2xl border border-slate-200 z-50 overflow-hidden animate-in fade-in zoom-in-95">
                   <div className="px-3.5 py-2.5 bg-slate-50 border-b border-slate-100 flex items-center justify-between gap-2">
                     <span className="text-[11px] font-extrabold text-slate-700 flex items-center gap-1.5 truncate">
-                      <Search className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                      <Search className="w-3.5 h-3.5 text-amber-600 shrink-0" />
                       <span className="truncate">
                         Hasil Pencarian: &ldquo;{localSearchQuery.trim()}&rdquo;
                       </span>
@@ -832,7 +832,7 @@ export const Header: React.FC<HeaderProps> = ({
                     <div className="p-2">
                       <div className="px-2 py-1 flex items-center justify-between">
                         <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 flex items-center gap-1">
-                          <Users className="w-3 h-3 text-emerald-600" />
+                          <Users className="w-3 h-3 text-amber-600" />
                           <span>Data Karyawan ({matchedEmployees.length})</span>
                         </span>
                         <button
@@ -843,7 +843,7 @@ export const Header: React.FC<HeaderProps> = ({
                             setSearchQuery?.('');
                             setIsSearchDropdownOpen(false);
                           }}
-                          className="text-[10px] font-bold text-emerald-600 hover:underline cursor-pointer"
+                          className="text-[10px] font-bold text-amber-600 hover:underline cursor-pointer"
                         >
                           Buka Menu Karyawan →
                         </button>
@@ -867,7 +867,7 @@ export const Header: React.FC<HeaderProps> = ({
                                   setSearchQuery?.('');
                                   setIsSearchDropdownOpen(false);
                                 }}
-                                className="w-full flex items-center justify-between gap-2.5 p-2 rounded-xl hover:bg-emerald-50/70 transition-colors text-left group cursor-pointer border border-transparent hover:border-emerald-200/70"
+                                className="w-full flex items-center justify-between gap-2.5 p-2 rounded-xl hover:bg-amber-50/70 transition-colors text-left group cursor-pointer border border-transparent hover:border-amber-200/70"
                               >
                                 <div className="flex items-center gap-2.5 min-w-0">
                                   <img
@@ -879,7 +879,7 @@ export const Header: React.FC<HeaderProps> = ({
                                     className="w-8 h-8 rounded-full object-cover border border-slate-200 shrink-0"
                                   />
                                   <div className="min-w-0">
-                                    <p className="text-xs font-bold text-slate-900 truncate group-hover:text-emerald-800">
+                                    <p className="text-xs font-bold text-slate-900 truncate group-hover:text-amber-800">
                                       {emp?.fullName || '-'}
                                     </p>
                                     <p className="text-[10px] text-slate-500 truncate">
@@ -894,7 +894,7 @@ export const Header: React.FC<HeaderProps> = ({
                                   className={`px-2 py-0.5 rounded-full text-[9px] font-extrabold shrink-0 border ${
                                     pt
                                       ? 'bg-orange-50 text-orange-800 border-orange-200'
-                                      : 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                      : 'bg-amber-50 text-amber-800 border-amber-200'
                                   }`}
                                 >
                                   {pt ? 'Part-Time' : emp?.employmentStatus || 'Tetap'}
@@ -958,7 +958,7 @@ export const Header: React.FC<HeaderProps> = ({
                                 </div>
                                 <p className="text-[10px] text-slate-500 truncate mt-0.5">
                                   Periode: <strong className="text-slate-700">{item.period}</strong> • THP:{' '}
-                                  <strong className="text-emerald-700 font-mono">
+                                  <strong className="text-amber-700 font-mono">
                                     {formatRupiah(item.takeHomePay)}
                                   </strong>
                                 </p>
@@ -966,7 +966,7 @@ export const Header: React.FC<HeaderProps> = ({
                               <span
                                 className={`px-2 py-0.5 rounded-lg text-[9px] font-extrabold shrink-0 border ${
                                   item.paymentStatus === 'Lunas'
-                                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                    ? 'bg-amber-50 text-amber-800 border-amber-200'
                                     : item.isPartTime
                                     ? 'bg-orange-50 text-orange-800 border-orange-200'
                                     : 'bg-indigo-50 text-indigo-800 border-indigo-200'
@@ -1035,7 +1035,7 @@ export const Header: React.FC<HeaderProps> = ({
                         label: 'Finance & Reimbursement (Finance)',
                         desc: 'Payroll, Pajak TER, Kasbon & Aset',
                         badge: 'Finance',
-                        badgeColor: 'bg-emerald-100 text-emerald-800',
+                        badgeColor: 'bg-amber-100 text-amber-800',
                       },
                       {
                         role: 'Operations Manager',
@@ -1072,7 +1072,7 @@ export const Header: React.FC<HeaderProps> = ({
                             <div className="flex items-center gap-1.5">
                               <span className="font-bold truncate">{item.label}</span>
                               {isCurrent && (
-                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+                                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />
                               )}
                             </div>
                             <p className="text-[10px] text-slate-400 truncate">{item.desc}</p>
@@ -1166,7 +1166,7 @@ export const Header: React.FC<HeaderProps> = ({
           {dashboardMode === 'admin' && (
             <button
               onClick={onOpenRunPayroll}
-              className="inline-flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-xl transition-colors cursor-pointer shadow-2xs shrink-0 whitespace-nowrap"
+              className="inline-flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 text-xs font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-xl transition-colors cursor-pointer shadow-2xs shrink-0 whitespace-nowrap"
               title="Hitung & Proses Payroll Bulan Ini"
             >
               <Calculator className="w-3.5 h-3.5 shrink-0" />
@@ -1193,7 +1193,7 @@ export const Header: React.FC<HeaderProps> = ({
               onClick={onOpenSupabaseModal}
               className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] sm:text-xs font-bold rounded-xl transition-all cursor-pointer border shadow-2xs shrink-0 whitespace-nowrap ${
                 supabaseStatus?.isConnected && supabaseStatus?.isTablesCreated
-                  ? 'text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border-emerald-300'
+                  ? 'text-amber-800 bg-amber-50 hover:bg-amber-100 border-amber-300'
                   : supabaseStatus?.isConnected
                   ? 'text-amber-800 bg-amber-50 hover:bg-amber-100 border-amber-300'
                   : 'text-rose-800 bg-rose-50 hover:bg-rose-100 border-rose-300'
@@ -1208,7 +1208,7 @@ export const Header: React.FC<HeaderProps> = ({
                 <span
                   className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
                     supabaseStatus?.isConnected && supabaseStatus?.isTablesCreated
-                      ? 'bg-emerald-400'
+                      ? 'bg-amber-400'
                       : supabaseStatus?.isConnected
                       ? 'bg-amber-400'
                       : 'bg-rose-400'
@@ -1217,7 +1217,7 @@ export const Header: React.FC<HeaderProps> = ({
                 <span
                   className={`relative inline-flex rounded-full h-2 w-2 ${
                     supabaseStatus?.isConnected && supabaseStatus?.isTablesCreated
-                      ? 'bg-emerald-500'
+                      ? 'bg-amber-500'
                       : supabaseStatus?.isConnected
                       ? 'bg-amber-500'
                       : 'bg-rose-500'
@@ -1226,7 +1226,7 @@ export const Header: React.FC<HeaderProps> = ({
               </span>
               <Database
                 className={`w-3.5 h-3.5 shrink-0 ${
-                  supabaseStatus?.isConnected ? 'text-emerald-600' : 'text-rose-600'
+                  supabaseStatus?.isConnected ? 'text-amber-600' : 'text-rose-600'
                 }`}
               />
               <span className="hidden lg:inline">
@@ -1263,7 +1263,7 @@ export const Header: React.FC<HeaderProps> = ({
               onClick={() => setShowNotificationPopover((prev) => !prev)}
               className={`p-2 rounded-xl relative cursor-pointer transition-colors border ${
                 showNotificationPopover
-                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                  ? 'bg-amber-50 text-amber-700 border-amber-200'
                   : 'text-slate-600 hover:text-slate-800 hover:bg-slate-100 border-transparent hover:border-slate-200'
               }`}
               title="Buka Pusat Notifikasi & Pengingat Jadwal Payroll"
@@ -1281,7 +1281,7 @@ export const Header: React.FC<HeaderProps> = ({
                 {/* Popover Header */}
                 <div className="p-3.5 bg-slate-900 text-white flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2 min-w-0">
-                    <div className="p-1.5 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 shrink-0">
+                    <div className="p-1.5 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-400/30 shrink-0">
                       <Bell className="w-3.5 h-3.5" />
                     </div>
                     <div className="min-w-0">
@@ -1296,7 +1296,7 @@ export const Header: React.FC<HeaderProps> = ({
                   <button
                     type="button"
                     onClick={handleMarkAllUnifiedAsRead}
-                    className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-[10px] font-bold text-emerald-300 border border-white/15 shrink-0 cursor-pointer transition-colors"
+                    className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-[10px] font-bold text-amber-300 border border-white/15 shrink-0 cursor-pointer transition-colors"
                   >
                     Tandai semua dibaca
                   </button>
@@ -1344,7 +1344,7 @@ export const Header: React.FC<HeaderProps> = ({
                 <div className="max-h-80 overflow-y-auto divide-y divide-slate-100">
                   {filteredPopoverNotifications.length === 0 ? (
                     <div className="p-6 text-center space-y-1.5">
-                      <CheckCircle2 className="w-7 h-7 text-emerald-500 mx-auto" />
+                      <CheckCircle2 className="w-7 h-7 text-amber-500 mx-auto" />
                       <p className="text-xs font-bold text-slate-800">
                         Tidak Ada Notifikasi {notifFilterTab === 'action' ? 'Perlu Tindakan' : ''}
                       </p>
@@ -1358,7 +1358,7 @@ export const Header: React.FC<HeaderProps> = ({
                         key={item.id}
                         onClick={() => handleClickUnifiedNotification(item)}
                         className={`p-3 hover:bg-slate-50 transition-colors cursor-pointer flex flex-col gap-1.5 ${
-                          !item.isRead ? 'bg-emerald-50/35' : 'bg-white'
+                          !item.isRead ? 'bg-amber-50/35' : 'bg-white'
                         }`}
                       >
                         <div className="flex items-center justify-between gap-2">
@@ -1381,7 +1381,7 @@ export const Header: React.FC<HeaderProps> = ({
                           {item.description}
                         </p>
                         <div className="pt-1 flex items-center justify-between">
-                          <span className="inline-flex items-center gap-1 text-[10px] font-extrabold text-emerald-700 hover:underline">
+                          <span className="inline-flex items-center gap-1 text-[10px] font-extrabold text-amber-700 hover:underline">
                             <span>{item.actionLabel}</span>
                             <ArrowRight className="w-3 h-3" />
                           </span>
@@ -1430,15 +1430,15 @@ export const Header: React.FC<HeaderProps> = ({
                     'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=256&h=256&q=80'
                   }
                   alt={currentEmployee.fullName}
-                  className="w-7 h-7 sm:w-8 sm:h-8 rounded-full object-cover ring-2 ring-emerald-500/40"
+                  className="w-7 h-7 sm:w-8 sm:h-8 rounded-full object-cover ring-2 ring-amber-500/40"
                 />
-                <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-white" />
+                <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-amber-500 ring-2 ring-white" />
               </div>
               <div className="hidden md:flex flex-col text-left">
                 <span className="text-xs font-bold text-slate-800 leading-tight truncate max-w-[130px]">
                   {currentEmployee.fullName}
                 </span>
-                <span className="text-[10px] text-emerald-600 font-semibold flex items-center gap-1">
+                <span className="text-[10px] text-amber-600 font-semibold flex items-center gap-1">
                   <UserCheck className="w-2.5 h-2.5" />
                   <span>Portal Karyawan</span>
                 </span>
@@ -1449,7 +1449,7 @@ export const Header: React.FC<HeaderProps> = ({
             {showUserMenu && (
               <div className="absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-xl border border-slate-200 p-3 z-50 animate-in fade-in zoom-in-95">
                 {/* Employee Account Card */}
-                <div className="p-3 rounded-xl bg-emerald-50/70 border border-emerald-200/60 space-y-2">
+                <div className="p-3 rounded-xl bg-amber-50/70 border border-amber-200/60 space-y-2">
                   <div className="flex items-center gap-2.5">
                     <img
                       src={
@@ -1457,26 +1457,26 @@ export const Header: React.FC<HeaderProps> = ({
                         'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=256&h=256&q=80'
                       }
                       alt={currentEmployee.fullName}
-                      className="w-10 h-10 rounded-full object-cover ring-2 ring-emerald-500/50"
+                      className="w-10 h-10 rounded-full object-cover ring-2 ring-amber-500/50"
                     />
                     <div className="overflow-hidden flex-1">
                       <p className="text-xs font-bold text-slate-800 truncate">
                         {currentEmployee.fullName}
                       </p>
-                      <p className="text-[11px] font-mono text-emerald-700 truncate font-semibold">
+                      <p className="text-[11px] font-mono text-amber-700 truncate font-semibold">
                         {currentEmployee.googleEmail || currentEmployee.email}
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center justify-between text-[10px] pt-1 border-t border-emerald-200/40 text-slate-600">
+                  <div className="flex items-center justify-between text-[10px] pt-1 border-t border-amber-200/40 text-slate-600">
                     <span>
                       NIK: <strong className="font-mono">{currentEmployee.nik}</strong>
                     </span>
-                    <span className="font-semibold text-emerald-800 bg-white px-2 py-0.5 rounded-full border border-emerald-200">
+                    <span className="font-semibold text-amber-800 bg-white px-2 py-0.5 rounded-full border border-amber-200">
                       {currentEmployee.role}
                     </span>
                   </div>
-                  <div className="flex items-center justify-between text-[10px] pt-1 border-t border-emerald-200/40 text-slate-600">
+                  <div className="flex items-center justify-between text-[10px] pt-1 border-t border-amber-200/40 text-slate-600">
                     <span>NIK KTP (16 Digit):</span>
                     {currentEmployee.ktpNumber && /^\d{16}$/.test(currentEmployee.ktpNumber) ? (
                       <strong className="font-mono text-indigo-700">{currentEmployee.ktpNumber}</strong>
@@ -1541,15 +1541,15 @@ export const Header: React.FC<HeaderProps> = ({
                   <img
                     src={adminUser.picture}
                     alt={adminUser.name}
-                    className="w-7 h-7 sm:w-8 sm:h-8 rounded-full object-cover ring-2 ring-emerald-500/40"
+                    className="w-7 h-7 sm:w-8 sm:h-8 rounded-full object-cover ring-2 ring-amber-500/40"
                   />
-                  <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-white" />
+                  <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-amber-500 ring-2 ring-white" />
                 </div>
                 <div className="hidden md:flex flex-col text-left">
                   <span className="text-xs font-bold text-slate-800 leading-tight truncate max-w-[130px]">
                     {adminUser.email}
                   </span>
-                  <span className="text-[10px] text-emerald-600 font-semibold flex items-center gap-1">
+                  <span className="text-[10px] text-amber-600 font-semibold flex items-center gap-1">
                     <Shield className="w-2.5 h-2.5" />
                     <span>{roleDisplay}</span>
                   </span>
@@ -1565,20 +1565,20 @@ export const Header: React.FC<HeaderProps> = ({
                       <img
                         src={adminUser.picture}
                         alt={adminUser.name}
-                        className="w-10 h-10 rounded-full object-cover ring-2 ring-emerald-500/50"
+                        className="w-10 h-10 rounded-full object-cover ring-2 ring-amber-500/50"
                       />
                       <div className="overflow-hidden flex-1">
                         <p className="text-xs font-bold text-slate-800 truncate">
                           {adminUser.name}
                         </p>
-                        <p className="text-[11px] font-mono text-emerald-700 truncate font-semibold">
+                        <p className="text-[11px] font-mono text-amber-700 truncate font-semibold">
                           {adminUser.email}
                         </p>
                       </div>
                     </div>
                     <div className="flex items-center justify-between text-[10px] pt-1 border-t border-slate-200/60">
                       <span className="text-slate-500">Peran Otoritas:</span>
-                      <span className="font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full">
+                      <span className="font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full">
                         {roleDisplay}
                       </span>
                     </div>
@@ -1592,7 +1592,7 @@ export const Header: React.FC<HeaderProps> = ({
                           <Users className="w-3 h-3" />
                           <span>Ganti Akun Pengelola:</span>
                         </span>
-                        <span className="text-[10px] text-emerald-600 font-semibold">
+                        <span className="text-[10px] text-amber-600 font-semibold">
                           {otherAdmins.length} Akun Lain
                         </span>
                       </div>
@@ -1606,7 +1606,7 @@ export const Header: React.FC<HeaderProps> = ({
                               onSwitchAdminUser(other);
                               setShowUserMenu(false);
                             }}
-                            className="w-full flex items-center justify-between p-1.5 hover:bg-emerald-50/70 rounded-lg transition-colors cursor-pointer text-left border border-transparent hover:border-emerald-200 group"
+                            className="w-full flex items-center justify-between p-1.5 hover:bg-amber-50/70 rounded-lg transition-colors cursor-pointer text-left border border-transparent hover:border-amber-200 group"
                           >
                             <div className="flex items-center gap-2 min-w-0">
                               <img
@@ -1615,7 +1615,7 @@ export const Header: React.FC<HeaderProps> = ({
                                 className="w-6 h-6 rounded-full object-cover shrink-0 ring-1 ring-slate-200"
                               />
                               <div className="min-w-0">
-                                <div className="text-[11px] font-bold text-slate-800 truncate group-hover:text-emerald-800">
+                                <div className="text-[11px] font-bold text-slate-800 truncate group-hover:text-amber-800">
                                   {other.name}
                                 </div>
                                 <div className="text-[10px] font-mono text-slate-500 truncate">
@@ -1643,14 +1643,14 @@ export const Header: React.FC<HeaderProps> = ({
                         className={`w-full flex items-center justify-between p-2 rounded-xl text-xs font-bold transition-colors cursor-pointer text-left border ${
                           dashboardMode === 'employee'
                             ? 'bg-indigo-50 text-indigo-800 border-indigo-200 hover:bg-indigo-100'
-                            : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
+                            : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
                         }`}
                       >
                         <span className="flex items-center gap-2">
                           {dashboardMode === 'employee' ? (
                             <Shield className="w-4 h-4 text-indigo-600" />
                           ) : (
-                            <UserCheck className="w-4 h-4 text-emerald-600" />
+                            <UserCheck className="w-4 h-4 text-amber-600" />
                           )}
                           <span>
                             {dashboardMode === 'employee'
@@ -1701,8 +1701,8 @@ export const Header: React.FC<HeaderProps> = ({
           <span className="truncate font-medium">
             Cut-off Payroll: <strong className="text-slate-800">Tgl {companyConfig.cutOffEndDay}</strong>
           </span>
-          <span className="inline-flex items-center gap-1 font-mono font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200/60 shrink-0 tabular-nums">
-            <Clock className="w-3 h-3 text-emerald-600" />
+          <span className="inline-flex items-center gap-1 font-mono font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200/60 shrink-0 tabular-nums">
+            <Clock className="w-3 h-3 text-amber-600" />
             {formattedTime} WIB
           </span>
         </div>

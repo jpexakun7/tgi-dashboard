@@ -35,6 +35,7 @@ import {
   getEmployeeBonusesForPeriod,
   getEmployeeAdjustmentForPeriod,
   getEmployeePayrollDeductionForPeriod,
+  resolveKerajinanAndKedisiplinanForPeriod,
   getApprovedSickLeaveSummaryForPeriod,
   getApprovedUnpaidLeaveSummaryForPeriod,
   getActiveEmployeeThrForPayslip,
@@ -46,6 +47,7 @@ import {
   getWeeklyCycleRangeForDate,
   getJakartaDateString,
   filterOvertimeRequestsForPeriod,
+  getEffectiveOvertimeMinutesForPayroll,
   isPayrollPeriodPastCutoff,
 } from '../utils/formatters';
 import { getPayslipWhatsAppUrl, getPayslipEmailUrl } from '../utils/notificationHelper';
@@ -589,7 +591,7 @@ export function computeOfficialPayslipData(params: {
   const tunjanganJabatanTotal = tunjanganJabatanRate;
   const subtotalGajiTetap = gajiPokokTotal + tunjanganJabatanTotal;
 
-  // 2. GAJI TIDAK TETAP (Sinkronisasi dengan Tunjangan & Kedisiplinan / EmployeeAdjustment)
+  // 2. GAJI TIDAK TETAP (Sinkronisasi Otomatis Tunjangan Kerajinan & Kedisiplinan per Cut-Off 26-25)
   const resolvedAdjustmentsList =
     Array.isArray(employeeAdjustments) && employeeAdjustments.length > 0
       ? employeeAdjustments
@@ -600,29 +602,33 @@ export function computeOfficialPayslipData(params: {
     periodStr
   );
 
-  const tunjanganKerajinanRate =
-    periodAdjustment && periodAdjustment.tunjangan_kerajinan !== undefined
-      ? Math.max(0, Math.round(Number(periodAdjustment.tunjangan_kerajinan) || 0))
-      : payroll.tunjanganKerajinan !== undefined
-      ? Math.max(0, Math.round(Number(payroll.tunjanganKerajinan) || 0))
-      : Math.max(
-          0,
-          Math.round(
-            (Number(payroll.allowanceTransport ?? employee.allowances?.transport) || 0) +
-              (Number(payroll.allowanceCommunication ?? employee.allowances?.communication) || 0)
-          )
-        );
+  const resolvedDeductionsList =
+    Array.isArray(payrollDeductions) && payrollDeductions.length > 0
+      ? payrollDeductions
+      : getSavedPayrollDeductions();
+  const periodDeduction = getEmployeePayrollDeductionForPeriod(
+    resolvedDeductionsList,
+    employee,
+    periodStr
+  );
+
+  const kerajinanKedisiplinanEval = resolveKerajinanAndKedisiplinanForPeriod({
+    employee,
+    alphaDaysCount:
+      payroll.alphaDaysCount !== undefined
+        ? Number(payroll.alphaDaysCount) || 0
+        : Number(payroll.tanpaKeteranganHari) || 0,
+    totalLateMinutes: Number(payroll.totalLateMinutes) || 0,
+    lateFrequency: Number(payroll.lateFrequency) || 0,
+    dayOffReplacementDaysCount: Number(payroll.dayOffReplacementDaysCount) || 0,
+    adjustment: periodAdjustment,
+    deduction: periodDeduction,
+  });
+
+  const tunjanganKerajinanRate = kerajinanKedisiplinanEval.tunjanganKerajinan;
   const tunjanganKerajinanTotal = tunjanganKerajinanRate;
 
-  const tunjanganKedisiplinanRate =
-    periodAdjustment && periodAdjustment.tunjangan_kedisiplinan !== undefined
-      ? Math.max(0, Math.round(Number(periodAdjustment.tunjangan_kedisiplinan) || 0))
-      : payroll.tunjanganKedisiplinan !== undefined
-      ? Math.max(0, Math.round(Number(payroll.tunjanganKedisiplinan) || 0))
-      : Math.max(
-          0,
-          Math.round(Number(payroll.allowanceMeal ?? employee.allowances?.meal) || 0)
-        );
+  const tunjanganKedisiplinanRate = kerajinanKedisiplinanEval.tunjanganKedisiplinan;
   const tunjanganKedisiplinanTotal = tunjanganKedisiplinanRate;
 
   // Kelebihan jam kerja hanya dihitung jika ada Pengajuan Lembur yang berstatus "Disetujui" (Approved) pada rentang cut-off periode ini
@@ -638,8 +644,13 @@ export function computeOfficialPayslipData(params: {
     true
   );
 
+  const sundayRestDayOvertimeDates = new Set(
+    dailyWorkBreakdown
+      .filter((d) => d.isRestDayOvertime && (Number(d.restDayOvertimeHours) || 0) > 0)
+      .map((d) => (d.date || '').trim().slice(0, 10))
+  );
   const approvedOtMinutesFromRequests = approvedOtList.reduce(
-    (sum, o) => sum + getOvertimeMinutes(o),
+    (sum, o) => sum + getEffectiveOvertimeMinutesForPayroll(o, sundayRestDayOvertimeDates),
     0
   );
   const otMultiplier = Number(companyConfig.defaultOvertimeMultiplier) || 1.5;
@@ -807,24 +818,19 @@ export function computeOfficialPayslipData(params: {
     thrAmount;
 
   // 3. PENGURANGAN (Sinkronisasi Penuh dengan PayrollDeductionRecord & Panel Cuti/Izin)
-  const resolvedDeductionsList =
-    Array.isArray(payrollDeductions) && payrollDeductions.length > 0
-      ? payrollDeductions
-      : getSavedPayrollDeductions();
-  const periodDeduction = getEmployeePayrollDeductionForPeriod(
-    resolvedDeductionsList,
-    employee,
-    periodStr
-  );
-
   // 3.1 Tanpa Keterangan (Alpa)
   const rawAlphaDaysFromPayroll = Math.max(0, Math.round(Number(payroll.alphaDaysCount) || 0));
   const rawAlphaPenaltyFromPayroll = Math.max(
     0,
     Math.round(Number(payroll.alphaPenaltyAmount) || 0)
   );
+  const alphaDaysReplaced = Math.max(0, Math.round(Number(payroll.alphaDaysReplacedCount) || 0));
+  const unpaidLeaveDaysReplaced = Math.max(
+    0,
+    Math.round(Number(payroll.unpaidLeaveDaysReplacedCount) || 0)
+  );
   const alphaDays = periodDeduction
-    ? Math.max(0, Number(periodDeduction.tanpa_keterangan_hari) || 0)
+    ? Math.max(0, (Number(periodDeduction.tanpa_keterangan_hari) || 0) - alphaDaysReplaced)
     : payroll.tanpaKeteranganHari !== undefined
     ? Math.max(0, Number(payroll.tanpaKeteranganHari) || 0)
     : rawAlphaDaysFromPayroll;
@@ -838,7 +844,7 @@ export function computeOfficialPayslipData(params: {
     ? Math.round(alphaDays * alphaRate)
     : payroll.isLateFeeWaived
     ? 0
-    : rawAlphaPenaltyFromPayroll > 0
+    : rawAlphaPenaltyFromPayroll > 0 && alphaDays > 0
     ? rawAlphaPenaltyFromPayroll
     : alphaDays > 0
     ? Math.round(alphaDays * alphaRate)
@@ -875,7 +881,10 @@ export function computeOfficialPayslipData(params: {
     : payroll.izinHariJumlah !== undefined
     ? Math.max(0, Number(payroll.izinHariJumlah) || 0)
     : 0;
-  const izinHariDays = Math.max(manualIzinHari, unpaidSummary.unpaidDays);
+  const izinHariDays = Math.max(
+    0,
+    Math.max(manualIzinHari, unpaidSummary.unpaidDays) - unpaidLeaveDaysReplaced
+  );
   const izinHariRate =
     periodDeduction && periodDeduction.izin_hari_rate > 0
       ? Math.max(0, Math.round(Number(periodDeduction.izin_hari_rate) || 0))

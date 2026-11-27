@@ -84,7 +84,7 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
         {/* Sticky Header */}
         <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between shrink-0 bg-slate-50/70">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+            <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
               <Server className="w-5 h-5" />
             </div>
             <div>
@@ -110,7 +110,7 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
             onClick={() => setActiveTab('status')}
             className={`pb-2.5 flex items-center gap-1.5 cursor-pointer border-b-2 transition-colors ${
               activeTab === 'status'
-                ? 'border-emerald-600 text-emerald-700 font-bold'
+                ? 'border-amber-600 text-amber-700 font-bold'
                 : 'border-transparent text-slate-500 hover:text-slate-800'
             }`}
           >
@@ -121,7 +121,7 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
             onClick={() => setActiveTab('sql')}
             className={`pb-2.5 flex items-center gap-1.5 cursor-pointer border-b-2 transition-colors ${
               activeTab === 'sql'
-                ? 'border-emerald-600 text-emerald-700 font-bold'
+                ? 'border-amber-600 text-amber-700 font-bold'
                 : 'border-transparent text-slate-500 hover:text-slate-800'
             }`}
           >
@@ -138,7 +138,7 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
               <div
                 className={`p-4 rounded-xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 ${
                   syncStatus.isConnected && syncStatus.isTablesCreated
-                    ? 'bg-emerald-50/80 border-emerald-200 text-emerald-950'
+                    ? 'bg-amber-50/80 border-amber-200 text-amber-950'
                     : syncStatus.isConnected
                     ? 'bg-amber-50/80 border-amber-200 text-amber-950'
                     : 'bg-rose-50/80 border-rose-200 text-rose-950'
@@ -146,7 +146,7 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
               >
                 <div className="flex items-center gap-3">
                   {syncStatus.isConnected && syncStatus.isTablesCreated ? (
-                    <CheckCircle2 className="w-6 h-6 text-emerald-600 shrink-0" />
+                    <CheckCircle2 className="w-6 h-6 text-amber-600 shrink-0" />
                   ) : (
                     <AlertTriangle className="w-6 h-6 text-amber-600 shrink-0" />
                   )}
@@ -167,7 +167,7 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
                   onClick={onRefreshStatus}
                   className="px-3 py-1.5 bg-white text-slate-700 hover:bg-slate-50 border border-slate-200 rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer shrink-0 shadow-2xs"
                 >
-                  <RefreshCw className="w-3.5 h-3.5 text-emerald-600" />
+                  <RefreshCw className="w-3.5 h-3.5 text-amber-600" />
                   <span>Tarik Data Cloud Terbaru</span>
                 </button>
               </div>
@@ -178,7 +178,7 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
                   <span className="text-xs font-bold text-slate-800">
                     Status Tabel Cloud-First di Supabase:
                   </span>
-                  <span className="text-[11px] font-semibold text-emerald-700">
+                  <span className="text-[11px] font-semibold text-amber-700">
                     {readyCount} dari {tableList.length} Tabel Siap
                   </span>
                 </div>
@@ -190,7 +190,7 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
                         key={t.key}
                         className={`p-2 rounded-lg border text-[11px] flex items-center justify-between gap-1.5 ${
                           t.isReady
-                            ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900'
+                            ? 'bg-amber-50/70 border-amber-200 text-amber-900'
                             : 'bg-amber-50/70 border-amber-200 text-amber-900'
                         }`}
                       >
@@ -220,7 +220,7 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
                   <span className="font-semibold text-slate-800 text-xs">
                     {employeeCount} Karyawan • {assetCount} Inventaris Aset
                   </span>
-                  <span className="text-[10px] text-emerald-600 block mt-0.5 font-medium">
+                  <span className="text-[10px] text-amber-600 block mt-0.5 font-medium">
                     {syncStatus.isConnected
                       ? '✓ Cloud-First Single Source of Truth (Supabase ↔ Semua Perangkat)'
                       : '⚡ Mode Offline / Lokal'}
@@ -232,7 +232,7 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
               <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
                 <div>
                   <h4 className="font-bold text-slate-900 flex items-center gap-1.5 text-xs">
-                    <Sparkles className="w-4 h-4 text-emerald-600" />
+                    <Sparkles className="w-4 h-4 text-amber-600" />
                     Unggah / Sinkronkan Seluruh Data ke Supabase Cloud
                   </h4>
                   <p className="text-[11px] text-slate-600 mt-0.5">
@@ -243,7 +243,7 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
                   type="button"
                   disabled={isSeeding}
                   onClick={onTriggerSeed}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-400 text-white font-semibold rounded-xl text-xs flex items-center gap-2 cursor-pointer shadow-xs shrink-0"
+                  className="px-4 py-2 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold disabled:bg-slate-400 text-white font-semibold rounded-xl text-xs flex items-center gap-2 cursor-pointer shadow-xs shrink-0"
                 >
                   <UploadCloud className="w-4 h-4" />
                   <span>{isSeeding ? 'Menyinkronkan...' : 'Sinkronkan ke Cloud Sekarang'}</span>
@@ -266,7 +266,7 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
                 <button
                   type="button"
                   onClick={handleCopySql}
-                  className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs shrink-0"
+                  className="px-3.5 py-2 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs shrink-0"
                 >
                   {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
                   <span>{copied ? 'Skrip SQL Tersalin!' : 'Salin Skrip SQL Lengkap'}</span>
@@ -311,7 +311,7 @@ export const SupabaseSyncModal: React.FC<SupabaseSyncModalProps> = ({
           <button
             type="button"
             onClick={() => setActiveTab(activeTab === 'status' ? 'sql' : 'status')}
-            className="text-xs font-bold text-emerald-700 hover:text-emerald-800 cursor-pointer"
+            className="text-xs font-bold text-amber-700 hover:text-amber-800 cursor-pointer"
           >
             {activeTab === 'status' ? 'Lihat Skrip SQL Lengkap →' : '← Kembali ke Status Koneksi'}
           </button>

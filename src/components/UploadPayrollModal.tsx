@@ -194,7 +194,7 @@ export const UploadPayrollModal: React.FC<UploadPayrollModalProps> = ({
         {/* Header Modal */}
         <div className="flex items-center justify-between pb-4 border-b border-slate-100">
           <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200">
+            <div className="p-2 rounded-xl bg-amber-50 text-amber-700 border border-amber-200">
               <FileSpreadsheet className="w-5 h-5" />
             </div>
             <div>
@@ -219,13 +219,13 @@ export const UploadPayrollModal: React.FC<UploadPayrollModalProps> = ({
           {/* Download Template Bar */}
           <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-slate-700">
-              <Info className="w-4 h-4 text-emerald-600 shrink-0" />
+              <Info className="w-4 h-4 text-amber-600 shrink-0" />
               <span>Belum punya formatnya? Unduh template resmi TGI:</span>
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <button
                 onClick={() => downloadPayrollExcelTemplate(employees)}
-                className="px-3 py-1.5 bg-white hover:bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+                className="px-3 py-1.5 bg-white hover:bg-amber-50 text-amber-700 border border-amber-200 rounded-lg font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
               >
                 <Download className="w-3.5 h-3.5" />
                 Template Excel (.xlsx)
@@ -245,7 +245,7 @@ export const UploadPayrollModal: React.FC<UploadPayrollModalProps> = ({
             onDragOver={(e) => e.preventDefault()}
             onDrop={handleDrop}
             onClick={() => fileInputRef.current?.click()}
-            className="border-2 border-dashed border-emerald-300 hover:border-emerald-500 bg-emerald-50/30 hover:bg-emerald-50/60 rounded-2xl p-6 text-center cursor-pointer transition-colors"
+            className="border-2 border-dashed border-amber-300 hover:border-amber-500 bg-amber-50/30 hover:bg-amber-50/60 rounded-2xl p-6 text-center cursor-pointer transition-colors"
           >
             <input
               type="file"
@@ -254,7 +254,7 @@ export const UploadPayrollModal: React.FC<UploadPayrollModalProps> = ({
               accept=".xlsx,.xls,.csv"
               className="hidden"
             />
-            <div className="w-12 h-12 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center mx-auto mb-2.5">
+            <div className="w-12 h-12 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center mx-auto mb-2.5">
               <Upload className="w-6 h-6" />
             </div>
             <p className="font-semibold text-slate-800 text-sm">
@@ -280,7 +280,7 @@ export const UploadPayrollModal: React.FC<UploadPayrollModalProps> = ({
                   <h4 className="font-bold text-slate-800">
                     Pratinjau Data Impor ({parsedRows.length} baris)
                   </h4>
-                  <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-100 text-emerald-800 font-semibold">
+                  <span className="px-2 py-0.5 rounded-full text-[10px] bg-amber-100 text-amber-800 font-semibold">
                     {validCount} Valid
                   </span>
                   {invalidCount > 0 && (
@@ -320,8 +320,8 @@ export const UploadPayrollModal: React.FC<UploadPayrollModalProps> = ({
                       >
                         <td className="py-2 px-3">
                           {row.isValid ? (
-                            <span className="inline-flex items-center gap-1 text-emerald-700 font-semibold text-[10px]">
-                              <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
+                            <span className="inline-flex items-center gap-1 text-amber-700 font-semibold text-[10px]">
+                              <CheckCircle className="w-3.5 h-3.5 text-amber-600" />
                               Valid
                             </span>
                           ) : (
@@ -335,7 +335,7 @@ export const UploadPayrollModal: React.FC<UploadPayrollModalProps> = ({
                         <td className="py-2 px-3 font-semibold text-slate-800">
                           {row.employeeName}
                         </td>
-                        <td className="py-2 px-3 text-emerald-700 font-medium">
+                        <td className="py-2 px-3 text-amber-700 font-medium">
                           {formatRupiah(row.bonus)}
                         </td>
                         <td className="py-2 px-3 font-medium text-indigo-700">
@@ -369,7 +369,7 @@ export const UploadPayrollModal: React.FC<UploadPayrollModalProps> = ({
             className={`px-5 py-2 rounded-xl text-white font-semibold text-xs transition-colors shadow-md ${
               parsedRows.length === 0 || validCount === 0 || isLoading
                 ? 'bg-slate-300 cursor-not-allowed text-slate-500'
-                : 'bg-emerald-600 hover:bg-emerald-700 cursor-pointer shadow-emerald-600/30'
+                : 'bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold cursor-pointer shadow-amber-600/30'
             }`}
           >
             {isLoading ? 'Memproses...' : `Terapkan (${validCount} Karyawan) ke Payroll`}

@@ -379,7 +379,7 @@ export const AssetManagementView: React.FC<AssetManagementViewProps> = ({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
         <div>
           <div className="flex items-center gap-2">
-            <div className="p-2 bg-teal-50 text-teal-700 rounded-xl border border-teal-200/60">
+            <div className="p-2 bg-amber-50 text-amber-700 rounded-xl border border-amber-200/60">
               <Boxes className="w-5 h-5" />
             </div>
             <div>
@@ -399,13 +399,13 @@ export const AssetManagementView: React.FC<AssetManagementViewProps> = ({
             className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 rounded-xl transition-colors cursor-pointer shadow-2xs"
             title="Ekspor CSV Rekap Inventaris"
           >
-            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+            <FileSpreadsheet className="w-3.5 h-3.5 text-amber-600" />
             <span>Ekspor CSV</span>
           </button>
 
           <button
             onClick={handleOpenCreateModal}
-            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-teal-600 hover:bg-teal-700 rounded-xl transition-colors cursor-pointer shadow-xs shadow-teal-700/20"
+            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-xl transition-colors cursor-pointer shadow-xs shadow-amber-700/20"
           >
             <Plus className="w-4 h-4" />
             <span>Tambah Aset Baru</span>
@@ -417,7 +417,7 @@ export const AssetManagementView: React.FC<AssetManagementViewProps> = ({
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3.5">
         {/* Total Aset */}
         <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs flex items-center gap-3.5">
-          <div className="p-3 bg-teal-50 text-teal-700 rounded-xl shrink-0">
+          <div className="p-3 bg-amber-50 text-amber-700 rounded-xl shrink-0">
             <Boxes className="w-5 h-5" />
           </div>
           <div className="min-w-0">
@@ -425,13 +425,13 @@ export const AssetManagementView: React.FC<AssetManagementViewProps> = ({
               Total Unit Aset
             </p>
             <h3 className="text-xl font-extrabold text-slate-900 mt-0.5">{stats.totalCount}</h3>
-            <p className="text-[10px] text-teal-700 mt-0.5 font-medium">Terdaftar di sistem</p>
+            <p className="text-[10px] text-amber-700 mt-0.5 font-medium">Terdaftar di sistem</p>
           </div>
         </div>
 
         {/* Total Valuasi Nilai Aset */}
         <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs flex items-center gap-3.5">
-          <div className="p-3 bg-emerald-50 text-emerald-700 rounded-xl shrink-0">
+          <div className="p-3 bg-amber-50 text-amber-700 rounded-xl shrink-0">
             <DollarSign className="w-5 h-5" />
           </div>
           <div className="min-w-0">
@@ -441,7 +441,7 @@ export const AssetManagementView: React.FC<AssetManagementViewProps> = ({
             <h3 className="text-base sm:text-lg font-bold text-slate-900 mt-0.5 truncate">
               {formatRupiah(stats.totalValuation)}
             </h3>
-            <p className="text-[10px] text-emerald-700 mt-0.5 font-medium">Harga pembelian buku</p>
+            <p className="text-[10px] text-amber-700 mt-0.5 font-medium">Harga pembelian buku</p>
           </div>
         </div>
 
@@ -461,15 +461,15 @@ export const AssetManagementView: React.FC<AssetManagementViewProps> = ({
 
         {/* Tersedia di Gudang / Kantor */}
         <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-xs flex items-center gap-3.5">
-          <div className="p-3 bg-emerald-50 text-emerald-700 rounded-xl shrink-0">
+          <div className="p-3 bg-amber-50 text-amber-700 rounded-xl shrink-0">
             <CheckCircle2 className="w-5 h-5" />
           </div>
           <div className="min-w-0">
             <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider truncate">
               Tersedia (Ready)
             </p>
-            <h3 className="text-xl font-extrabold text-emerald-700 mt-0.5">{stats.availableCount}</h3>
-            <p className="text-[10px] text-emerald-600 mt-0.5 font-medium">Siap ditugaskan</p>
+            <h3 className="text-xl font-extrabold text-amber-700 mt-0.5">{stats.availableCount}</h3>
+            <p className="text-[10px] text-amber-600 mt-0.5 font-medium">Siap ditugaskan</p>
           </div>
         </div>
 
@@ -495,7 +495,7 @@ export const AssetManagementView: React.FC<AssetManagementViewProps> = ({
             onClick={() => setActiveSubTab('inventory')}
             className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
               activeSubTab === 'inventory'
-                ? 'bg-teal-600 text-white shadow-xs'
+                ? 'bg-amber-600 text-white shadow-xs'
                 : 'bg-white text-slate-600 hover:text-slate-900 border border-slate-200'
             }`}
           >
@@ -507,7 +507,7 @@ export const AssetManagementView: React.FC<AssetManagementViewProps> = ({
             onClick={() => setActiveSubTab('history')}
             className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
               activeSubTab === 'history'
-                ? 'bg-teal-600 text-white shadow-xs'
+                ? 'bg-amber-600 text-white shadow-xs'
                 : 'bg-white text-slate-600 hover:text-slate-900 border border-slate-200'
             }`}
           >
@@ -534,7 +534,7 @@ export const AssetManagementView: React.FC<AssetManagementViewProps> = ({
                 placeholder="Cari kode, nama aset, no seri, pemegang..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-hidden focus:border-teal-500"
+                className="w-full pl-9 pr-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:outline-hidden focus:border-amber-500"
               />
             </div>
 
@@ -621,7 +621,7 @@ export const AssetManagementView: React.FC<AssetManagementViewProps> = ({
                         <td className="py-3 px-3.5">
                           <div className="flex items-start gap-2.5">
                             <div className="p-2 rounded-xl bg-slate-100 text-slate-700 shrink-0 mt-0.5">
-                              <CatIcon className="w-4 h-4 text-teal-700" />
+                              <CatIcon className="w-4 h-4 text-amber-700" />
                             </div>
                             <div className="min-w-0">
                               <span className="font-bold text-slate-900 block truncate max-w-xs">
@@ -653,7 +653,7 @@ export const AssetManagementView: React.FC<AssetManagementViewProps> = ({
                           <span
                             className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
                               asset.condition === 'Baik'
-                                ? 'bg-emerald-100 text-emerald-800'
+                                ? 'bg-amber-100 text-amber-800'
                                 : asset.condition === 'Perlu Perbaikan'
                                 ? 'bg-amber-100 text-amber-800'
                                 : 'bg-rose-100 text-rose-800'
@@ -671,7 +671,7 @@ export const AssetManagementView: React.FC<AssetManagementViewProps> = ({
                           <span
                             className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
                               asset.status === 'Tersedia'
-                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                ? 'bg-amber-50 text-amber-700 border border-amber-200'
                                 : asset.status === 'Dipinjamkan'
                                 ? 'bg-indigo-50 text-indigo-700 border border-indigo-200'
                                 : asset.status === 'Dalam Perbaikan'
@@ -682,7 +682,7 @@ export const AssetManagementView: React.FC<AssetManagementViewProps> = ({
                             {asset.status === 'Dipinjamkan' ? (
                               <UserCheck className="w-3 h-3 text-indigo-600" />
                             ) : asset.status === 'Tersedia' ? (
-                              <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                              <CheckCircle2 className="w-3 h-3 text-amber-600" />
                             ) : (
                               <Wrench className="w-3 h-3 text-amber-600" />
                             )}
@@ -730,7 +730,7 @@ export const AssetManagementView: React.FC<AssetManagementViewProps> = ({
                             {asset.status === 'Tersedia' ? (
                               <button
                                 onClick={() => handleOpenAssignModal(asset)}
-                                className="px-2.5 py-1 text-[11px] font-bold bg-teal-50 hover:bg-teal-100 text-teal-800 rounded-lg border border-teal-200 transition-colors flex items-center gap-1 cursor-pointer"
+                                className="px-2.5 py-1 text-[11px] font-bold bg-amber-50 hover:bg-amber-100 text-amber-800 rounded-lg border border-amber-200 transition-colors flex items-center gap-1 cursor-pointer"
                                 title="Tugaskan aset ini ke karyawan aktif"
                               >
                                 <UserCheck className="w-3 h-3" />
@@ -797,7 +797,7 @@ export const AssetManagementView: React.FC<AssetManagementViewProps> = ({
                 Catatan kronologis setiap penyerahan inventaris, pengembalian oleh karyawan, perbaikan service, dan pengadaan baru
               </p>
             </div>
-            <div className="text-xs font-semibold px-2.5 py-1 bg-teal-50 text-teal-800 rounded-lg border border-teal-200">
+            <div className="text-xs font-semibold px-2.5 py-1 bg-amber-50 text-amber-800 rounded-lg border border-amber-200">
               {assetLogs.length} Aktivitas Log Tercatat
             </div>
           </div>
@@ -835,10 +835,10 @@ export const AssetManagementView: React.FC<AssetManagementViewProps> = ({
                             log.action === 'Penyerahan / Pinjam'
                               ? 'bg-indigo-100 text-indigo-800'
                               : log.action === 'Pengembalian'
-                              ? 'bg-emerald-100 text-emerald-800'
+                              ? 'bg-amber-100 text-amber-800'
                               : log.action === 'Mulai Perbaikan' || log.action === 'Penggantian / Rusak'
                               ? 'bg-amber-100 text-amber-800'
-                              : 'bg-teal-100 text-teal-800'
+                              : 'bg-amber-100 text-amber-800'
                           }`}
                         >
                           {log.action}
@@ -873,7 +873,7 @@ export const AssetManagementView: React.FC<AssetManagementViewProps> = ({
                         <span
                           className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold ${
                             log.condition === 'Baik'
-                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              ? 'bg-amber-50 text-amber-700 border border-amber-200'
                               : log.condition === 'Perlu Perbaikan'
                               ? 'bg-amber-50 text-amber-700 border border-amber-200'
                               : 'bg-rose-50 text-rose-700 border border-rose-200'
@@ -905,7 +905,7 @@ export const AssetManagementView: React.FC<AssetManagementViewProps> = ({
           <div className="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in-95 my-8">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2">
-                <div className="p-2 bg-teal-50 text-teal-700 rounded-xl">
+                <div className="p-2 bg-amber-50 text-amber-700 rounded-xl">
                   <Boxes className="w-5 h-5" />
                 </div>
                 <h3 className="text-base font-bold text-slate-900">
@@ -1079,7 +1079,7 @@ export const AssetManagementView: React.FC<AssetManagementViewProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 text-xs font-bold text-white bg-teal-600 hover:bg-teal-700 rounded-xl shadow-xs cursor-pointer"
+                  className="px-4 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-xl shadow-xs cursor-pointer"
                 >
                   {editingAsset ? 'Simpan Perubahan Aset' : 'Daftarkan Aset Baru'}
                 </button>
@@ -1119,7 +1119,7 @@ export const AssetManagementView: React.FC<AssetManagementViewProps> = ({
             <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1 text-xs">
               <div className="flex items-center justify-between">
                 <span className="font-bold text-slate-800">{assigningAsset.name}</span>
-                <span className="font-mono text-teal-700 font-bold">{assigningAsset.assetCode}</span>
+                <span className="font-mono text-amber-700 font-bold">{assigningAsset.assetCode}</span>
               </div>
               <div className="text-slate-500 flex items-center justify-between text-[11px]">
                 <span>Kategori: {assigningAsset.category}</span>
@@ -1250,7 +1250,7 @@ export const AssetManagementView: React.FC<AssetManagementViewProps> = ({
             <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs space-y-1">
               <div className="flex items-center justify-between">
                 <span className="font-bold text-slate-800">{returningAsset.name}</span>
-                <span className="font-mono text-teal-700 font-bold">{returningAsset.assetCode}</span>
+                <span className="font-mono text-amber-700 font-bold">{returningAsset.assetCode}</span>
               </div>
               <div className="text-slate-600">
                 Peminjam: <strong>{returningAsset.assignedToEmployeeName}</strong> (NIK: {returningAsset.assignedToEmployeeNik})
@@ -1329,14 +1329,14 @@ export const AssetManagementView: React.FC<AssetManagementViewProps> = ({
           <div className="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in-95">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2">
-                <div className="p-2 bg-teal-50 text-teal-700 rounded-xl">
+                <div className="p-2 bg-amber-50 text-amber-700 rounded-xl">
                   <Boxes className="w-5 h-5" />
                 </div>
                 <div>
                   <h3 className="text-base font-bold text-slate-900">
                     Detail Inventaris Aset Perusahaan
                   </h3>
-                  <span className="font-mono text-xs text-teal-700 font-bold">
+                  <span className="font-mono text-xs text-amber-700 font-bold">
                     {selectedAssetDetail.assetCode}
                   </span>
                 </div>
@@ -1359,7 +1359,7 @@ export const AssetManagementView: React.FC<AssetManagementViewProps> = ({
                   <span
                     className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                       selectedAssetDetail.status === 'Tersedia'
-                        ? 'bg-emerald-100 text-emerald-800'
+                        ? 'bg-amber-100 text-amber-800'
                         : selectedAssetDetail.status === 'Dipinjamkan'
                         ? 'bg-indigo-100 text-indigo-800'
                         : 'bg-amber-100 text-amber-800'
@@ -1411,7 +1411,7 @@ export const AssetManagementView: React.FC<AssetManagementViewProps> = ({
               {/* Assignment Details */}
               <div className="p-3.5 rounded-xl border border-slate-200 bg-white space-y-2">
                 <span className="font-semibold text-slate-800 block text-xs flex items-center gap-1.5">
-                  <UserCheck className="w-3.5 h-3.5 text-teal-600" />
+                  <UserCheck className="w-3.5 h-3.5 text-amber-600" />
                   Status Penugasan Karyawan:
                 </span>
                 {selectedAssetDetail.assignedToEmployeeId ? (

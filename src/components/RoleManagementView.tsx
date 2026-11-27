@@ -70,7 +70,7 @@ export function RoleManagementView({
         >
           <Eye className="w-4 h-4" />
           <span>Visibilitas Menu & Role (Atur Tampilan)</span>
-          <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-100 text-emerald-800 font-bold">
+          <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-100 text-amber-800 font-bold">
             Live Simulator
           </span>
         </button>

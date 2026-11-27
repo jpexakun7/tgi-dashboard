@@ -50,7 +50,7 @@ interface DepartmentKpiViewProps {
 
 const DEPARTMENT_COLORS: { [key: string]: string } = {
   'Teknologi & IT': '#0284c7', // Sky-600
-  'Keuangan & Akuntansi': '#10b981', // Emerald-500
+  'Keuangan & Akuntansi': '#f59e0b', // Emerald-500
   'Operasional': '#f59e0b', // Amber-500
   'Human Resources & GA': '#8b5cf6', // Purple-500
   'Pemasaran & Bisnis': '#ec4899', // Pink-500
@@ -68,7 +68,7 @@ const FALLBACK_PALETTE = [
   '#e11d48',
   '#0284c7',
   '#8b5cf6',
-  '#10b981',
+  '#f59e0b',
   '#f59e0b',
 ];
 
@@ -407,7 +407,7 @@ export const DepartmentKpiView: React.FC<DepartmentKpiViewProps> = ({ employees 
       {/* Toast Notification */}
       {toastMessage && (
         <div className="fixed top-5 right-5 z-50 bg-slate-900 text-white px-4 py-3 rounded-xl shadow-2xl flex items-center gap-3 border border-slate-700 animate-fadeIn text-xs">
-          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" />
           <span className="font-medium">{toastMessage}</span>
           <button
             onClick={() => setToastMessage(null)}
@@ -422,8 +422,8 @@ export const DepartmentKpiView: React.FC<DepartmentKpiViewProps> = ({ employees 
       <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-950 rounded-2xl p-6 text-white shadow-xl border border-slate-700/60 relative overflow-hidden">
         <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-xs font-semibold mb-2 border border-emerald-500/30">
-              <Target className="w-3.5 h-3.5 text-emerald-400" />
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/20 text-amber-300 text-xs font-semibold mb-2 border border-amber-500/30">
+              <Target className="w-3.5 h-3.5 text-amber-400" />
               Siklus Evaluasi Kinerja: {selectedQuarter} Tas Grosir Import
             </div>
             <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white flex items-center gap-2.5">
@@ -438,7 +438,7 @@ export const DepartmentKpiView: React.FC<DepartmentKpiViewProps> = ({ employees 
             <select
               value={selectedQuarter}
               onChange={(e) => setSelectedQuarter(e.target.value)}
-              className="text-xs bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2.5 text-white focus:outline-hidden focus:ring-2 focus:ring-emerald-400 cursor-pointer"
+              className="text-xs bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2.5 text-white focus:outline-hidden focus:ring-2 focus:ring-amber-400 cursor-pointer"
             >
               <option value="Q4 2026">Kuartal IV (Q4 2026 - Berjalan)</option>
               <option value="Q3 2026">Kuartal III (Q3 2026)</option>
@@ -448,7 +448,7 @@ export const DepartmentKpiView: React.FC<DepartmentKpiViewProps> = ({ employees 
 
             <button
               onClick={handleExportKPItoCSV}
-              className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-md shadow-emerald-600/30"
+              className="px-4 py-2.5 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-md shadow-amber-600/30"
             >
               <Download className="w-4 h-4" />
               Ekspor Rekap KPI
@@ -465,7 +465,7 @@ export const DepartmentKpiView: React.FC<DepartmentKpiViewProps> = ({ employees 
             <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
               Rata-Rata Skor KPI
             </span>
-            <div className="p-2 rounded-xl bg-emerald-50 text-emerald-600">
+            <div className="p-2 rounded-xl bg-amber-50 text-amber-600">
               <Award className="w-5 h-5" />
             </div>
           </div>
@@ -473,7 +473,7 @@ export const DepartmentKpiView: React.FC<DepartmentKpiViewProps> = ({ employees 
             <h3 className="text-2xl sm:text-3xl font-black text-slate-900">
               {companyAverageScore}%
             </h3>
-            <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800">
+            <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-amber-100 text-amber-800">
               Grade A (Luar Biasa)
             </span>
           </div>
@@ -537,7 +537,7 @@ export const DepartmentKpiView: React.FC<DepartmentKpiViewProps> = ({ employees 
             <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
               Status Capaian Divisi Aktif
             </span>
-            <div className="p-2 rounded-xl bg-teal-50 text-teal-600">
+            <div className="p-2 rounded-xl bg-amber-50 text-amber-600">
               <ShieldCheck className="w-5 h-5" />
             </div>
           </div>
@@ -545,7 +545,7 @@ export const DepartmentKpiView: React.FC<DepartmentKpiViewProps> = ({ employees 
             <h3 className="text-2xl sm:text-3xl font-black text-slate-900">
               {exceededDeptsCount + onTrackDeptsCount} / {activeKpiData.length}
             </h3>
-            <span className="text-xs text-emerald-600 font-bold">100% On Track</span>
+            <span className="text-xs text-amber-600 font-bold">100% On Track</span>
           </div>
           <p className="mt-2 text-xs text-slate-500">
             {exceededDeptsCount} Melebihi Target • {onTrackDeptsCount} Sesuai Target
@@ -641,7 +641,7 @@ export const DepartmentKpiView: React.FC<DepartmentKpiViewProps> = ({ employees 
                 <PolarGrid stroke="#e2e8f0" />
                 <PolarAngleAxis dataKey="subject" tick={{ fontSize: 11, fill: '#1e293b', fontWeight: 600 }} />
                 <PolarRadiusAxis angle={30} domain={[70, 100]} tick={{ fontSize: 10, fill: '#94a3b8' }} />
-                <Radar name="Skor Kinerja" dataKey="score" stroke="#059669" fill="#10b981" fillOpacity={0.45} />
+                <Radar name="Skor Kinerja" dataKey="score" stroke="#d97706" fill="#f59e0b" fillOpacity={0.45} />
                 <Radar name="Target Minimum (90%)" dataKey="benchmark" stroke="#94a3b8" strokeDasharray="3 3" fill="none" />
                 <Tooltip
                   formatter={(val: any) => [`${val}%`, 'Skor']}
@@ -682,8 +682,8 @@ export const DepartmentKpiView: React.FC<DepartmentKpiViewProps> = ({ employees 
                     key={d.department}
                     type="monotone"
                     dataKey={d.department}
-                    stroke={DEPARTMENT_COLORS[d.department] || '#10b981'}
-                    fill={DEPARTMENT_COLORS[d.department] || '#10b981'}
+                    stroke={DEPARTMENT_COLORS[d.department] || '#f59e0b'}
+                    fill={DEPARTMENT_COLORS[d.department] || '#f59e0b'}
                     fillOpacity={0.15}
                   />
                 ))}
@@ -701,7 +701,7 @@ export const DepartmentKpiView: React.FC<DepartmentKpiViewProps> = ({ employees 
           <select
             value={selectedDeptFilter}
             onChange={(e) => setSelectedDeptFilter(e.target.value)}
-            className="text-xs bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-slate-700 focus:outline-hidden focus:ring-2 focus:ring-emerald-400 cursor-pointer"
+            className="text-xs bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-slate-700 focus:outline-hidden focus:ring-2 focus:ring-amber-400 cursor-pointer"
           >
             <option value="ALL">Semua Departemen Aktif ({activeKpiData.length})</option>
             {activeKpiData.map((d) => (
@@ -713,8 +713,8 @@ export const DepartmentKpiView: React.FC<DepartmentKpiViewProps> = ({ employees 
         </div>
 
         <div className="text-xs text-slate-500 flex items-center gap-2">
-          <span className="flex items-center gap-1 font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" /> Melebihi Target
+          <span className="flex items-center gap-1 font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-500" /> Melebihi Target
           </span>
           <span className="flex items-center gap-1 font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-200">
             <span className="w-1.5 h-1.5 rounded-full bg-blue-500" /> Sesuai Target
@@ -736,7 +736,7 @@ export const DepartmentKpiView: React.FC<DepartmentKpiViewProps> = ({ employees 
                 <div className="flex items-center gap-3.5">
                   <div
                     className="w-12 h-12 rounded-xl flex items-center justify-center text-white font-bold text-lg shadow-sm"
-                    style={{ backgroundColor: DEPARTMENT_COLORS[dept.department] || '#059669' }}
+                    style={{ backgroundColor: DEPARTMENT_COLORS[dept.department] || '#d97706' }}
                   >
                     <Building className="w-6 h-6 text-white" />
                   </div>
@@ -746,7 +746,7 @@ export const DepartmentKpiView: React.FC<DepartmentKpiViewProps> = ({ employees 
                       <span
                         className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
                           dept.status === 'exceeded'
-                            ? 'bg-emerald-100 text-emerald-800'
+                            ? 'bg-amber-100 text-amber-800'
                             : 'bg-blue-100 text-blue-800'
                         }`}
                       >
@@ -775,7 +775,7 @@ export const DepartmentKpiView: React.FC<DepartmentKpiViewProps> = ({ employees 
                       {dept.overallScore}%
                     </span>
                     <span className="text-[11px] font-semibold text-slate-500">
-                      Predikat: <strong className="text-emerald-700">{dept.grade}</strong>
+                      Predikat: <strong className="text-amber-700">{dept.grade}</strong>
                     </span>
                   </div>
 
@@ -811,7 +811,7 @@ export const DepartmentKpiView: React.FC<DepartmentKpiViewProps> = ({ employees 
                             setEditingDept(dept);
                             setEditingMetric({ ...metric });
                           }}
-                          className="p-1 text-slate-400 hover:text-emerald-600 rounded hover:bg-slate-100 transition-colors cursor-pointer"
+                          className="p-1 text-slate-400 hover:text-amber-600 rounded hover:bg-slate-100 transition-colors cursor-pointer"
                           title="Sesuaikan Target & Capaian"
                         >
                           <Edit3 className="w-3.5 h-3.5" />
@@ -837,7 +837,7 @@ export const DepartmentKpiView: React.FC<DepartmentKpiViewProps> = ({ employees 
                           <span
                             className={`font-bold ${
                               metric.achievementRate >= 100
-                                ? 'text-emerald-700'
+                                ? 'text-amber-700'
                                 : 'text-blue-700'
                             }`}
                           >
@@ -848,7 +848,7 @@ export const DepartmentKpiView: React.FC<DepartmentKpiViewProps> = ({ employees 
                           <div
                             className={`h-full rounded-full transition-all duration-500 ${
                               metric.achievementRate >= 100
-                                ? 'bg-emerald-500'
+                                ? 'bg-amber-500'
                                 : 'bg-blue-500'
                             }`}
                             style={{ width: `${Math.min(metric.achievementRate, 100)}%` }}
@@ -870,12 +870,12 @@ export const DepartmentKpiView: React.FC<DepartmentKpiViewProps> = ({ employees 
                 {isExpanded && (
                   <div className="mt-5 pt-5 border-t border-slate-100 grid grid-cols-1 md:grid-cols-2 gap-4 animate-fadeIn">
                     {/* Strengths */}
-                    <div className="p-4 rounded-xl bg-emerald-50/60 border border-emerald-200">
-                      <h5 className="text-xs font-bold text-emerald-900 flex items-center gap-1.5 mb-2">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    <div className="p-4 rounded-xl bg-amber-50/60 border border-amber-200">
+                      <h5 className="text-xs font-bold text-amber-900 flex items-center gap-1.5 mb-2">
+                        <CheckCircle2 className="w-4 h-4 text-amber-600" />
                         Kekuatan Utama & Pencapaian Unggulan:
                       </h5>
-                      <ul className="space-y-1.5 text-xs text-emerald-800 list-disc list-inside">
+                      <ul className="space-y-1.5 text-xs text-amber-800 list-disc list-inside">
                         {dept.keyStrengths.map((s, idx) => (
                           <li key={idx} className="leading-relaxed">
                             {s}
@@ -1023,7 +1023,7 @@ export const DepartmentKpiView: React.FC<DepartmentKpiViewProps> = ({ employees 
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-semibold cursor-pointer shadow-md shadow-emerald-600/30"
+                  className="px-4 py-2 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold rounded-xl font-semibold cursor-pointer shadow-md shadow-amber-600/30"
                 >
                   Simpan Perubahan
                 </button>

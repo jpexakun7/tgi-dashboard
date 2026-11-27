@@ -34,6 +34,9 @@ import {
   Briefcase,
   Copy,
   Database,
+  MapPin,
+  Navigation,
+  ExternalLink,
 } from 'lucide-react';
 import {
   CompanyConfig,
@@ -46,11 +49,14 @@ import {
   ActivityActionType,
   ActivityCategory,
   GoogleAdminUser,
+  OfficeBranchLocation,
 } from '../types';
 import {
   initialAllowedGoogleAdmins,
   initialRolePermissions,
   initialGoogleAuthSettings,
+  DEFAULT_OFFICE_BRANCHES,
+  ensureDefaultOfficeBranches,
 } from '../mockData';
 import { GranularRbacPanel } from './GranularRbacPanel';
 import { RoleModuleVisibilityPanel } from './RoleModuleVisibilityPanel';
@@ -100,7 +106,7 @@ const AVAILABLE_ROLE_OPTIONS = [
 const ROLE_BADGE_MAP: Record<string, { bg: string; text: string; border: string }> = {
   'Super Admin': { bg: 'bg-purple-100', text: 'text-purple-800', border: 'border-purple-200' },
   'HR Manager': { bg: 'bg-blue-100', text: 'text-blue-800', border: 'border-blue-200' },
-  'Finance / Payroll Admin': { bg: 'bg-emerald-100', text: 'text-emerald-800', border: 'border-emerald-200' },
+  'Finance / Payroll Admin': { bg: 'bg-amber-100', text: 'text-amber-800', border: 'border-amber-200' },
   'Division Lead / Supervisor': { bg: 'bg-amber-100', text: 'text-amber-800', border: 'border-amber-200' },
   'Employee (Staf Biasa)': { bg: 'bg-slate-100', text: 'text-slate-800', border: 'border-slate-200' },
 };
@@ -153,6 +159,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     standardWorkDaysPerWeek: companyConfig.standardWorkDaysPerWeek ?? 5,
     defaultOvertimeMultiplier: companyConfig.defaultOvertimeMultiplier ?? 1.5,
     defaultOvertimeRatePerHour: companyConfig.defaultOvertimeRatePerHour ?? 55000,
+    officeBranches: ensureDefaultOfficeBranches(companyConfig.officeBranches),
   });
 
   // Keep formData in sync when companyConfig updates
@@ -165,8 +172,36 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       standardWorkDaysPerWeek: companyConfig.standardWorkDaysPerWeek ?? prev.standardWorkDaysPerWeek ?? 5,
       defaultOvertimeMultiplier: companyConfig.defaultOvertimeMultiplier ?? prev.defaultOvertimeMultiplier ?? 1.5,
       defaultOvertimeRatePerHour: companyConfig.defaultOvertimeRatePerHour ?? prev.defaultOvertimeRatePerHour ?? 55000,
+      officeBranches: ensureDefaultOfficeBranches(
+        companyConfig.officeBranches && companyConfig.officeBranches.length > 0
+          ? companyConfig.officeBranches
+          : prev.officeBranches
+      ),
     }));
   }, [companyConfig]);
+
+  // Multi-Branch GPS Management State
+  const [branchFetchGpsLoadingId, setBranchFetchGpsLoadingId] = useState<string | null>(null);
+  const [branchGpsFeedback, setBranchGpsFeedback] = useState<{
+    id: string;
+    message: string;
+    isError?: boolean;
+  } | null>(null);
+  const [newBranchDraft, setNewBranchDraft] = useState<{
+    isOpen: boolean;
+    name: string;
+    latitude: string;
+    longitude: string;
+    radiusMeters: string;
+    address: string;
+  }>({
+    isOpen: false,
+    name: '',
+    latitude: '',
+    longitude: '',
+    radiusMeters: '25',
+    address: '',
+  });
 
   // Keep activeSubTab in sync if initialTab prop changes
   useEffect(() => {
@@ -289,11 +324,180 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       onSendNotification({
         recipientType: 'admin',
         title: 'Konfigurasi Sistem & Payroll Telah Diperbarui',
-        message: `Parameter siklus cut-off, plafon kasbon (${formData.maxCashAdvancePercentage}%), dan tarif lembur telah diperbarui.`,
+        message: `Parameter siklus cut-off, lokasi GPS (${(formData.officeBranches || []).length} cabang), plafon kasbon (${formData.maxCashAdvancePercentage}%), dan tarif lembur telah diperbarui.`,
         category: 'SYSTEM_SECURITY',
         priority: 'normal',
       });
     }
+  };
+
+  // Multi-Branch GPS Helpers
+  const activeOfficeBranches =
+    formData.officeBranches && formData.officeBranches.length > 0
+      ? formData.officeBranches
+      : DEFAULT_OFFICE_BRANCHES;
+
+  const persistBranchesImmediately = (nextBranches: OfficeBranchLocation[], toastText?: string) => {
+    const updatedConfig: CompanyConfig = {
+      ...formData,
+      officeBranches: nextBranches,
+    };
+    setFormData(updatedConfig);
+    onUpdateConfig(updatedConfig);
+    if (toastText) {
+      triggerToast(toastText);
+    }
+  };
+
+  const handleUseCurrentGpsForBranch = (targetBranchId: string | 'NEW_DRAFT') => {
+    if (!('geolocation' in navigator)) {
+      setBranchGpsFeedback({
+        id: targetBranchId,
+        message: 'Browser/perangkat ini tidak mendukung fitur Geolocation GPS.',
+        isError: true,
+      });
+      return;
+    }
+
+    setBranchFetchGpsLoadingId(targetBranchId);
+    setBranchGpsFeedback(null);
+
+    const applyPosition = (pos: GeolocationPosition) => {
+      const lat = Number(pos.coords.latitude.toFixed(7));
+      const lon = Number(pos.coords.longitude.toFixed(7));
+      const acc = Math.round(pos.coords.accuracy || 0);
+
+      if (targetBranchId === 'NEW_DRAFT') {
+        setNewBranchDraft((prev) => ({
+          ...prev,
+          latitude: String(lat),
+          longitude: String(lon),
+        }));
+      } else {
+        const updatedBranches = activeOfficeBranches.map((b) =>
+          b.id === targetBranchId ? { ...b, latitude: lat, longitude: lon } : b
+        );
+        persistBranchesImmediately(
+          updatedBranches,
+          `Koordinat GPS cabang berhasil diisi otomatis (${lat}, ${lon})!`
+        );
+      }
+
+      setBranchFetchGpsLoadingId(null);
+      setBranchGpsFeedback({
+        id: targetBranchId,
+        message: `Berhasil mengambil koordinat GPS perangkat: ${lat}, ${lon} (Akurasi ±${acc}m)`,
+        isError: false,
+      });
+    };
+
+    const handleGpsError = (err: GeolocationPositionError) => {
+      setBranchFetchGpsLoadingId(null);
+      const errMsg =
+        err.code === 1
+          ? 'Izin akses Lokasi GPS ditolak oleh browser. Silakan izinkan akses lokasi (Location) di pengaturan browser.'
+          : err.code === 2
+            ? 'Sinyal GPS perangkat tidak tersedia. Pastikan layanan lokasi/GPS perangkat aktif.'
+            : 'Waktu pembacaan GPS habis (timeout). Silakan coba klik tombol sekali lagi.';
+      setBranchGpsFeedback({
+        id: targetBranchId,
+        message: errMsg,
+        isError: true,
+      });
+    };
+
+    navigator.geolocation.getCurrentPosition(
+      applyPosition,
+      (err) => {
+        if (err.code !== 1) {
+          navigator.geolocation.getCurrentPosition(applyPosition, handleGpsError, {
+            enableHighAccuracy: false,
+            timeout: 10000,
+            maximumAge: 0,
+          });
+        } else {
+          handleGpsError(err);
+        }
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 7000,
+        maximumAge: 0,
+      }
+    );
+  };
+
+  const handleUpdateBranchField = (
+    branchId: string,
+    field: keyof OfficeBranchLocation,
+    value: string | number | boolean
+  ) => {
+    const updatedBranches = activeOfficeBranches.map((b) => {
+      if (b.id !== branchId) return b;
+      return {
+        ...b,
+        [field]: value,
+      };
+    });
+    setFormData({
+      ...formData,
+      officeBranches: updatedBranches,
+    });
+  };
+
+  const handleAddNewBranch = () => {
+    const trimmedName = newBranchDraft.name.trim();
+    const latNum = parseFloat(newBranchDraft.latitude);
+    const lonNum = parseFloat(newBranchDraft.longitude);
+    const radNum = parseFloat(newBranchDraft.radiusMeters);
+
+    if (!trimmedName) {
+      triggerToast('Mohon isi Nama Cabang terlebih dahulu.');
+      return;
+    }
+    if (!Number.isFinite(latNum) || !Number.isFinite(lonNum)) {
+      triggerToast('Titik Latitude dan Longitude cabang harus berupa angka koordinat yang valid.');
+      return;
+    }
+    const validRadius = Number.isFinite(radNum) && radNum > 0 ? radNum : 25;
+
+    const newBranch: OfficeBranchLocation = {
+      id: `branch-${Date.now().toString().slice(-6)}`,
+      name: trimmedName,
+      latitude: latNum,
+      longitude: lonNum,
+      radiusMeters: validRadius,
+      address: newBranchDraft.address.trim() || `${trimmedName} (${latNum}, ${lonNum})`,
+      isActive: true,
+    };
+
+    const nextBranches = [...activeOfficeBranches, newBranch];
+    persistBranchesImmediately(
+      nextBranches,
+      `Lokasi cabang "${newBranch.name}" (Radius ${newBranch.radiusMeters}m) berhasil ditambahkan!`
+    );
+    setNewBranchDraft({
+      isOpen: false,
+      name: '',
+      latitude: '',
+      longitude: '',
+      radiusMeters: '25',
+      address: '',
+    });
+    setBranchGpsFeedback(null);
+  };
+
+  const handleDeleteBranch = (branchId: string) => {
+    if (activeOfficeBranches.length <= 1) {
+      triggerToast('Minimal harus ada 1 titik lokasi cabang kantor yang terdaftar.');
+      return;
+    }
+    const target = activeOfficeBranches.find((b) => b.id === branchId);
+    const nextBranches = activeOfficeBranches.filter((b) => b.id !== branchId);
+    persistBranchesImmediately(
+      nextBranches,
+      `Cabang "${target?.name || branchId}" berhasil dihapus dari daftar lokasi GPS.`
+    );
   };
 
   // Open Assign Role Modal
@@ -564,7 +768,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       {/* Toast Notification */}
       {toastMessage && (
         <div className="fixed top-5 right-5 z-50 flex items-center gap-2.5 bg-slate-900 text-white px-4 py-3 rounded-xl shadow-xl text-xs font-semibold animate-fade-in border border-slate-700">
-          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" />
           <span>{toastMessage}</span>
         </div>
       )}
@@ -586,9 +790,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <button
               type="button"
               onClick={onOpenSupabaseModal}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 transition-colors cursor-pointer shadow-2xs"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 transition-colors cursor-pointer shadow-2xs"
             >
-              <Database className="w-4 h-4 text-emerald-600" />
+              <Database className="w-4 h-4 text-amber-600" />
               <span>Cloud Supabase & SQL Schema</span>
             </button>
           )}
@@ -633,7 +837,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         >
           <Eye className="w-4 h-4" />
           <span>Visibilitas Menu & Role</span>
-          <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-100 text-emerald-800 font-bold">
+          <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-100 text-amber-800 font-bold">
             Atur Tampilan
           </span>
         </button>
@@ -675,14 +879,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           onClick={() => setActiveSubTab('general_payroll')}
           className={`px-4 py-3 text-xs font-bold flex items-center gap-2 border-b-2 transition-all cursor-pointer whitespace-nowrap ${
             activeSubTab === 'general_payroll'
-              ? 'border-indigo-600 text-indigo-600 bg-white rounded-t-xl shadow-2xs'
+              ? 'border-amber-500 text-amber-800 bg-white rounded-t-xl shadow-2xs'
               : 'border-transparent text-slate-500 hover:text-slate-800 hover:bg-slate-100/60 rounded-t-xl'
           }`}
         >
-          <Building className="w-4 h-4" />
-          <span>Konfigurasi Umum Sistem & Payroll</span>
-          <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-100 text-emerald-800">
-            Cut-Off & Plafon
+          <MapPin className="w-4 h-4 text-amber-600" />
+          <span>Lokasi GPS Multi-Cabang & Konfigurasi Payroll</span>
+          <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-100 text-amber-900 font-bold">
+            {activeOfficeBranches.length} Cabang GPS
           </span>
         </button>
       </div>
@@ -774,9 +978,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <span className="text-slate-500 block text-[11px]">Total Akun Terdaftar</span>
                 <span className="text-lg font-bold text-slate-900">{userAccounts.length} Pengguna</span>
               </div>
-              <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200">
-                <span className="text-emerald-700 block text-[11px]">Akun Aktif</span>
-                <span className="text-lg font-bold text-emerald-800">
+              <div className="p-3 bg-amber-50 rounded-xl border border-amber-200">
+                <span className="text-amber-700 block text-[11px]">Akun Aktif</span>
+                <span className="text-lg font-bold text-amber-800">
                   {userAccounts.filter((u) => u.status === 'active').length} Akun
                 </span>
               </div>
@@ -917,13 +1121,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                             <span
                               className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
                                 account.status === 'active'
-                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                  ? 'bg-amber-50 text-amber-700 border-amber-200'
                                   : 'bg-rose-50 text-rose-700 border-rose-200'
                               }`}
                             >
                               <span
                                 className={`w-1.5 h-1.5 rounded-full ${
-                                  account.status === 'active' ? 'bg-emerald-500' : 'bg-rose-500'
+                                  account.status === 'active' ? 'bg-amber-500' : 'bg-rose-500'
                                 }`}
                               />
                               {account.status === 'active' ? 'Aktif' : 'Nonaktif'}
@@ -961,7 +1165,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                                   className={`p-1.5 rounded-lg border text-xs font-semibold transition-colors cursor-pointer ${
                                     account.status === 'active'
                                       ? 'bg-rose-50 hover:bg-rose-100 text-rose-600 border-rose-200'
-                                      : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-200'
+                                      : 'bg-amber-50 hover:bg-amber-100 text-amber-700 border-amber-200'
                                   }`}
                                   title={
                                     account.status === 'active'
@@ -990,10 +1194,433 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       )}
 
       {/* ============================================================== */}
-      {/* TAB 3: KONFIGURASI UMUM SISTEM & PAYROLL                       */}
+      {/* TAB 3: KONFIGURASI UMUM SISTEM, MULTI-CABANG GPS & PAYROLL     */}
       {/* ============================================================== */}
       {activeSubTab === 'general_payroll' && (
         <form onSubmit={handleSaveGeneralSettings} className="space-y-6 animate-fade-in">
+          {/* Section 0: Pengaturan Lokasi GPS Multi-Cabang (Geofence Presensi Wajah & GPS) */}
+          <div className="bg-gradient-to-br from-neutral-950 via-stone-900 to-neutral-900 p-6 rounded-2xl border border-amber-500/35 shadow-lg space-y-5 text-white">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-amber-500/20 pb-4">
+              <div className="flex items-start gap-3">
+                <div className="p-2.5 rounded-xl bg-amber-500/15 text-amber-400 border border-amber-500/35 shrink-0">
+                  <MapPin className="w-6 h-6" />
+                </div>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="font-extrabold text-base text-amber-300">
+                      Pengaturan Titik Lokasi GPS Kantor &amp; Gudang (Multi-Cabang)
+                    </h3>
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                      {activeOfficeBranches.filter((b) => b.isActive !== false).length} Cabang Aktif
+                    </span>
+                  </div>
+                  <p className="text-xs text-stone-300 mt-1 leading-relaxed">
+                    Kelola daftar titik koordinat cabang (Kantor Pusat, Gudang, atau Toko). Saat karyawan melakukan <strong>Absen Wajah &amp; GPS</strong> di Portal Karyawan, sistem otomatis memvalidasi jarak ke semua cabang aktif dan mencatat nama cabang tempat karyawan berada.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewBranchDraft((prev) => ({
+                      ...prev,
+                      isOpen: !prev.isOpen,
+                    }));
+                    setBranchGpsFeedback(null);
+                  }}
+                  className="px-4 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-neutral-950 rounded-xl text-xs font-extrabold flex items-center gap-1.5 shadow-md transition-all cursor-pointer"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>{newBranchDraft.isOpen ? 'Tutup Form Cabang Baru' : 'Tambah Lokasi Cabang Baru'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Form Tambah Cabang Baru */}
+            {newBranchDraft.isOpen && (
+              <div className="p-4 sm:p-5 rounded-2xl bg-neutral-900/95 border border-amber-500/40 space-y-4 animate-fade-in">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-amber-500/20 pb-3">
+                  <div>
+                    <h4 className="text-xs sm:text-sm font-extrabold text-amber-300 flex items-center gap-2">
+                      <Plus className="w-4 h-4 text-amber-400" />
+                      <span>Tambah Titik Lokasi Cabang Baru</span>
+                    </h4>
+                    <p className="text-[11px] text-stone-400 mt-0.5">
+                      Isi koordinat secara manual atau klik tombol ambil koordinat GPS otomatis di bawah.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={branchFetchGpsLoadingId === 'NEW_DRAFT'}
+                    onClick={() => handleUseCurrentGpsForBranch('NEW_DRAFT')}
+                    className="px-3.5 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-extrabold flex items-center justify-center gap-1.5 transition-all cursor-pointer shrink-0"
+                  >
+                    <Navigation
+                      className={`w-3.5 h-3.5 text-amber-400 ${
+                        branchFetchGpsLoadingId === 'NEW_DRAFT' ? 'animate-spin' : ''
+                      }`}
+                    />
+                    <span>
+                      {branchFetchGpsLoadingId === 'NEW_DRAFT'
+                        ? 'Mengambil Titik GPS...'
+                        : 'Gunakan Lokasi GPS Saat Ini'}
+                    </span>
+                  </button>
+                </div>
+
+                {branchGpsFeedback && branchGpsFeedback.id === 'NEW_DRAFT' && (
+                  <div
+                    className={`p-3 rounded-xl text-xs font-semibold flex items-center gap-2 border ${
+                      branchGpsFeedback.isError
+                        ? 'bg-rose-950/80 border-rose-500/50 text-rose-200'
+                        : 'bg-amber-500/15 border-amber-500/40 text-amber-200'
+                    }`}
+                  >
+                    {branchGpsFeedback.isError ? (
+                      <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                    ) : (
+                      <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" />
+                    )}
+                    <span>{branchGpsFeedback.message}</span>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 text-xs">
+                  <div className="sm:col-span-4">
+                    <label className="block text-amber-200 font-bold mb-1">
+                      Nama Cabang / Lokasi *
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Contoh: Cabang Gudang 2 / Toko Mangga Dua"
+                      value={newBranchDraft.name}
+                      onChange={(e) =>
+                        setNewBranchDraft({ ...newBranchDraft, name: e.target.value })
+                      }
+                      className="w-full p-2.5 bg-neutral-950 border border-amber-500/30 rounded-xl font-bold text-white placeholder:text-stone-500 focus:outline-hidden focus:border-amber-400"
+                    />
+                  </div>
+
+                  <div className="sm:col-span-3">
+                    <label className="block text-amber-200 font-bold mb-1">
+                      Latitude (Garis Lintang) *
+                    </label>
+                    <input
+                      type="number"
+                      step="any"
+                      placeholder="Contoh: -6.2105112"
+                      value={newBranchDraft.latitude}
+                      onChange={(e) =>
+                        setNewBranchDraft({ ...newBranchDraft, latitude: e.target.value })
+                      }
+                      className="w-full p-2.5 bg-neutral-950 border border-amber-500/30 rounded-xl font-mono font-bold text-amber-300 placeholder:text-stone-500 focus:outline-hidden focus:border-amber-400"
+                    />
+                  </div>
+
+                  <div className="sm:col-span-3">
+                    <label className="block text-amber-200 font-bold mb-1">
+                      Longitude (Garis Bujur) *
+                    </label>
+                    <input
+                      type="number"
+                      step="any"
+                      placeholder="Contoh: 106.6847656"
+                      value={newBranchDraft.longitude}
+                      onChange={(e) =>
+                        setNewBranchDraft({ ...newBranchDraft, longitude: e.target.value })
+                      }
+                      className="w-full p-2.5 bg-neutral-950 border border-amber-500/30 rounded-xl font-mono font-bold text-amber-300 placeholder:text-stone-500 focus:outline-hidden focus:border-amber-400"
+                    />
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <label className="block text-amber-200 font-bold mb-1">
+                      Radius (Meter) *
+                    </label>
+                    <input
+                      type="number"
+                      step="any"
+                      min={5}
+                      max={5000}
+                      placeholder="25"
+                      value={newBranchDraft.radiusMeters}
+                      onChange={(e) =>
+                        setNewBranchDraft({ ...newBranchDraft, radiusMeters: e.target.value })
+                      }
+                      className="w-full p-2.5 bg-neutral-950 border border-amber-500/30 rounded-xl font-mono font-extrabold text-white focus:outline-hidden focus:border-amber-400"
+                    />
+                  </div>
+
+                  <div className="sm:col-span-12">
+                    <label className="block text-stone-300 font-bold mb-1">
+                      Keterangan Alamat Cabang (Opsional)
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Contoh: Jl. Sumber Mas I Blok C No. 191, Tangerang, Banten"
+                      value={newBranchDraft.address}
+                      onChange={(e) =>
+                        setNewBranchDraft({ ...newBranchDraft, address: e.target.value })
+                      }
+                      className="w-full p-2.5 bg-neutral-950 border border-stone-700 rounded-xl text-stone-200 placeholder:text-stone-500 focus:outline-hidden focus:border-amber-400"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end gap-2 pt-2 border-t border-amber-500/20">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setNewBranchDraft({
+                        isOpen: false,
+                        name: '',
+                        latitude: '',
+                        longitude: '',
+                        radiusMeters: '25',
+                        address: '',
+                      })
+                    }
+                    className="px-4 py-2 rounded-xl border border-stone-700 text-stone-300 hover:bg-neutral-800 text-xs font-bold cursor-pointer"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleAddNewBranch}
+                    className="px-5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-neutral-950 text-xs font-extrabold flex items-center gap-1.5 shadow-md cursor-pointer"
+                  >
+                    <Check className="w-4 h-4" />
+                    <span>Simpan Cabang Baru</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Daftar Lokasi Cabang Terdaftar */}
+            <div className="space-y-3">
+              {activeOfficeBranches.map((branch, idx) => {
+                const isBranchActive = branch.isActive !== false;
+                const isFetchingThisGps = branchFetchGpsLoadingId === branch.id;
+                const feedbackForThis =
+                  branchGpsFeedback && branchGpsFeedback.id === branch.id
+                    ? branchGpsFeedback
+                    : null;
+
+                return (
+                  <div
+                    key={branch.id}
+                    className={`p-4 rounded-2xl border transition-all space-y-3 ${
+                      isBranchActive
+                        ? 'bg-neutral-900/90 border-amber-500/30'
+                        : 'bg-neutral-950/60 border-stone-800 opacity-75'
+                    }`}
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-stone-800 pb-3">
+                      <div className="flex items-center gap-2.5 flex-wrap">
+                        <span className="px-2.5 py-0.5 rounded-lg bg-amber-500/20 border border-amber-500/40 text-amber-300 font-mono text-[11px] font-extrabold">
+                          Cabang #{idx + 1}
+                        </span>
+                        <label className="inline-flex items-center gap-1.5 cursor-pointer text-xs font-bold text-stone-200">
+                          <input
+                            type="checkbox"
+                            checked={isBranchActive}
+                            onChange={(e) => {
+                              const nextList = activeOfficeBranches.map((b) =>
+                                b.id === branch.id ? { ...b, isActive: e.target.checked } : b
+                              );
+                              persistBranchesImmediately(
+                                nextList,
+                                `Status cabang "${branch.name}" diubah menjadi ${
+                                  e.target.checked ? 'Aktif' : 'Nonaktif'
+                                }.`
+                              );
+                            }}
+                            className="w-4 h-4 rounded accent-amber-500 cursor-pointer"
+                          />
+                          <span className={isBranchActive ? 'text-amber-300' : 'text-stone-500'}>
+                            {isBranchActive ? 'Aktif (Geofence Berlaku)' : 'Nonaktif'}
+                          </span>
+                        </label>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={isFetchingThisGps}
+                          onClick={() => handleUseCurrentGpsForBranch(branch.id)}
+                          className="px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-[11px] font-extrabold flex items-center gap-1.5 transition-all cursor-pointer"
+                          title="Isi otomatis Latitude & Longitude cabang ini menggunakan lokasi GPS perangkat saat ini"
+                        >
+                          <Navigation
+                            className={`w-3.5 h-3.5 text-amber-400 ${
+                              isFetchingThisGps ? 'animate-spin' : ''
+                            }`}
+                          />
+                          <span>
+                            {isFetchingThisGps
+                              ? 'Membaca GPS...'
+                              : 'Gunakan Lokasi GPS Saat Ini'}
+                          </span>
+                        </button>
+
+                        <a
+                          href={`https://maps.google.com/maps?q=${branch.latitude}%2C${branch.longitude}&z=18&hl=id`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-2.5 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-stone-200 border border-stone-700 text-[11px] font-bold flex items-center gap-1 transition-colors"
+                          title="Lihat titik koordinat cabang di Google Maps"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5 text-amber-400" />
+                          <span>Cek Maps</span>
+                        </a>
+
+                        {activeOfficeBranches.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteBranch(branch.id)}
+                            className="p-1.5 rounded-xl bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-500/40 transition-colors cursor-pointer"
+                            title="Hapus lokasi cabang ini"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {feedbackForThis && (
+                      <div
+                        className={`p-2.5 rounded-xl text-xs font-semibold flex items-center gap-2 border ${
+                          feedbackForThis.isError
+                            ? 'bg-rose-950/80 border-rose-500/50 text-rose-200'
+                            : 'bg-amber-500/15 border-amber-500/40 text-amber-200'
+                        }`}
+                      >
+                        {feedbackForThis.isError ? (
+                          <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                        ) : (
+                          <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" />
+                        )}
+                        <span>{feedbackForThis.message}</span>
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 text-xs">
+                      <div className="sm:col-span-4">
+                        <label className="block text-stone-300 font-bold mb-1">
+                          Nama Cabang
+                        </label>
+                        <input
+                          type="text"
+                          value={branch.name}
+                          onChange={(e) =>
+                            handleUpdateBranchField(branch.id, 'name', e.target.value)
+                          }
+                          placeholder="Nama Cabang..."
+                          className="w-full p-2.5 bg-neutral-950 border border-stone-700 focus:border-amber-400 rounded-xl font-bold text-white focus:outline-hidden"
+                        />
+                      </div>
+
+                      <div className="sm:col-span-3">
+                        <label className="block text-stone-300 font-bold mb-1">
+                          Latitude
+                        </label>
+                        <input
+                          type="number"
+                          step="any"
+                          value={branch.latitude}
+                          onChange={(e) =>
+                            handleUpdateBranchField(
+                              branch.id,
+                              'latitude',
+                              parseFloat(e.target.value) || 0
+                            )
+                          }
+                          className="w-full p-2.5 bg-neutral-950 border border-stone-700 focus:border-amber-400 rounded-xl font-mono font-bold text-amber-300 focus:outline-hidden"
+                        />
+                      </div>
+
+                      <div className="sm:col-span-3">
+                        <label className="block text-stone-300 font-bold mb-1">
+                          Longitude
+                        </label>
+                        <input
+                          type="number"
+                          step="any"
+                          value={branch.longitude}
+                          onChange={(e) =>
+                            handleUpdateBranchField(
+                              branch.id,
+                              'longitude',
+                              parseFloat(e.target.value) || 0
+                            )
+                          }
+                          className="w-full p-2.5 bg-neutral-950 border border-stone-700 focus:border-amber-400 rounded-xl font-mono font-bold text-amber-300 focus:outline-hidden"
+                        />
+                      </div>
+
+                      <div className="sm:col-span-2">
+                        <label className="block text-stone-300 font-bold mb-1">
+                          Radius (Meter)
+                        </label>
+                        <input
+                          type="number"
+                          step="any"
+                          min={5}
+                          max={5000}
+                          value={branch.radiusMeters}
+                          onChange={(e) =>
+                            handleUpdateBranchField(
+                              branch.id,
+                              'radiusMeters',
+                              Math.max(1, parseFloat(e.target.value) || 25)
+                            )
+                          }
+                          className="w-full p-2.5 bg-neutral-950 border border-amber-500/40 focus:border-amber-400 rounded-xl font-mono font-extrabold text-amber-300 focus:outline-hidden"
+                        />
+                      </div>
+
+                      <div className="sm:col-span-12">
+                        <label className="block text-stone-400 font-semibold mb-1">
+                          Alamat / Keterangan Lokasi Cabang (Opsional)
+                        </label>
+                        <input
+                          type="text"
+                          value={branch.address || ''}
+                          onChange={(e) =>
+                            handleUpdateBranchField(branch.id, 'address', e.target.value)
+                          }
+                          placeholder="Detail alamat cabang untuk ditampilkan di watermark & log presensi..."
+                          className="w-full p-2 bg-neutral-950/80 border border-stone-800 focus:border-amber-400 rounded-xl text-stone-300 focus:outline-hidden"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-2 border-t border-amber-500/20 text-[11px] text-stone-300">
+              <span>
+                💡 Tip: Tekan tombol <strong className="text-amber-300">&ldquo;Gunakan Lokasi GPS Saat Ini&rdquo;</strong> saat Anda berada di lokasi kantor/gudang cabang, lalu klik <strong className="text-amber-300">&ldquo;Simpan Perubahan Cabang GPS&rdquo;</strong>.
+              </span>
+              <button
+                type="button"
+                onClick={() =>
+                  persistBranchesImmediately(
+                    activeOfficeBranches,
+                    `Daftar ${activeOfficeBranches.length} lokasi cabang GPS berhasil disimpan!`
+                  )
+                }
+                className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-neutral-950 font-extrabold text-xs flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer shrink-0 self-start sm:self-auto"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>Simpan Perubahan Cabang GPS</span>
+              </button>
+            </div>
+          </div>
+
           {/* Section 1: Siklus Cut-Off Payroll & Pembayaran */}
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
@@ -1063,7 +1690,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </div>
 
               <div>
-                <label className="block text-slate-700 font-bold mb-1 text-emerald-800">
+                <label className="block text-slate-700 font-bold mb-1 text-amber-800">
                   Tanggal Default Pencairan (Payday)
                 </label>
                 <input
@@ -1078,26 +1705,26 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                       payrollDisbursementDay: Number(e.target.value),
                     })
                   }
-                  className="w-full p-2.5 bg-emerald-50/60 border border-emerald-300 rounded-xl font-extrabold text-emerald-800 focus:border-emerald-500"
+                  className="w-full p-2.5 bg-amber-50/60 border border-amber-300 rounded-xl font-extrabold text-amber-800 focus:border-amber-500"
                 />
-                <span className="text-[10px] text-emerald-600 font-semibold mt-1 block">
+                <span className="text-[10px] text-amber-600 font-semibold mt-1 block">
                   Acuan Tanggal Default (Tidak memicu denda/warning jika bergeser)
                 </span>
               </div>
             </div>
 
             {/* Pengaturan Jadwal Pencairan Gaji Bulanan Fleksibel */}
-            <div className="mt-4 pt-4 border-t border-slate-100 bg-emerald-50/40 p-4 rounded-xl border border-emerald-200/80 space-y-3">
+            <div className="mt-4 pt-4 border-t border-slate-100 bg-amber-50/40 p-4 rounded-xl border border-amber-200/80 space-y-3">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div>
-                  <h4 className="text-xs font-extrabold text-emerald-950">
+                  <h4 className="text-xs font-extrabold text-amber-950">
                     Pengaturan Tanggal Pencairan Gaji Bulanan (Fleksibel &amp; Tanpa Warning Keterlambatan)
                   </h4>
-                  <p className="text-[11px] text-emerald-800">
+                  <p className="text-[11px] text-amber-800">
                     Tanggal Cut-Off Absensi tetap di <strong>Tanggal {formData.cutOffEndDay || 25}</strong>, namun tanggal gajian dapat diatur manual per periode atau dipilih mode <strong>&ldquo;Fleksibel / Tidak Menentu&rdquo;</strong>.
                   </p>
                 </div>
-                <span className="px-2.5 py-1 rounded-full bg-white border border-emerald-300 text-emerald-800 text-[10px] font-extrabold shrink-0">
+                <span className="px-2.5 py-1 rounded-full bg-white border border-amber-300 text-amber-800 text-[10px] font-extrabold shrink-0">
                   Cut-Off Tetap Tgl {formData.cutOffEndDay || 25}
                 </span>
               </div>
@@ -1121,7 +1748,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                         periodPayoutDates: nextPeriodDates,
                       });
                     }}
-                    className="w-full p-2.5 bg-white border border-emerald-300 rounded-xl font-bold text-slate-900 focus:border-emerald-500 cursor-pointer"
+                    className="w-full p-2.5 bg-white border border-amber-300 rounded-xl font-bold text-slate-900 focus:border-amber-500 cursor-pointer"
                   >
                     <option value="manual_date">
                       Tanggal Manual / Fleksibel per Periode (Pilih Tanggal Bebas)
@@ -1160,15 +1787,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                           },
                         });
                       }}
-                      className="w-full p-2.5 bg-white border border-emerald-300 rounded-xl font-bold text-emerald-900 focus:border-emerald-500"
+                      className="w-full p-2.5 bg-white border border-amber-300 rounded-xl font-bold text-amber-900 focus:border-amber-500"
                     />
-                    <span className="text-[10px] text-emerald-700 mt-1 block">
+                    <span className="text-[10px] text-amber-700 mt-1 block">
                       Tanggal ini akan langsung tampil pada Header Slip Gaji karyawan periode {formData.currentPayrollPeriod}.
                     </span>
                   </div>
                 ) : (
-                  <div className="flex flex-col justify-center p-3 rounded-xl bg-white/80 border border-emerald-200">
-                    <span className="text-[11px] font-extrabold text-emerald-900">
+                  <div className="flex flex-col justify-center p-3 rounded-xl bg-white/80 border border-amber-200">
+                    <span className="text-[11px] font-extrabold text-amber-900">
                       ✓ Mode Pencairan: Fleksibel / Tidak Menentu
                     </span>
                     <span className="text-[10px] text-slate-600 mt-0.5">
@@ -1241,7 +1868,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </div>
                 <p className="text-[11px] leading-relaxed text-amber-900">
                   Jika karyawan memiliki Gaji Pokok sebesar <strong>Rp 10.000.000</strong>, maka nominal kasbon maksimal yang diizinkan oleh sistem adalah:{' '}
-                  <strong className="text-emerald-800">
+                  <strong className="text-amber-800">
                     Rp {((10000000 * (formData.maxCashAdvancePercentage || 50)) / 100).toLocaleString('id-ID')}
                   </strong>
                   . Pengajuan melebihi angka ini akan ditolak secara otomatis oleh form Portal Karyawan.
@@ -1253,7 +1880,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           {/* Section 3: Standar Jam Kerja & Tarif Lembur Per Menit */}
           <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
             <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3">
-              <div className="p-2 rounded-xl bg-teal-50 text-teal-600 border border-teal-100">
+              <div className="p-2 rounded-xl bg-amber-50 text-amber-600 border border-amber-100">
                 <Clock className="w-5 h-5" />
               </div>
               <div>
@@ -1643,7 +2270,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           {/* Bottom Save Bar */}
           <div className="flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-200 shadow-xs">
             <div className="flex items-center gap-2 text-xs text-slate-500">
-              <CheckCircle className="w-4 h-4 text-emerald-600" />
+              <CheckCircle className="w-4 h-4 text-amber-600" />
               <span>Seluruh perubahan konfigurasi otomatis tercatat ke Log Audit Trail sistem.</span>
             </div>
 
@@ -1810,7 +2437,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   </button>
                 </div>
                 {copiedPassword && (
-                  <span className="text-[10px] text-emerald-700 font-semibold block">
+                  <span className="text-[10px] text-amber-700 font-semibold block">
                     ✓ Kata sandi berhasil disalin ke papan klip!
                   </span>
                 )}
@@ -1971,7 +2598,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 className={`p-2.5 rounded-xl ${
                   accountConfirmDialog.newStatus === 'suspended'
                     ? 'bg-rose-100 text-rose-600'
-                    : 'bg-emerald-100 text-emerald-600'
+                    : 'bg-amber-100 text-amber-600'
                 }`}
               >
                 <AlertCircle className="w-5 h-5" />
@@ -2004,7 +2631,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 className={`px-4 py-1.5 text-xs font-bold text-white rounded-xl shadow-xs transition-colors cursor-pointer ${
                   accountConfirmDialog.newStatus === 'suspended'
                     ? 'bg-rose-600 hover:bg-rose-700'
-                    : 'bg-emerald-600 hover:bg-emerald-700'
+                    : 'bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold'
                 }`}
               >
                 Ya, Lanjutkan

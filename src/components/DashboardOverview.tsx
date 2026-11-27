@@ -26,6 +26,9 @@ import {
   MessageCircle,
   Edit3,
   Trash2,
+  Trophy,
+  MapPin,
+  Sparkles,
 } from 'lucide-react';
 import { getContractReminderWhatsAppUrl } from '../utils/notificationHelper';
 import {
@@ -54,6 +57,8 @@ import {
   getJakartaDateString,
   addDaysToDateString,
   getEmployeeContractProbationAlert,
+  calculateEmployeeDisciplineLeaderboard,
+  formatCutOffPeriodRange,
 } from '../utils/formatters';
 import { EmployeeDemographicsCharts } from './EmployeeDemographicsCharts';
 import { PayrollTrendChart } from './PayrollTrendChart';
@@ -211,6 +216,20 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
   const activeEmployees = React.useMemo(() => {
     return employees.filter((e) => e.isActive !== false);
   }, [employees]);
+
+  const disciplineLeaderboardAll = React.useMemo(() => {
+    return calculateEmployeeDisciplineLeaderboard({
+      employees,
+      attendances,
+      companyConfig,
+      period: companyConfig.currentPayrollPeriod,
+      payrolls,
+    });
+  }, [employees, attendances, companyConfig, payrolls]);
+
+  const top5DisciplineList = React.useMemo(() => {
+    return disciplineLeaderboardAll.slice(0, 5);
+  }, [disciplineLeaderboardAll]);
 
   const contractEmployeesInfo = React.useMemo(() => {
     return activeEmployees
@@ -679,7 +698,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs hover:shadow-md transition-shadow">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-slate-500">Estimasi Total Payroll (THP)</span>
-            <div className="p-2 rounded-xl bg-emerald-50 text-emerald-600">
+            <div className="p-2 rounded-xl bg-amber-50 text-amber-600">
               <Wallet className="w-5 h-5" />
             </div>
           </div>
@@ -688,7 +707,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
               {formatRupiah(totalTakeHomePay)}
             </h3>
             <div className="flex flex-wrap items-center gap-1.5 mt-1.5 text-xs text-slate-500">
-              <span className="text-emerald-600 font-semibold flex items-center">
+              <span className="text-amber-600 font-semibold flex items-center">
                 <TrendingUp className="w-3.5 h-3.5 mr-0.5" /> {syncedActivePayrolls.length} Karyawan
               </span>
               <span>• Bruto {formatRupiah(totalGrossPayroll)}</span>
@@ -724,7 +743,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
         <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs hover:shadow-md transition-shadow">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-slate-500">Kehadiran Hari Ini</span>
-            <div className="p-2 rounded-xl bg-teal-50 text-teal-600">
+            <div className="p-2 rounded-xl bg-amber-50 text-amber-600">
               <CalendarCheck className="w-5 h-5" />
             </div>
           </div>
@@ -736,7 +755,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
               <span className="text-xs text-slate-500 font-medium">({totalPresent}/{totalEmployees} Hadir)</span>
             </div>
             <div className="flex items-center gap-2 mt-1.5 text-xs">
-              <span className="text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded text-[11px] font-semibold">
+              <span className="text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded text-[11px] font-semibold">
                 {onTimeCount} Tepat Waktu
               </span>
               <span className="text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded text-[11px] font-semibold">
@@ -824,15 +843,15 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
         </div>
 
         {trackerToast && (
-          <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-semibold flex items-center justify-between gap-2">
+          <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs font-semibold flex items-center justify-between gap-2">
             <span className="flex items-center gap-2">
-              <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+              <CheckCircle className="w-4 h-4 text-amber-600 shrink-0" />
               {trackerToast}
             </span>
             <button
               type="button"
               onClick={() => setTrackerToast(null)}
-              className="text-emerald-700 font-bold cursor-pointer"
+              className="text-amber-700 font-bold cursor-pointer"
             >
               ✕
             </button>
@@ -842,7 +861,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
         {filteredTrackerItems.length === 0 ? (
           <div className="p-4 rounded-xl bg-slate-50 border border-slate-200/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
             <div className="flex items-center gap-2.5 text-slate-600">
-              <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+              <CheckCircle className="w-4 h-4 text-amber-600 shrink-0" />
               <span>
                 Tidak ada kontrak PKWT atau masa probation yang berakhir dalam ≤ 30 hari ke depan.
               </span>
@@ -935,7 +954,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                       <button
                         type="button"
                         onClick={() => handleConvertToPkwtt(emp)}
-                        className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] inline-flex items-center gap-1 shadow-2xs transition-colors cursor-pointer"
+                        className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold font-bold text-[11px] inline-flex items-center gap-1 shadow-2xs transition-colors cursor-pointer"
                       >
                         <CheckCircle className="w-3 h-3" />
                         <span>Ubah ke PKWTT</span>
@@ -950,11 +969,192 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                       )}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="px-2.5 py-1.5 rounded-lg bg-green-600 hover:bg-green-700 text-white font-bold text-[10px] inline-flex items-center gap-1 transition-colors"
+                      className="px-2.5 py-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold font-bold text-[10px] inline-flex items-center gap-1 transition-colors"
                     >
                       <MessageCircle className="w-3 h-3" />
                       <span>WA</span>
                     </a>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Widget Ringkas: Top 5 Karyawan Terajin & Disiplin (Real-Time Supabase) */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-4">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-100 pb-3.5">
+          <div className="flex items-start gap-3">
+            <div className="p-2.5 rounded-xl bg-gradient-to-br from-neutral-950 to-stone-900 text-amber-400 border border-amber-500/40 shadow-sm shrink-0">
+              <Trophy className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="font-bold text-sm sm:text-base text-slate-900">
+                  Top 5 Karyawan Terajin &amp; Disiplin ({companyConfig.currentPayrollPeriod})
+                </h3>
+                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-neutral-950 text-amber-300 border border-amber-500/40">
+                  Cut-Off{' '}
+                  {formatCutOffPeriodRange(
+                    companyConfig.currentPayrollPeriod,
+                    companyConfig.cutOffStartDay || 26,
+                    companyConfig.cutOffEndDay || 25
+                  )}
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Peringkat kehadiran real-time dari Supabase: 0 Alpha &amp; 0 Menit Terlambat di urutan teratas, diurutkan menurut total jam hadir &amp; rata-rata jam masuk paling pagi.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => onNavigateTab('reports')}
+              className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-extrabold text-xs inline-flex items-center gap-1 shadow-2xs cursor-pointer"
+            >
+              <span>Tabel Peringkat Lengkap</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+
+        {top5DisciplineList.length === 0 ? (
+          <div className="p-6 text-center text-xs text-slate-500 bg-slate-50 rounded-xl border border-slate-200/80">
+            Belum ada data karyawan aktif pada periode cut-off ini.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+            {top5DisciplineList.map((row) => {
+              const isFirst = row.rank === 1;
+              return (
+                <div
+                  key={row.employeeId}
+                  className={`p-3.5 rounded-xl border flex flex-col justify-between gap-2.5 transition-all ${
+                    isFirst
+                      ? 'bg-gradient-to-br from-neutral-950 via-stone-900 to-neutral-900 text-white border-amber-500/50 shadow-md'
+                      : 'bg-slate-50/90 border-slate-200 hover:border-amber-400/60'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <span
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-black ${
+                        isFirst
+                          ? 'bg-gradient-to-r from-amber-400 to-yellow-500 text-neutral-950'
+                          : row.rank <= 3
+                          ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                          : 'bg-white text-slate-700 border border-slate-300'
+                      }`}
+                    >
+                      <Trophy className="w-3 h-3" />#{row.rank}
+                    </span>
+                    <span
+                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border ${
+                        isFirst
+                          ? 'bg-amber-500/20 text-amber-300 border-amber-500/35'
+                          : 'bg-white text-slate-700 border-slate-200'
+                      }`}
+                    >
+                      <MapPin className="w-2.5 h-2.5" />
+                      {row.branchDisplayLabel}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2.5">
+                    <img
+                      src={row.employee.avatarUrl}
+                      alt={row.fullName}
+                      className={`w-10 h-10 rounded-full object-cover border shrink-0 ${
+                        isFirst ? 'border-amber-400 ring-2 ring-amber-400/30' : 'border-white shadow-2xs'
+                      }`}
+                    />
+                    <div className="min-w-0">
+                      <p
+                        className={`font-bold text-xs truncate ${
+                          isFirst ? 'text-white' : 'text-slate-900'
+                        }`}
+                      >
+                        {row.fullName}
+                      </p>
+                      <p
+                        className={`text-[11px] truncate ${
+                          isFirst ? 'text-amber-300/90' : 'text-slate-500'
+                        }`}
+                      >
+                        {row.role}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5 pt-1">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className={isFirst ? 'text-stone-300' : 'text-slate-500'}>
+                        Hadir: <strong>{row.presentDaysCount}/{row.requiredWorkDays} Hr</strong>
+                      </span>
+                      <span
+                        className={`font-mono font-extrabold ${
+                          isFirst ? 'text-amber-400' : 'text-slate-900'
+                        }`}
+                      >
+                        {row.attendancePercentage}%
+                      </span>
+                    </div>
+                    <div
+                      className={`w-full h-1.5 rounded-full overflow-hidden ${
+                        isFirst ? 'bg-neutral-800' : 'bg-slate-200'
+                      }`}
+                    >
+                      <div
+                        className={`h-full rounded-full ${
+                          row.badgeCategory === 'teladan'
+                            ? 'bg-gradient-to-r from-amber-400 to-yellow-500'
+                            : row.badgeCategory === 'cukup_disiplin'
+                            ? 'bg-amber-400'
+                            : 'bg-rose-500'
+                        }`}
+                        style={{
+                          width: `${Math.max(5, Math.min(100, row.attendancePercentage))}%`,
+                        }}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between text-[10px] pt-0.5">
+                      <span className={isFirst ? 'text-stone-300' : 'text-slate-600'}>
+                        Alpha: <strong>{row.alphaDaysCount} Hr</strong> • Telat:{' '}
+                        <strong>{row.totalLateMinutes}m</strong>
+                      </span>
+                      {row.avgCheckInTimeLabel !== '-' && (
+                        <span className={isFirst ? 'text-amber-300 font-semibold' : 'text-amber-800 font-semibold'}>
+                          {row.avgCheckInTimeLabel.replace(' WIB', '')}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="pt-1">
+                    {row.badgeCategory === 'teladan' && (
+                      <span
+                        className={`w-full inline-flex items-center justify-center gap-1 px-2 py-1 rounded-lg text-[10px] font-extrabold border ${
+                          isFirst
+                            ? 'bg-amber-500/20 text-amber-300 border-amber-400/50'
+                            : 'bg-neutral-950 text-amber-300 border-amber-500/40'
+                        }`}
+                      >
+                        <Sparkles className="w-3 h-3 text-amber-400" />
+                        <span>Teladan / 100% Disiplin</span>
+                      </span>
+                    )}
+                    {row.badgeCategory === 'cukup_disiplin' && (
+                      <span className="w-full inline-flex items-center justify-center gap-1 px-2 py-1 rounded-lg bg-amber-100 text-amber-900 border border-amber-300 text-[10px] font-extrabold">
+                        <span>Cukup Disiplin</span>
+                      </span>
+                    )}
+                    {row.badgeCategory === 'perlu_evaluasi' && (
+                      <span className="w-full inline-flex items-center justify-center gap-1 px-2 py-1 rounded-lg bg-rose-100 text-rose-800 border border-rose-300 text-[10px] font-extrabold">
+                        <span>Perlu Evaluasi / SP</span>
+                      </span>
+                    )}
                   </div>
                 </div>
               );
@@ -986,7 +1186,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
               </div>
               <button
                 onClick={() => onNavigateTab('leave')}
-                className="text-xs text-emerald-600 hover:text-emerald-700 font-semibold flex items-center gap-1 cursor-pointer"
+                className="text-xs text-amber-600 hover:text-amber-700 font-semibold flex items-center gap-1 cursor-pointer"
               >
                 Lihat Semua <ChevronRight className="w-3.5 h-3.5" />
               </button>
@@ -994,7 +1194,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
 
             {totalPendingActions === 0 ? (
               <div className="text-center py-8 text-slate-400 bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                <CheckCircle className="w-8 h-8 mx-auto text-emerald-500 mb-2" />
+                <CheckCircle className="w-8 h-8 mx-auto text-amber-500 mb-2" />
                 <p className="text-xs font-medium text-slate-600">Semua pengajuan telah diproses!</p>
                 <p className="text-[11px] text-slate-400 mt-0.5">Tidak ada klaim cuti, lembur, atau reimbursement yang menunggu persetujuan.</p>
               </div>
@@ -1090,7 +1290,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                       <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
                         <button
                           onClick={() => onApproveLeave(leave.id)}
-                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg text-xs shadow-xs transition-colors cursor-pointer"
+                          className="px-3 py-1.5 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold font-semibold rounded-lg text-xs shadow-xs transition-colors cursor-pointer"
                         >
                           Setujui
                         </button>
@@ -1162,7 +1362,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
               </div>
               <button
                 onClick={() => onNavigateTab('attendance')}
-                className="text-xs text-emerald-600 hover:text-emerald-700 font-semibold flex items-center gap-1 cursor-pointer"
+                className="text-xs text-amber-600 hover:text-amber-700 font-semibold flex items-center gap-1 cursor-pointer"
               >
                 Detail Absensi <ChevronRight className="w-3.5 h-3.5" />
               </button>
@@ -1209,7 +1409,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                           <span
                             className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
                               att.status === 'Hadir Tepat Waktu'
-                                ? 'bg-emerald-100 text-emerald-800'
+                                ? 'bg-amber-100 text-amber-800'
                                 : att.status === 'Terlambat'
                                 ? 'bg-amber-100 text-amber-800'
                                 : 'bg-rose-100 text-rose-800'
@@ -1258,7 +1458,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
               <h3 className="font-bold text-sm text-slate-800">
                 Distribusi &amp; Beban Gaji Departemen
               </h3>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
                 {Object.keys(deptCostMap).length} Departemen Aktif
               </span>
             </div>
@@ -1279,7 +1479,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                       <div className="flex justify-between text-xs">
                         <span className="font-medium text-slate-700 truncate">
                           {dept}{' '}
-                          <span className="text-[11px] text-emerald-700 font-semibold">
+                          <span className="text-[11px] text-amber-700 font-semibold">
                             ({info.count} staf aktif)
                           </span>
                         </span>
@@ -1289,7 +1489,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                       </div>
                       <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
                         <div
-                          className="bg-emerald-600 h-full rounded-full transition-all duration-500"
+                          className="bg-amber-600 h-full rounded-full transition-all duration-500"
                           style={{ width: `${percentage}%` }}
                         ></div>
                       </div>
@@ -1306,7 +1506,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
           <div className="bg-gradient-to-br from-indigo-950 via-slate-900 to-slate-900 rounded-2xl p-5 shadow-xs text-white border border-indigo-900/40">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
-                <div className="p-1.5 rounded-lg bg-emerald-500/20 text-emerald-400">
+                <div className="p-1.5 rounded-lg bg-amber-500/20 text-amber-400">
                   <Target className="w-4 h-4" />
                 </div>
                 <div>
@@ -1316,7 +1516,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                   </span>
                 </div>
               </div>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
                 Grade {activeKpiSummary.avgGrade} ({activeKpiSummary.avgScore}%)
               </span>
             </div>
@@ -1330,7 +1530,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             <div className="grid grid-cols-2 gap-2 text-xs mb-3">
               <div className="p-2.5 rounded-xl bg-white/5 border border-white/10">
                 <span className="text-[10px] text-slate-400 block">Departemen Terbaik:</span>
-                <span className="font-bold text-emerald-400 truncate block">
+                <span className="font-bold text-amber-400 truncate block">
                   {activeKpiSummary.topDept
                     ? `${activeKpiSummary.topDept.department} (${activeKpiSummary.topDept.score}%)`
                     : '-'}
@@ -1347,7 +1547,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             <button
               type="button"
               onClick={() => onNavigateTab('kpi_performance')}
-              className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+              className="w-full py-2 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer shadow-xs"
             >
               Buka Analisis KPI Departemen Aktif <ChevronRight className="w-3.5 h-3.5" />
             </button>
@@ -1356,7 +1556,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
           {/* Agenda & Pengingat HR (100% Data Riil Karyawan) */}
           <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs">
             <div className="flex items-center gap-2 mb-3">
-              <Calendar className="w-4 h-4 text-emerald-600" />
+              <Calendar className="w-4 h-4 text-amber-600" />
               <h3 className="font-bold text-sm text-slate-800">Pengingat &amp; Agenda HR</h3>
             </div>
 
@@ -1434,7 +1634,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                                 )}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="px-2.5 py-1 rounded-lg bg-green-600 hover:bg-green-700 text-white font-bold text-[10px] inline-flex items-center gap-1 shadow-2xs transition-colors shrink-0"
+                                className="px-2.5 py-1 rounded-lg bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold font-bold text-[10px] inline-flex items-center gap-1 shadow-2xs transition-colors shrink-0"
                               >
                                 <MessageCircle className="w-3 h-3" />
                                 <span>Ingatkan Kontrak (WA)</span>
@@ -1452,11 +1652,11 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                 </div>
               </div>
 
-              <div className="p-3 rounded-xl bg-emerald-50/60 border border-emerald-200/80 flex items-start gap-2.5">
-                <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+              <div className="p-3 rounded-xl bg-amber-50/60 border border-amber-200/80 flex items-start gap-2.5">
+                <CheckCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                 <div>
-                  <span className="font-semibold text-emerald-900 block">Penyetoran Pajak PPh 21 (Coretax)</span>
-                  <p className="text-emerald-700 text-[11px] mt-0.5">
+                  <span className="font-semibold text-amber-900 block">Penyetoran Pajak PPh 21 (Coretax)</span>
+                  <p className="text-amber-700 text-[11px] mt-0.5">
                     Batas akhir pelaporan SPT Masa PPh 21 (Sistem Coretax DJP 2026): Tanggal 20 bulan berikutnya.
                   </p>
                 </div>
@@ -1526,7 +1726,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
               <a
                 href={previewLeaveAttachment.imageUrl}
                 download={previewLeaveAttachment.fileName || 'Bukti-Cuti.jpg'}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl transition-colors"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold rounded-xl transition-colors"
               >
                 <Download className="w-3.5 h-3.5" />
                 <span>Unduh Bukti</span>
@@ -1611,7 +1811,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                             setDashAttHasCheckOut(true);
                             setDashAttCheckOut(editShift.checkOutTime);
                           }}
-                          className="text-[10px] font-bold text-emerald-700 hover:underline cursor-pointer"
+                          className="text-[10px] font-bold text-amber-700 hover:underline cursor-pointer"
                         >
                           Isi {editShift.checkOutTime}
                         </button>

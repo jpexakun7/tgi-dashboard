@@ -216,34 +216,34 @@ export const BonusManagementView: React.FC<BonusManagementViewProps> = ({
   return (
     <div className="space-y-6">
       {/* Header Banner */}
-      <div className="bg-gradient-to-r from-emerald-900 via-teal-900 to-slate-900 rounded-2xl p-6 text-white shadow-lg border border-emerald-700/30">
+      <div className="bg-gradient-to-br from-neutral-950 via-stone-900 to-neutral-900 border border-amber-500/35 rounded-2xl p-6 text-white shadow-lg border border-amber-700/30">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div className="flex items-start gap-4">
-            <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 border border-emerald-400/30 flex items-center justify-center shrink-0">
-              <Award className="w-6 h-6 text-emerald-300" />
+            <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-400/30 flex items-center justify-center shrink-0">
+              <Award className="w-6 h-6 text-amber-300" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="px-2.5 py-0.5 rounded-md bg-emerald-500/20 border border-emerald-400/30 text-emerald-300 text-xs font-semibold uppercase tracking-wider">
+                <span className="px-2.5 py-0.5 rounded-md bg-amber-500/20 border border-amber-400/30 text-amber-300 text-xs font-semibold uppercase tracking-wider">
                   HR & Finance • End-to-End Sync
                 </span>
               </div>
               <h2 className="text-xl md:text-2xl font-bold mt-1">
                 Manajemen Bonus & Apresiasi Karyawan
               </h2>
-              <p className="text-emerald-100/80 text-sm mt-1">
+              <p className="text-amber-100/80 text-sm mt-1">
                 Kirim bonus pencapaian ke karyawan tetap maupun part-time. Notifikasi langsung tampil di Portal Karyawan dan otomatis menambah Gaji Bersih di Slip Gaji.
               </p>
             </div>
           </div>
           <div className="bg-white/10 backdrop-blur-sm rounded-xl px-4 py-3 border border-white/15 shrink-0">
-            <p className="text-xs text-emerald-200 uppercase tracking-wider font-medium">
+            <p className="text-xs text-amber-200 uppercase tracking-wider font-medium">
               Total Bonus Terdistribusi
             </p>
             <p className="text-xl font-bold text-white mt-0.5">
               {formatRupiah(kpiStats.totalNominal)}
             </p>
-            <p className="text-[11px] text-emerald-200/80 mt-0.5">
+            <p className="text-[11px] text-amber-200/80 mt-0.5">
               {kpiStats.totalRecords} transaksi • {kpiStats.uniqueRecipients} karyawan
             </p>
           </div>
@@ -252,15 +252,15 @@ export const BonusManagementView: React.FC<BonusManagementViewProps> = ({
 
       {/* Toast Notification */}
       {Boolean(toastMessage) && (
-        <div className="bg-emerald-50 border border-emerald-300 text-emerald-900 px-4 py-3 rounded-xl flex items-center justify-between shadow-sm">
+        <div className="bg-amber-50 border border-amber-300 text-amber-900 px-4 py-3 rounded-xl flex items-center justify-between shadow-sm">
           <div className="flex items-center gap-2.5">
-            <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+            <CheckCircle2 className="w-5 h-5 text-amber-600 shrink-0" />
             <span className="text-sm font-medium">{toastMessage}</span>
           </div>
           <button
             type="button"
             onClick={() => setToastMessage('')}
-            className="text-xs font-semibold text-emerald-700 hover:text-emerald-900 px-2 py-1"
+            className="text-xs font-semibold text-amber-700 hover:text-amber-900 px-2 py-1"
           >
             Tutup
           </button>
@@ -274,7 +274,7 @@ export const BonusManagementView: React.FC<BonusManagementViewProps> = ({
             <span className="text-xs font-semibold text-slate-500 uppercase">
               Total Bonus (Filter)
             </span>
-            <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
+            <div className="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center">
               <Banknote className="w-4 h-4" />
             </div>
           </div>
@@ -308,11 +308,11 @@ export const BonusManagementView: React.FC<BonusManagementViewProps> = ({
             <span className="text-xs font-semibold text-slate-500 uppercase">
               Sudah Dibaca Karyawan
             </span>
-            <div className="w-8 h-8 rounded-lg bg-teal-50 text-teal-600 flex items-center justify-center">
+            <div className="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center">
               <CheckCircle2 className="w-4 h-4" />
             </div>
           </div>
-          <p className="text-lg font-bold text-teal-700 mt-2">
+          <p className="text-lg font-bold text-amber-700 mt-2">
             {kpiStats.readCount} Notifikasi
           </p>
           <p className="text-xs text-slate-500 mt-0.5">
@@ -342,7 +342,7 @@ export const BonusManagementView: React.FC<BonusManagementViewProps> = ({
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <Sparkles className="w-5 h-5 text-emerald-600" />
+            <Sparkles className="w-5 h-5 text-amber-600" />
             <div>
               <h3 className="text-base font-bold text-slate-900">
                 Form Pemberian Bonus & Apresiasi Karyawan
@@ -371,7 +371,7 @@ export const BonusManagementView: React.FC<BonusManagementViewProps> = ({
               <select
                 value={selectedEmployeeId}
                 onChange={(e) => setSelectedEmployeeId(e.target.value)}
-                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 bg-white text-slate-900"
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm focus:ring-2 focus:ring-amber-500 focus:border-amber-500 bg-white text-slate-900"
                 required
               >
                 <option value="">-- Pilih Karyawan Penerima Bonus --</option>
@@ -387,7 +387,7 @@ export const BonusManagementView: React.FC<BonusManagementViewProps> = ({
                 })}
               </select>
               {Boolean(selectedEmployee) && (
-                <p className="text-[11px] text-emerald-700 font-medium mt-1.5">
+                <p className="text-[11px] text-amber-700 font-medium mt-1.5">
                   NIK: {selectedEmployee?.nik} •{' '}
                   {formatRoleAndDepartment(selectedEmployee?.role, selectedEmployee?.department)}
                 </p>
@@ -409,7 +409,7 @@ export const BonusManagementView: React.FC<BonusManagementViewProps> = ({
                   value={amountInput}
                   onChange={(e) => handleAmountChange(e.target.value)}
                   placeholder="Contoh: 250.000"
-                  className="w-full pl-9 pr-3.5 py-2.5 rounded-xl border border-slate-300 text-sm font-semibold text-slate-900 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                  className="w-full pl-9 pr-3.5 py-2.5 rounded-xl border border-slate-300 text-sm font-semibold text-slate-900 focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
                   required
                 />
               </div>
@@ -419,7 +419,7 @@ export const BonusManagementView: React.FC<BonusManagementViewProps> = ({
                     key={preset}
                     type="button"
                     onClick={() => setAmountInput(preset.toLocaleString('id-ID'))}
-                    className="px-2 py-0.5 text-[11px] font-medium rounded-md bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 text-slate-600 border border-slate-200 transition-colors"
+                    className="px-2 py-0.5 text-[11px] font-medium rounded-md bg-slate-100 hover:bg-amber-50 hover:text-amber-700 text-slate-600 border border-slate-200 transition-colors"
                   >
                     +{(preset / 1000).toLocaleString('id-ID')}rb
                   </button>
@@ -438,7 +438,7 @@ export const BonusManagementView: React.FC<BonusManagementViewProps> = ({
                   type="month"
                   value={periodMonth}
                   onChange={(e) => setPeriodMonth(e.target.value)}
-                  className="w-full pl-10 pr-3.5 py-2.5 rounded-xl border border-slate-300 text-sm font-medium text-slate-900 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                  className="w-full pl-10 pr-3.5 py-2.5 rounded-xl border border-slate-300 text-sm font-medium text-slate-900 focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
                   required
                 />
               </div>
@@ -461,7 +461,7 @@ export const BonusManagementView: React.FC<BonusManagementViewProps> = ({
               value={reasonNote}
               onChange={(e) => setReasonNote(e.target.value)}
               placeholder='Contoh: "Bonus pencapaian target live streaming", "Lembur sorting gudang", dll.'
-              className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm text-slate-900 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+              className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm text-slate-900 focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
               required
             />
             <div className="flex flex-wrap items-center gap-1.5 mt-2">
@@ -473,7 +473,7 @@ export const BonusManagementView: React.FC<BonusManagementViewProps> = ({
                   key={tpl}
                   type="button"
                   onClick={() => setReasonNote(tpl)}
-                  className="px-2.5 py-1 text-[11px] rounded-lg bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 text-slate-600 border border-slate-200 transition-colors"
+                  className="px-2.5 py-1 text-[11px] rounded-lg bg-slate-100 hover:bg-amber-50 hover:text-amber-700 text-slate-600 border border-slate-200 transition-colors"
                 >
                   {tpl}
                 </button>
@@ -483,16 +483,16 @@ export const BonusManagementView: React.FC<BonusManagementViewProps> = ({
 
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-2 border-t border-slate-100">
             <div className="text-xs text-slate-500 flex items-center gap-2">
-              <FileText className="w-4 h-4 text-emerald-600 shrink-0" />
+              <FileText className="w-4 h-4 text-amber-600 shrink-0" />
               <span>
                 Bonus yang dikirim langsung disimpan ke Supabase & localStorage (
-                <code className="text-emerald-700 font-mono">tgi_employee_bonuses</code>) tanpa mengubah status kontrak karyawan.
+                <code className="text-amber-700 font-mono">tgi_employee_bonuses</code>) tanpa mengubah status kontrak karyawan.
               </span>
             </div>
             <button
               type="submit"
               disabled={isSubmitting}
-              className="inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white font-semibold text-sm shadow-sm transition-colors cursor-pointer shrink-0"
+              className="inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 disabled:from-slate-300 disabled:to-slate-300 text-neutral-950 font-semibold font-semibold text-sm shadow-sm transition-colors cursor-pointer shrink-0"
             >
               <Send className="w-4 h-4" />
               <span>{isSubmitting ? 'Mengirim Bonus...' : 'Kirim Bonus'}</span>
@@ -522,7 +522,7 @@ export const BonusManagementView: React.FC<BonusManagementViewProps> = ({
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Cari nama, NIK, alasan..."
-                className="pl-9 pr-3 py-1.5 rounded-xl border border-slate-300 text-xs bg-white text-slate-800 focus:ring-2 focus:ring-emerald-500"
+                className="pl-9 pr-3 py-1.5 rounded-xl border border-slate-300 text-xs bg-white text-slate-800 focus:ring-2 focus:ring-amber-500"
               />
             </div>
 
@@ -628,7 +628,7 @@ export const BonusManagementView: React.FC<BonusManagementViewProps> = ({
 
                       <td className="py-3.5 px-4 whitespace-nowrap">
                         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 text-slate-800 text-xs font-semibold">
-                          <Calendar className="w-3.5 h-3.5 text-emerald-600" />
+                          <Calendar className="w-3.5 h-3.5 text-amber-600" />
                           {formatYearMonthToIndo(bonus.period_month)}
                         </span>
                         <div className="text-[10px] text-slate-400 font-mono mt-0.5">
@@ -643,14 +643,14 @@ export const BonusManagementView: React.FC<BonusManagementViewProps> = ({
                       </td>
 
                       <td className="py-3.5 px-4 whitespace-nowrap text-right">
-                        <span className="text-sm font-bold text-emerald-700">
+                        <span className="text-sm font-bold text-amber-700">
                           +{formatRupiah(bonus.amount)}
                         </span>
                       </td>
 
                       <td className="py-3.5 px-4 whitespace-nowrap text-center">
                         {bonus.is_read ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-semibold">
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-50 text-amber-700 border border-amber-200 text-xs font-semibold">
                             <CheckCircle2 className="w-3.5 h-3.5" />
                             Sudah Dibaca
                           </span>

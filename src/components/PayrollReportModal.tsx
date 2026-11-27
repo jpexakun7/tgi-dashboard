@@ -164,13 +164,13 @@ export const PayrollReportModal: React.FC<PayrollReportModalProps> = ({
         {/* Header Action Bar (Hidden when printing) */}
         <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3 px-6 py-4 bg-slate-900 text-white print:hidden">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center font-bold text-base">
+            <div className="w-10 h-10 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center font-bold text-base">
               TGI
             </div>
             <div>
               <h3 className="font-bold text-sm tracking-wide flex items-center gap-2 flex-wrap">
                 <span>Pratinjau &amp; Ekspor Laporan Gaji Bulanan</span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
                   {companyConfig.currentPayrollPeriod}
                 </span>
               </h3>
@@ -189,7 +189,7 @@ export const PayrollReportModal: React.FC<PayrollReportModalProps> = ({
                   onClick={() => setDataScope('all')}
                   className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors cursor-pointer ${
                     dataScope === 'all'
-                      ? 'bg-emerald-600 text-white'
+                      ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 font-bold'
                       : 'text-slate-400 hover:text-white'
                   }`}
                 >
@@ -200,7 +200,7 @@ export const PayrollReportModal: React.FC<PayrollReportModalProps> = ({
                   onClick={() => setDataScope('current_filter')}
                   className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors cursor-pointer ${
                     dataScope === 'current_filter'
-                      ? 'bg-emerald-600 text-white'
+                      ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 font-bold'
                       : 'text-slate-400 hover:text-white'
                   }`}
                 >
@@ -240,10 +240,10 @@ export const PayrollReportModal: React.FC<PayrollReportModalProps> = ({
             <button
               type="button"
               onClick={handleExportCSV}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-300 bg-emerald-950/60 border border-emerald-600/40 rounded-lg hover:bg-emerald-900/60 transition-colors cursor-pointer"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-amber-300 bg-amber-950/60 border border-amber-600/40 rounded-lg hover:bg-amber-900/60 transition-colors cursor-pointer"
               title="Unduh data format spreadsheet CSV (Excel Compatible)"
             >
-              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-400" />
+              <FileSpreadsheet className="w-3.5 h-3.5 text-amber-400" />
               <span>Unduh CSV</span>
             </button>
 
@@ -251,7 +251,7 @@ export const PayrollReportModal: React.FC<PayrollReportModalProps> = ({
             <button
               type="button"
               onClick={handleExportPDF}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors cursor-pointer shadow-xs shadow-emerald-600/30"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-neutral-950 font-semibold bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 rounded-lg transition-colors cursor-pointer shadow-xs shadow-amber-600/30"
               title="Unduh dokumen resmi format PDF A4 Landscape lengkap dengan tanda tangan & stempel"
             >
               <Download className="w-3.5 h-3.5" />
@@ -282,7 +282,7 @@ export const PayrollReportModal: React.FC<PayrollReportModalProps> = ({
 
         {/* Toast Notification Banner */}
         {savedToast && (
-          <div className="px-6 py-2.5 bg-emerald-600 text-white text-xs font-bold flex items-center justify-between print:hidden">
+          <div className="px-6 py-2.5 bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 font-bold text-xs font-bold flex items-center justify-between print:hidden">
             <div className="flex items-center gap-2">
               <Check className="w-4 h-4" />
               <span>{savedToast}</span>
@@ -290,7 +290,7 @@ export const PayrollReportModal: React.FC<PayrollReportModalProps> = ({
             <button
               type="button"
               onClick={() => setSavedToast(null)}
-              className="text-emerald-100 hover:text-white cursor-pointer"
+              className="text-amber-100 hover:text-white cursor-pointer"
             >
               ✕
             </button>
@@ -303,7 +303,7 @@ export const PayrollReportModal: React.FC<PayrollReportModalProps> = ({
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div>
                 <h4 className="text-xs font-extrabold text-slate-900 flex items-center gap-1.5">
-                  <PenTool className="w-3.5 h-3.5 text-emerald-600" />
+                  <PenTool className="w-3.5 h-3.5 text-amber-600" />
                   <span>Edit Cepat Penandatangan Laporan &amp; Slip Gaji (Tersimpan Otomatis)</span>
                 </h4>
                 <p className="text-[11px] text-slate-500">
@@ -361,7 +361,7 @@ export const PayrollReportModal: React.FC<PayrollReportModalProps> = ({
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
               {/* Disiapkan Oleh */}
               <div className="p-3 bg-white rounded-xl border border-slate-200 space-y-2">
-                <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-700 block">
+                <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-700 block">
                   1. Bagian &ldquo;Disiapkan Oleh&rdquo;
                 </span>
                 <div>
@@ -503,7 +503,7 @@ export const PayrollReportModal: React.FC<PayrollReportModalProps> = ({
           <div className="border-b-2 border-slate-900 pb-4 flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4">
             <div className="space-y-1">
               <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center font-bold text-sm">
+                <div className="w-8 h-8 rounded-lg bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 font-bold flex items-center justify-center font-bold text-sm">
                   TGI
                 </div>
                 <h1 className="text-xl font-black text-slate-900 tracking-tight">
@@ -513,7 +513,7 @@ export const PayrollReportModal: React.FC<PayrollReportModalProps> = ({
               <p className="text-xs text-slate-600 max-w-xl">
                 {companyConfig.address} • Telp: {companyConfig.phone} • NPWP: {companyConfig.npwpCompany}
               </p>
-              <p className="text-xs font-bold text-emerald-800 pt-1">
+              <p className="text-xs font-bold text-amber-800 pt-1">
                 LAPORAN REKAPITULASI PENGGAJIAN BULANAN (PAYROLL DISBURSEMENT REPORT)
               </p>
             </div>
@@ -560,11 +560,11 @@ export const PayrollReportModal: React.FC<PayrollReportModalProps> = ({
                 ({formatRupiah(totalDeductions)})
               </span>
             </div>
-            <div className="bg-emerald-50 -m-2 p-3 rounded-lg border border-emerald-200">
-              <span className="text-[10px] text-emerald-800 uppercase tracking-wider font-bold block">
+            <div className="bg-amber-50 -m-2 p-3 rounded-lg border border-amber-200">
+              <span className="text-[10px] text-amber-800 uppercase tracking-wider font-bold block">
                 Total Gaji Bersih (THP)
               </span>
-              <span className="text-lg font-extrabold text-emerald-700">
+              <span className="text-lg font-extrabold text-amber-700">
                 {formatRupiah(totalTakeHomePay)}
               </span>
             </div>
@@ -630,7 +630,7 @@ export const PayrollReportModal: React.FC<PayrollReportModalProps> = ({
                       <td className="py-2 px-3 text-right text-rose-600">
                         ({formatRupiah(p.totalDeductions)})
                       </td>
-                      <td className="py-2 px-3 text-right font-bold text-emerald-700">
+                      <td className="py-2 px-3 text-right font-bold text-amber-700">
                         {formatRupiah(p.takeHomePay)}
                       </td>
                       <td className="py-2 px-3 font-sans text-slate-600 text-[10px]">
@@ -651,7 +651,7 @@ export const PayrollReportModal: React.FC<PayrollReportModalProps> = ({
                   <td className="py-2.5 px-3 text-right font-extrabold">{formatRupiah(totalGross)}</td>
                   <td className="py-2.5 px-3 text-right text-amber-800">{formatRupiah(totalPph21)}</td>
                   <td className="py-2.5 px-3 text-right text-rose-700">({formatRupiah(totalDeductions)})</td>
-                  <td className="py-2.5 px-3 text-right text-emerald-800 font-extrabold">
+                  <td className="py-2.5 px-3 text-right text-amber-800 font-extrabold">
                     {formatRupiah(totalTakeHomePay)}
                   </td>
                   <td className="py-2.5 px-3 font-sans text-[10px] text-slate-500">Lunas / Transfer Bank</td>

@@ -21,6 +21,10 @@ import {
   ThrEligibilityStatus,
   PartTimeWorkLog,
   CashAdvance,
+  SundayWorkType,
+  DisciplineBadgeCategory,
+  EmployeeDisciplineLeaderboardRow,
+  EmployeeBranchName,
 } from '../types';
 
 export function formatRupiah(amount: number): string {
@@ -768,6 +772,232 @@ export function getEmployeeStandardDailyHours(
   return !isNaN(fb) && fb > 0 && fb <= 24 ? Number(fb.toFixed(2)) : STANDARD_WORK_HOURS_PER_DAY;
 }
 
+export const INDONESIAN_DAY_NAMES_BY_DOW = [
+  'Minggu',
+  'Senin',
+  'Selasa',
+  'Rabu',
+  'Kamis',
+  'Jumat',
+  'Sabtu',
+] as const;
+
+// Ambil nama hari bahasa Indonesia ('Minggu', 'Senin', ..., 'Sabtu') dari tanggal YYYY-MM-DD
+export function getIndonesianDayNameFromDateString(dateStr?: string | null): string {
+  const dow = getDayOfWeekFromDateString(dateStr || '');
+  return INDONESIAN_DAY_NAMES_BY_DOW[dow] || 'Senin';
+}
+
+// Ambil pengaturan Hari Kerja per Minggu per karyawan (hari_kerja_per_minggu: 6 = "6 Hari/Minggu", 7 = "7 Hari/Minggu")
+export function getEmployeeWorkDaysPerWeek(
+  employee?: Partial<Employee> | null,
+  shift?: Partial<WorkShift> | null,
+  fallbackSystemDays: number = 6
+): number {
+  const rawVal =
+    employee?.hari_kerja_per_minggu ??
+    employee?.workDaysPerWeek ??
+    (employee as any)?.allowances?._hari_kerja_per_minggu ??
+    (employee as any)?.allowances?._workDaysPerWeek;
+
+  if (typeof rawVal === 'string') {
+    const numMatch = rawVal.match(/(\d+)/);
+    if (numMatch) {
+      const parsed = Number(numMatch[1]);
+      if (parsed === 6 || parsed === 7 || parsed === 5) return parsed;
+    }
+  } else if (typeof rawVal === 'number' && !isNaN(rawVal)) {
+    if (rawVal === 6 || rawVal === 7 || rawVal === 5) return rawVal;
+  }
+
+  if (shift && Array.isArray(shift.workDays) && shift.workDays.length > 0) {
+    if (shift.workDays.length >= 7 || shift.workDays.includes('Minggu')) {
+      // Hanya otomatis 7 hari dari shift apabila profil karyawan belum dikunci ke 6 hari
+      if (rawVal === 6) return 6;
+      if (shift.workDays.length === 7) return 7;
+    }
+    if (shift.workDays.length === 6) return 6;
+  }
+
+  return fallbackSystemDays === 7 ? 7 : 6;
+}
+
+// Hitung pembagi hari kerja bulanan berdasarkan hari_kerja_per_minggu karyawan:
+// - 6 Hari/Minggu -> Pembagi 26 hari kerja
+// - 7 Hari/Minggu -> Pembagi 30 hari (atau jumlah hari kalender dalam periode cut-off)
+export function getEmployeeMonthlyWorkingDaysDivisor(
+  employee?: Partial<Employee> | null,
+  fallbackDivisorOrPeriod?: number | string | null,
+  shiftOrCutOffStart?: Partial<WorkShift> | number | null,
+  cutOffEndDay: number = 25,
+  shiftArg?: Partial<WorkShift> | null,
+  fallbackDivisorArg: number = 26,
+  useCalendarDaysFor7DayScheme: boolean = false
+): number {
+  const period =
+    typeof fallbackDivisorOrPeriod === 'string' ? fallbackDivisorOrPeriod : null;
+  const fallbackDivisor =
+    typeof fallbackDivisorOrPeriod === 'number'
+      ? fallbackDivisorOrPeriod
+      : fallbackDivisorArg;
+  const shift =
+    shiftOrCutOffStart && typeof shiftOrCutOffStart === 'object'
+      ? shiftOrCutOffStart
+      : shiftArg;
+  const cutOffStartDay =
+    typeof shiftOrCutOffStart === 'number' ? shiftOrCutOffStart : 26;
+
+  const workDaysPerWeek = getEmployeeWorkDaysPerWeek(employee, shift, 6);
+  if (workDaysPerWeek === 7) {
+    if (useCalendarDaysFor7DayScheme && period && period.trim()) {
+      const cutoff = getMonthlyCutoffDateRange(period.trim(), cutOffStartDay, cutOffEndDay);
+      if (cutoff.startDate && cutoff.endDate) {
+        const [sy, sm, sd] = cutoff.startDate.split('-').map(Number);
+        const [ey, em, ed] = cutoff.endDate.split('-').map(Number);
+        const startMs = Date.UTC(sy, (sm || 1) - 1, sd || 1);
+        const endMs = Date.UTC(ey, (em || 1) - 1, ed || 1);
+        const diffDays = Math.round((endMs - startMs) / (1000 * 60 * 60 * 24)) + 1;
+        if (diffDays >= 28 && diffDays <= 31) {
+          return diffDays;
+        }
+      }
+    }
+    return 30;
+  }
+  if (workDaysPerWeek === 6) {
+    return 26;
+  }
+  return Math.max(1, Math.round(fallbackDivisor || 26));
+}
+
+// Cek apakah tanggal tertentu (YYYY-MM-DD) merupakan Hari Libur Mingguan (Minggu / hari libur shift) bagi karyawan:
+// - Karyawan "7 Hari/Minggu": TIDAK memiliki hari libur wajib mingguan (Minggu tetap dihitung hari kerja reguler -> return false)
+// - Karyawan "6 Hari/Minggu": Memiliki 1 hari libur mingguan (default Hari Minggu, atau hari yang tidak ada di 6 hari shift-nya -> return true)
+export function isEmployeeWeeklyRestDay(
+  employee?: Partial<Employee> | null,
+  dateStr?: string | null,
+  shift?: Partial<WorkShift> | null
+): boolean {
+  if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr.trim())) return false;
+  const workDaysPerWeek = getEmployeeWorkDaysPerWeek(employee, shift, 6);
+
+  // Aturan 7 Hari/Minggu: Hari Minggu tetap dihitung sebagai hari kerja reguler biasa
+  if (workDaysPerWeek === 7) {
+    return false;
+  }
+
+  const dow = getDayOfWeekFromDateString(dateStr.trim());
+  const dayName = INDONESIAN_DAY_NAMES_BY_DOW[dow] || 'Senin';
+
+  // Aturan 6 Hari/Minggu: jika shift memiliki tepat 6 hari kerja yang ditentukan (misal libur di hari selain Minggu), ikuti hari libur shift tersebut
+  if (shift && Array.isArray(shift.workDays) && shift.workDays.length === 6) {
+    return !shift.workDays.includes(dayName);
+  }
+
+  // Default untuk 6 Hari/Minggu: Hari Minggu (dow === 0) adalah hari libur mingguan
+  return dow === 0;
+}
+
+// Cek apakah tanggal YYYY-MM-DD jatuh pada Hari Minggu (dow === 0)
+export function isSundayDateString(dateStr?: string | null): boolean {
+  if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr.trim())) return false;
+  return getDayOfWeekFromDateString(dateStr.trim()) === 0;
+}
+
+// Resolusi status kehadiran Hari Minggu ('overtime' = Lembur Murni | 'day_off_replacement' = Tukar Hari Libur)
+// Membaca dari properti langsung maupun sinkronisasi localStorage agar perubahan status dari tabel Absensi atau Lembur langsung berefek real-time
+export function resolveSundayWorkType(
+  recordOrType?:
+    | {
+        sunday_work_type?: SundayWorkType | string;
+        sundayWorkType?: SundayWorkType | string;
+        employeeId?: string;
+        employee_id?: string;
+        date?: string;
+        id?: string;
+        notes?: string;
+        taskDescription?: string;
+      }
+    | SundayWorkType
+    | string
+    | null,
+  fallbackEmployeeId?: string,
+  fallbackDate?: string,
+  fallbackId?: string
+): SundayWorkType {
+  if (typeof recordOrType === 'string') {
+    if (recordOrType === 'day_off_replacement' || recordOrType === 'tukar_hari_libur') {
+      return 'day_off_replacement';
+    }
+    if (recordOrType === 'overtime' || recordOrType === 'lembur_murni') {
+      return 'overtime';
+    }
+  }
+
+  const obj = typeof recordOrType === 'object' && recordOrType !== null ? recordOrType : undefined;
+  const directVal = obj?.sunday_work_type ?? obj?.sundayWorkType;
+  if (directVal === 'day_off_replacement' || directVal === 'tukar_hari_libur') {
+    return 'day_off_replacement';
+  }
+
+  const empId = obj?.employeeId || obj?.employee_id || fallbackEmployeeId || '';
+  const dateStr = obj?.date || fallbackDate || '';
+  const recId = obj?.id || fallbackId || '';
+
+  if (typeof window !== 'undefined') {
+    try {
+      const raw = localStorage.getItem('tgi_sunday_work_type_map_v1');
+      if (raw) {
+        const map = JSON.parse(raw);
+        if (empId && dateStr && map[`${empId}__${dateStr}`]) {
+          return map[`${empId}__${dateStr}`] === 'day_off_replacement'
+            ? 'day_off_replacement'
+            : 'overtime';
+        }
+        if (recId && map[recId]) {
+          return map[recId] === 'day_off_replacement' ? 'day_off_replacement' : 'overtime';
+        }
+      }
+    } catch {
+      // ignore storage errors
+    }
+  }
+
+  if (directVal === 'overtime' || directVal === 'lembur_murni') {
+    return 'overtime';
+  }
+
+  const textNotes = `${obj?.notes || ''} ${obj?.taskDescription || ''}`;
+  if (textNotes.includes('[TUKAR_HARI_LIBUR_MINGGU]')) {
+    return 'day_off_replacement';
+  }
+
+  return 'overtime';
+}
+
+// Hitung menit lembur efektif untuk perhitungan Payroll:
+// Jika klaim lembur jatuh pada Hari Minggu dan berstatus 'day_off_replacement' (Tukar Hari Libur),
+// maka TIDAK dihitung sebagai menit lembur (return 0).
+// Selain itu, jika pada tanggal Minggu yang sama sudah ada presensi Minggu berstatus 'overtime' yang dihitung di restDayOvertimeMinutes,
+// hindari perhitungan ganda pada tanggal yang sama.
+export function getEffectiveOvertimeMinutesForPayroll(
+  ot: OvertimeRequest,
+  sundayRestDayOvertimeDates?: Set<string>
+): number {
+  if (!ot || ot.status !== 'Disetujui') return 0;
+  const cleanDate = (ot.date || '').trim().slice(0, 10);
+  if (isSundayDateString(cleanDate)) {
+    const sundayType = resolveSundayWorkType(ot, ot.employeeId, cleanDate, ot.id);
+    if (sundayType === 'day_off_replacement') {
+      return 0;
+    }
+    if (sundayRestDayOvertimeDates && sundayRestDayOvertimeDates.has(cleanDate)) {
+      return 0;
+    }
+  }
+  return getOvertimeMinutes(ot);
+}
+
 // Ambil total jam lembur yang TELAH DISETUJUI Admin (status === 'Disetujui') untuk employee_id & date tertentu
 export function getApprovedOvertimeHoursForEmployeeDate(
   employeeId?: string | null,
@@ -778,6 +1008,13 @@ export function getApprovedOvertimeHoursForEmployeeDate(
   const cleanEmpId = String(employeeId).trim();
   const cleanDate = String(date).trim();
   if (!cleanEmpId || !cleanDate) return 0;
+
+  if (isSundayDateString(cleanDate)) {
+    const sundayType = resolveSundayWorkType(null, cleanEmpId, cleanDate);
+    if (sundayType === 'day_off_replacement') {
+      return 0;
+    }
+  }
 
   let list: OvertimeRequest[] = Array.isArray(overtimeRequests) ? overtimeRequests : [];
   if (list.length === 0 && typeof window !== 'undefined') {
@@ -800,6 +1037,9 @@ export function getApprovedOvertimeHoursForEmployeeDate(
     const reqEmpId = String(req.employeeId || (req as any).employee_id || '').trim();
     const reqDate = String(req.date || '').trim();
     if (reqEmpId === cleanEmpId && reqDate === cleanDate && req.status === 'Disetujui') {
+      if (isSundayDateString(reqDate) && resolveSundayWorkType(req, reqEmpId, reqDate, req.id) === 'day_off_replacement') {
+        continue;
+      }
       const mins =
         typeof req.minutes === 'number' && !isNaN(req.minutes) && req.minutes > 0
           ? req.minutes
@@ -811,46 +1051,62 @@ export function getApprovedOvertimeHoursForEmployeeDate(
   return Number((approvedMinutes / 60).toFixed(2));
 }
 
-// Ambil Tarif Gaji Per Jam (hourly_rate) Karyawan (otomatis fallback ke dailySalary / stdHours atau baseSalary / (25 hari × stdHours))
+// Ambil Tarif Gaji Per Jam (hourly_rate) Karyawan (otomatis menyesuaikan pembagi 26 hari untuk 6 Hari/Minggu atau 30 hari untuk 7 Hari/Minggu)
 export function getEmployeeHourlyRate(
   employee?: Partial<Employee> | null,
   standardWorkHoursPerDay: number = STANDARD_WORK_HOURS_PER_DAY,
-  standardWorkingDays: number = 25
+  standardWorkingDays?: number
 ): number {
   if (!employee) return 0;
   const hoursPerDay = getEmployeeStandardDailyHours(employee, standardWorkHoursPerDay);
   const explicitHourly = Number(employee.hourlyRate ?? employee.hourly_rate);
   if (!isNaN(explicitHourly) && explicitHourly > 0) {
-    return Math.round(explicitHourly);
+    return explicitHourly;
   }
   const explicitDaily = Number(employee.dailySalary ?? employee.daily_salary);
   if (!isNaN(explicitDaily) && explicitDaily > 0) {
-    return Math.round(explicitDaily / hoursPerDay);
+    return Number((explicitDaily / hoursPerDay).toFixed(2));
   }
-  const divisorDays = Math.max(1, Math.round(standardWorkingDays || 25));
+  const hasExplicitWorkDaysScheme = Boolean(
+    employee.hari_kerja_per_minggu ||
+      employee.workDaysPerWeek ||
+      (employee as any)?.allowances?._hari_kerja_per_minggu ||
+      (employee as any)?.allowances?._workDaysPerWeek
+  );
+  const resolvedDivisor = hasExplicitWorkDaysScheme
+    ? getEmployeeMonthlyWorkingDaysDivisor(employee)
+    : Math.max(1, Math.round(standardWorkingDays || getEmployeeMonthlyWorkingDaysDivisor(employee)));
   const monthlyBase = Number(employee.baseSalary) || 0;
-  return monthlyBase > 0 ? Math.round(monthlyBase / (divisorDays * hoursPerDay)) : 0;
+  return monthlyBase > 0 ? Number((monthlyBase / (resolvedDivisor * hoursPerDay)).toFixed(2)) : 0;
 }
 
 // Ambil Tarif Gaji Per Hari (daily_salary = (employee.standard_daily_hours || 9) × Tarif Gaji Per Jam)
 export function getEmployeeDailySalary(
   employee?: Partial<Employee> | null,
-  standardWorkingDays: number = 25,
+  standardWorkingDays?: number,
   standardWorkHoursPerDay: number = STANDARD_WORK_HOURS_PER_DAY
 ): number {
   if (!employee) return 0;
   const hoursPerDay = getEmployeeStandardDailyHours(employee, standardWorkHoursPerDay);
   const explicitHourly = Number(employee.hourlyRate ?? employee.hourly_rate);
   if (!isNaN(explicitHourly) && explicitHourly > 0) {
-    return Math.round(explicitHourly * hoursPerDay);
+    return Number((explicitHourly * hoursPerDay).toFixed(2));
   }
   const explicitDaily = Number(employee.dailySalary ?? employee.daily_salary);
   if (!isNaN(explicitDaily) && explicitDaily > 0) {
-    return Math.round(explicitDaily);
+    return explicitDaily;
   }
-  const divisor = Math.max(1, Math.round(standardWorkingDays || 25));
+  const hasExplicitWorkDaysScheme = Boolean(
+    employee.hari_kerja_per_minggu ||
+      employee.workDaysPerWeek ||
+      (employee as any)?.allowances?._hari_kerja_per_minggu ||
+      (employee as any)?.allowances?._workDaysPerWeek
+  );
+  const divisor = hasExplicitWorkDaysScheme
+    ? getEmployeeMonthlyWorkingDaysDivisor(employee)
+    : Math.max(1, Math.round(standardWorkingDays || getEmployeeMonthlyWorkingDaysDivisor(employee)));
   const monthlyBase = Number(employee.baseSalary) || 0;
-  return monthlyBase > 0 ? Math.round(monthlyBase / divisor) : 0;
+  return monthlyBase > 0 ? Number((monthlyBase / divisor).toFixed(2)) : 0;
 }
 
 export interface LiveSalesCommissionSummary {
@@ -1995,6 +2251,13 @@ export function deduplicateDailyAttendances(
         : evalRes.lateMinutes;
       const finalLateMins = Math.min(maxReasonableLateMins, Math.max(0, rawFinalLateMins));
 
+      const resolvedSundayType = resolveSundayWorkType(
+        primary,
+        primary.employeeId,
+        primary.date,
+        primary.id
+      );
+
       deduplicated.push({
         ...primary,
         facePhotoSnapshot: mergedPhotoIn,
@@ -2016,6 +2279,8 @@ export function deduplicateDailyAttendances(
         workHours: resolvedWorkHours,
         overtimeHours: cappedRes.overtimeHours,
         status: finalStatus,
+        sunday_work_type: resolvedSundayType,
+        sundayWorkType: resolvedSundayType,
       });
     } else {
       const cappedNonShift = calculateCappedDailyWorkHours(
@@ -2025,6 +2290,12 @@ export function deduplicateDailyAttendances(
         empStdHours,
         approvedOtHours,
         primary.date
+      );
+      const resolvedSundayType = resolveSundayWorkType(
+        primary,
+        primary.employeeId,
+        primary.date,
+        primary.id
       );
       deduplicated.push({
         ...primary,
@@ -2038,6 +2309,8 @@ export function deduplicateDailyAttendances(
         earlyLeaveMinutes: 0,
         workHours: isNonPresentStatus ? 0 : cappedNonShift.cappedWorkHours,
         overtimeHours: isNonPresentStatus ? 0 : cappedNonShift.overtimeHours,
+        sunday_work_type: resolvedSundayType,
+        sundayWorkType: resolvedSundayType,
       });
     }
   });
@@ -2085,25 +2358,35 @@ export function getTodayDeduplicatedAttendances(
 
 export interface EmployeeAttendancePenaltySummary {
   employeeId: string;
+  workDaysPerWeek: number; // 6 atau 7 hari kerja/minggu
+  monthlyWorkingDaysDivisor: number; // 26 hari (6 Hari/Minggu) atau 30 hari (7 Hari/Minggu)
   hourlyRate: number; // Tarif Gaji Per Jam (hourly_rate)
   standardWorkHoursPerDay: number; // Standar 9 jam / hari
-  totalActualWorkHours: number; // Akumulasi jam kerja riil seluruh hari masuk
+  totalActualWorkHours: number; // Akumulasi jam kerja riil seluruh hari masuk reguler (+ Tukar Hari Libur Minggu)
   dailyWorkBreakdown: DailyWorkWageItem[]; // Rincian gaji harian = Jam Kerja Aktual Hari Tersebut × Tarif Per Jam
   presentDaysCount: number;
   onTimeDaysCount: number;
+  restDayOvertimeDaysCount: number; // Jumlah hari masuk di Hari Minggu / Libur Mingguan sebagai Lembur Murni (khusus 6 Hari/Minggu)
+  restDayOvertimeHours: number; // Total jam kerja di Hari Minggu / Libur Mingguan sebagai Lembur Murni
+  restDayOvertimeMinutes: number; // Total menit lembur dari kehadiran Hari Minggu / Libur Mingguan sebagai Lembur Murni
+  dayOffReplacementDaysCount: number; // Jumlah kehadiran Hari Minggu yang dipilih sebagai Tukar Hari Libur (menggantikan 1 hari absen/alfa/izin di hari biasa)
+  rawAlphaDaysBeforeReplacement: number; // Jumlah hari Alpha di hari biasa sebelum digantikan Tukar Hari Libur Minggu
+  alphaDaysReplacedCount: number; // Jumlah hari Alpha yang dipulihkan oleh Tukar Hari Libur Minggu
+  unpaidLeaveDaysReplacedCount: number; // Jumlah hari Izin/Libur tidak dibayar yang dipulihkan oleh Tukar Hari Libur Minggu
   lateFrequency: number; // Berapa kali/hari terlambat melewati toleransi
   totalLateMinutes: number; // Total durasi terlambat (menit)
   latePenaltyAmount: number; // Nominal denda terlambat (Rp)
-  alphaDaysCount: number; // Jumlah hari Alpha / Mangkir
-  alphaPenaltyAmount: number; // Nominal potongan Alpha (Rp)
-  sickOrLeaveDaysCount: number; // Jumlah hari Sakit / Izin / Cuti
+  alphaDaysCount: number; // Jumlah hari Alpha / Mangkir efektif setelah dikurangi Tukar Hari Libur Minggu
+  alphaPenaltyAmount: number; // Nominal potongan Alpha efektif (Rp)
+  sickOrLeaveDaysCount: number; // Jumlah hari Sakit / Izin / Cuti efektif
   totalDeductionAmount: number; // Total gabungan denda keterlambatan
   deductionNotes: string;
   deduplicatedRecords: AttendanceRecord[];
 }
 
 // Hitung otomatis Akumulasi Jam Kerja Riil, Gaji Harian Per Jam, Frekuensi Terlambat, Alpha, dan Nominal Potongan per Karyawan
-// Mendukung isolasi periode Cut-Off Bulanan (26 bulan lalu - 25 bulan ini) untuk karyawan bulanan
+// Mendukung isolasi periode Cut-Off Bulanan (26 bulan lalu - 25 bulan ini) untuk karyawan bulanan,
+// variasi Hari Kerja Per Minggu (6 Hari/Minggu = pembagi 26 & Minggu bisa dipilih Lembur Murni atau Tukar Hari Libur; 7 Hari/Minggu = pembagi 30 & Minggu hari kerja reguler),
 // serta menjaga keutuhan siklus mingguan (Senin-Sabtu) untuk karyawan Part-Time tanpa terpotong paksa di tanggal 25/26.
 export function calculateEmployeeAttendancePenalty(
   employee: Employee,
@@ -2148,7 +2431,13 @@ export function calculateEmployeeAttendancePenalty(
 
   const deduped = deduplicateDailyAttendances(empAttendances, [employee], shifts, policy);
 
-  const divisor = Math.max(1, policy.alphaWorkingDaysDivisor || 25);
+  const empShift = shifts?.find((s) => s.id === employee.shiftId) || null;
+  const workDaysPerWeek = getEmployeeWorkDaysPerWeek(employee, empShift);
+  const divisor = getEmployeeMonthlyWorkingDaysDivisor(
+    employee,
+    policy.alphaWorkingDaysDivisor || 26,
+    empShift
+  );
   const standardWorkHoursPerDay = getEmployeeStandardDailyHours(employee);
   const hourlyRate = getEmployeeHourlyRate(employee, standardWorkHoursPerDay, divisor);
   const dailySalary = Math.round(hourlyRate * standardWorkHoursPerDay);
@@ -2156,6 +2445,10 @@ export function calculateEmployeeAttendancePenalty(
   let presentDaysCount = 0;
   let onTimeDaysCount = 0;
   let totalActualWorkHours = 0;
+  let restDayOvertimeDaysCount = 0;
+  let restDayOvertimeHours = 0;
+  let restDayOvertimeMinutes = 0;
+  let dayOffReplacementDaysCount = 0;
   let lateFrequency = 0;
   let totalLateMinutes = 0;
   let alphaDaysCount = 0;
@@ -2163,31 +2456,50 @@ export function calculateEmployeeAttendancePenalty(
   const dailyWorkBreakdown: DailyWorkWageItem[] = [];
 
   for (const rec of deduped) {
+    const isWeeklyRestDay = isEmployeeWeeklyRestDay(employee, rec.date, empShift);
+
     if (rec.status === 'Alpa') {
-      // Alpha / Tanpa Keterangan: 0 jam kerja aktual
-      alphaDaysCount += 1;
-      dailyWorkBreakdown.push({
-        date: rec.date,
-        checkIn: rec.checkIn || '-',
-        checkOut: rec.checkOut || '-',
-        workHours: 0,
-        dailyWage: 0,
-        status: rec.status,
-      });
+      if (isWeeklyRestDay) {
+        // Karyawan 6 Hari/Minggu pada Hari Minggu / Hari Libur Mingguan:
+        // Tidak dihitung sebagai hari kerja reguler dan TIDAK dikenakan potongan Alfa jika tidak hadir.
+        dailyWorkBreakdown.push({
+          date: rec.date,
+          checkIn: rec.checkIn || '-',
+          checkOut: rec.checkOut || '-',
+          workHours: 0,
+          dailyWage: 0,
+          status: 'Libur Mingguan',
+        });
+      } else {
+        // Karyawan 6 Hari/Minggu di hari kerja reguler ATAU Karyawan 7 Hari/Minggu (termasuk hari Minggu):
+        // Alpha / Tanpa Keterangan masuk dalam rekap potongan absensi/alfa.
+        alphaDaysCount += 1;
+        dailyWorkBreakdown.push({
+          date: rec.date,
+          checkIn: rec.checkIn || '-',
+          checkOut: rec.checkOut || '-',
+          workHours: 0,
+          dailyWage: 0,
+          status: rec.status,
+        });
+      }
     } else if (rec.status === 'Sakit' || rec.status === 'Izin' || rec.status === 'Cuti') {
-      sickOrLeaveDaysCount += 1;
+      if (!isWeeklyRestDay) {
+        sickOrLeaveDaysCount += 1;
+      }
       dailyWorkBreakdown.push({
         date: rec.date,
         checkIn: rec.checkIn || '-',
         checkOut: rec.checkOut || '-',
         workHours: 0,
         dailyWage: 0,
-        status: rec.status,
+        status: isWeeklyRestDay ? 'Libur Mingguan' : rec.status,
       });
-    } else if (rec.status === 'Terlambat' || rec.lateMinutes > 0) {
-      presentDaysCount += 1;
-      lateFrequency += 1;
-      totalLateMinutes += Math.max(0, Math.round(rec.lateMinutes || 0));
+    } else if (
+      rec.status === 'Terlambat' ||
+      rec.lateMinutes > 0 ||
+      rec.status === 'Hadir Tepat Waktu'
+    ) {
       const cappedRes = calculateCappedDailyWorkHours(
         rec.checkIn,
         rec.checkOut,
@@ -2197,42 +2509,110 @@ export function calculateEmployeeAttendancePenalty(
         rec.date
       );
       const actualHours = cappedRes.cappedWorkHours;
-      totalActualWorkHours = Number((totalActualWorkHours + actualHours).toFixed(2));
-      dailyWorkBreakdown.push({
-        date: rec.date,
-        checkIn: rec.checkIn || '-',
-        checkOut: rec.checkOut || '-',
-        workHours: actualHours,
-        rawDurationHours: cappedRes.rawDurationHours,
-        isCappedToMax: cappedRes.isCappedToMax,
-        isMissingClockOut: cappedRes.isMissingClockOut,
-        dailyWage: Math.round(actualHours * hourlyRate),
-        status: rec.status,
-      });
-    } else if (rec.status === 'Hadir Tepat Waktu') {
-      presentDaysCount += 1;
-      onTimeDaysCount += 1;
-      const cappedRes = calculateCappedDailyWorkHours(
-        rec.checkIn,
-        rec.checkOut,
-        rec.workHours,
-        standardWorkHoursPerDay,
-        rec.overtimeHours || 0,
-        rec.date
-      );
-      const actualHours = cappedRes.cappedWorkHours;
-      totalActualWorkHours = Number((totalActualWorkHours + actualHours).toFixed(2));
-      dailyWorkBreakdown.push({
-        date: rec.date,
-        checkIn: rec.checkIn || '-',
-        checkOut: rec.checkOut || '-',
-        workHours: actualHours,
-        rawDurationHours: cappedRes.rawDurationHours,
-        isCappedToMax: cappedRes.isCappedToMax,
-        isMissingClockOut: cappedRes.isMissingClockOut,
-        dailyWage: Math.round(actualHours * hourlyRate),
-        status: rec.status,
-      });
+
+      if (isWeeklyRestDay) {
+        // Aturan Hari Minggu bagi Karyawan 6 Hari/Minggu (Senin-Sabtu):
+        // Admin dapat menentukan status kehadiran hari Minggu antara:
+        // 1. 'overtime' (Lembur Murni): Dihitung sebagai upah lembur tambahan di luar gaji pokok 26 hari kerja.
+        //    Potongan absen/alfa hari biasa dan status Tunjangan Kerajinan tetap berlaku normal.
+        // 2. 'day_off_replacement' (Tukar Hari Libur): TIDAK dihitung sebagai upah lembur,
+        //    melainkan menggantikan/memulihkan 1 hari libur/izin/alfa di hari biasa (Senin-Sabtu) pada periode cut-off yang sama.
+        const sundayWorkType = resolveSundayWorkType(rec, rec.employeeId, rec.date, rec.id);
+
+        if (sundayWorkType === 'day_off_replacement') {
+          const replacementWorkHours =
+            actualHours > 0 ? actualHours : standardWorkHoursPerDay;
+          dayOffReplacementDaysCount += 1;
+          presentDaysCount += 1;
+          if (rec.status === 'Terlambat' || rec.lateMinutes > 0) {
+            lateFrequency += 1;
+            totalLateMinutes += Math.max(0, Math.round(rec.lateMinutes || 0));
+          } else {
+            onTimeDaysCount += 1;
+          }
+          totalActualWorkHours = Number(
+            (totalActualWorkHours + replacementWorkHours).toFixed(2)
+          );
+          dailyWorkBreakdown.push({
+            date: rec.date,
+            checkIn: rec.checkIn || '-',
+            checkOut: rec.checkOut || '-',
+            workHours: replacementWorkHours,
+            rawDurationHours: cappedRes.rawDurationHours,
+            isCappedToMax: cappedRes.isCappedToMax,
+            isMissingClockOut: cappedRes.isMissingClockOut,
+            isRestDayOvertime: false,
+            isDayOffReplacement: true,
+            sunday_work_type: 'day_off_replacement',
+            sundayWorkType: 'day_off_replacement',
+            restDayOvertimeHours: 0,
+            dailyWage: Math.round(replacementWorkHours * hourlyRate),
+            status: 'Tukar Hari Libur (Minggu)',
+          });
+        } else {
+          const extraOtHours = Math.max(0, Number(rec.overtimeHours) || 0);
+          const totalRestDayOtHours = Number((actualHours + extraOtHours).toFixed(2));
+          if (totalRestDayOtHours > 0) {
+            restDayOvertimeDaysCount += 1;
+            restDayOvertimeHours = Number(
+              (restDayOvertimeHours + totalRestDayOtHours).toFixed(2)
+            );
+            restDayOvertimeMinutes += Math.round(totalRestDayOtHours * 60);
+          }
+          dailyWorkBreakdown.push({
+            date: rec.date,
+            checkIn: rec.checkIn || '-',
+            checkOut: rec.checkOut || '-',
+            workHours: 0,
+            rawDurationHours: cappedRes.rawDurationHours,
+            isCappedToMax: cappedRes.isCappedToMax,
+            isMissingClockOut: cappedRes.isMissingClockOut,
+            isRestDayOvertime: true,
+            isDayOffReplacement: false,
+            sunday_work_type: 'overtime',
+            sundayWorkType: 'overtime',
+            restDayOvertimeHours: totalRestDayOtHours,
+            dailyWage: 0,
+            status: 'Lembur Hari Minggu/Libur',
+          });
+        }
+      } else {
+        presentDaysCount += 1;
+        if (rec.status === 'Terlambat' || rec.lateMinutes > 0) {
+          lateFrequency += 1;
+          totalLateMinutes += Math.max(0, Math.round(rec.lateMinutes || 0));
+        } else {
+          onTimeDaysCount += 1;
+        }
+        totalActualWorkHours = Number((totalActualWorkHours + actualHours).toFixed(2));
+        dailyWorkBreakdown.push({
+          date: rec.date,
+          checkIn: rec.checkIn || '-',
+          checkOut: rec.checkOut || '-',
+          workHours: actualHours,
+          rawDurationHours: cappedRes.rawDurationHours,
+          isCappedToMax: cappedRes.isCappedToMax,
+          isMissingClockOut: cappedRes.isMissingClockOut,
+          dailyWage: Math.round(actualHours * hourlyRate),
+          status: rec.status,
+        });
+      }
+    }
+  }
+
+  // Rekonsiliasi Tukar Hari Libur (Day-Off Replacement) Hari Minggu pada periode Cut-Off yang sama:
+  // Memulihkan 1 hari absensi yang Alpha/Izin di hari biasa (Senin-Sabtu) per 1 kehadiran Minggu yang diset 'day_off_replacement'
+  const rawAlphaDaysBeforeReplacement = alphaDaysCount;
+  let alphaDaysReplacedCount = 0;
+  let unpaidLeaveDaysReplacedCount = 0;
+
+  if (dayOffReplacementDaysCount > 0) {
+    alphaDaysReplacedCount = Math.min(alphaDaysCount, dayOffReplacementDaysCount);
+    alphaDaysCount = Math.max(0, alphaDaysCount - alphaDaysReplacedCount);
+    const remainingReplacement = Math.max(0, dayOffReplacementDaysCount - alphaDaysReplacedCount);
+    if (remainingReplacement > 0) {
+      unpaidLeaveDaysReplacedCount = remainingReplacement;
+      sickOrLeaveDaysCount = Math.max(0, sickOrLeaveDaysCount - remainingReplacement);
     }
   }
 
@@ -2258,50 +2638,73 @@ export function calculateEmployeeAttendancePenalty(
       }
     }
 
-    // 2. Kalkulasi Nilai Hari Alpha / Tanpa Keterangan (9 Jam × Tarif Per Jam)
+    // 2. Kalkulasi Nilai Hari Alpha / Tanpa Keterangan efektif (setelah dikurangi Tukar Hari Libur Minggu bila ada)
     if (alphaDaysCount > 0) {
       if (policy.alphaPenaltyScheme === 'proportional_25') {
         alphaPenaltyAmount = Math.round(alphaDaysCount * dailySalary);
       } else {
-        alphaPenaltyAmount = Math.round(alphaDaysCount * (dailySalary || policy.fixedAlphaPenaltyAmount));
+        alphaPenaltyAmount = Math.round(
+          alphaDaysCount * (dailySalary || policy.fixedAlphaPenaltyAmount)
+        );
       }
     }
   } else if (alphaDaysCount > 0) {
     alphaPenaltyAmount = Math.round(alphaDaysCount * dailySalary);
   }
 
-  // Karena Gaji Pokok dihitung real-time = Akumulasi Jam Kerja Riil × Tarif Gaji Per Jam,
-  // hari Alpha (0 jam kerja) sudah otomatis tidak dibayar.
-  // Denda tambahan yang memotong dari Gaji Kotor adalah denda keterlambatan (latePenaltyAmount).
   const totalDeductionAmount = latePenaltyAmount;
 
-  let deductionNotes = `Akumulasi ${totalActualWorkHours} Jam Kerja (${presentDaysCount} Hari) × ${formatRupiah(
+  const restDayOtNote =
+    restDayOvertimeDaysCount > 0
+      ? ` • Lembur Minggu: ${restDayOvertimeDaysCount} Hari (${restDayOvertimeHours} Jam)`
+      : '';
+  const replacementNote =
+    dayOffReplacementDaysCount > 0
+      ? ` • Tukar Hari Libur Minggu: ${dayOffReplacementDaysCount} Hari${
+          alphaDaysReplacedCount > 0
+            ? ` (Pulihkan ${alphaDaysReplacedCount} Hr Alpha)`
+            : unpaidLeaveDaysReplacedCount > 0
+            ? ` (Pulihkan ${unpaidLeaveDaysReplacedCount} Hr Izin/Libur)`
+            : ''
+        }`
+      : '';
+
+  let deductionNotes = `Skema ${workDaysPerWeek} Hari/Mgg (Pembagi ${divisor} Hr) • Akumulasi ${totalActualWorkHours} Jam (${presentDaysCount} Hari) × ${formatRupiah(
     hourlyRate
-  )}/jam`;
+  )}/jam${restDayOtNote}${replacementNote}`;
   if (lateFrequency > 0 && alphaDaysCount > 0) {
     deductionNotes = `Terlambat ${lateFrequency}x / ${totalLateMinutes} mnt (-${formatRupiah(
       latePenaltyAmount
     )}) • Alpha ${alphaDaysCount} Hari (0 Jam) otomatis dipotong (-${formatRupiah(
       alphaPenaltyAmount
-    )})`;
+    )})${restDayOtNote}${replacementNote}`;
   } else if (lateFrequency > 0) {
     deductionNotes = `Potongan Terlambat ${lateFrequency}x / ${totalLateMinutes} mnt: -${formatRupiah(
       latePenaltyAmount
-    )}`;
+    )}${restDayOtNote}${replacementNote}`;
   } else if (alphaDaysCount > 0) {
     deductionNotes = `Alpha ${alphaDaysCount} Hari (0 Jam Kerja) otomatis dipotong/diabaikan (-${formatRupiah(
       alphaPenaltyAmount
-    )})`;
+    )})${restDayOtNote}${replacementNote}`;
   }
 
   return {
     employeeId: employee.id,
+    workDaysPerWeek,
+    monthlyWorkingDaysDivisor: divisor,
     hourlyRate,
     standardWorkHoursPerDay,
     totalActualWorkHours,
     dailyWorkBreakdown,
     presentDaysCount,
     onTimeDaysCount,
+    restDayOvertimeDaysCount,
+    restDayOvertimeHours,
+    restDayOvertimeMinutes,
+    dayOffReplacementDaysCount,
+    rawAlphaDaysBeforeReplacement,
+    alphaDaysReplacedCount,
+    unpaidLeaveDaysReplacedCount,
     lateFrequency,
     totalLateMinutes,
     latePenaltyAmount,
@@ -2315,11 +2718,19 @@ export function calculateEmployeeAttendancePenalty(
 }
 
 export interface PayrollAttendancePenaltyMeta {
+  workDaysPerWeek?: number;
+  standardWorkingDays?: number;
   hourlyRate?: number;
   totalActualWorkHours?: number;
   standardWorkHoursPerDay?: number;
   dailyWorkBreakdown?: DailyWorkWageItem[];
   presentDaysCount?: number;
+  restDayOvertimeDaysCount?: number;
+  restDayOvertimeMinutes?: number;
+  dayOffReplacementDaysCount?: number;
+  rawAlphaDaysBeforeReplacement?: number;
+  alphaDaysReplacedCount?: number;
+  unpaidLeaveDaysReplacedCount?: number;
   dailySalary?: number;
   lateFrequency?: number;
   totalLateMinutes?: number;
@@ -2343,6 +2754,184 @@ export interface PayrollAttendancePenaltyMeta {
   overtimeMultiplier?: number;
 }
 
+// Ambil nominal dasar Tunjangan Kerajinan dari profil karyawan atau konfigurasi penyesuaian
+export function getEmployeeBaseTunjanganKerajinan(
+  employee?: Partial<Employee> | null,
+  adjustment?: Partial<EmployeeAdjustment> | null
+): number {
+  if (
+    adjustment &&
+    adjustment.base_tunjangan_kerajinan !== undefined &&
+    !isNaN(Number(adjustment.base_tunjangan_kerajinan)) &&
+    Number(adjustment.base_tunjangan_kerajinan) > 0
+  ) {
+    return Math.max(0, Math.round(Number(adjustment.base_tunjangan_kerajinan)));
+  }
+  if (
+    adjustment &&
+    !adjustment.is_manual_kerajinan &&
+    adjustment.tunjangan_kerajinan !== undefined &&
+    !isNaN(Number(adjustment.tunjangan_kerajinan)) &&
+    Number(adjustment.tunjangan_kerajinan) > 0
+  ) {
+    return Math.max(0, Math.round(Number(adjustment.tunjangan_kerajinan)));
+  }
+  if (!employee) return 0;
+  const explicitEmp =
+    employee.tunjangan_kerajinan ??
+    employee.tunjanganKerajinan ??
+    employee.allowances?.tunjangan_kerajinan ??
+    (employee.allowances as any)?._tunjangan_kerajinan;
+  if (explicitEmp !== undefined && explicitEmp !== null && !isNaN(Number(explicitEmp))) {
+    return Math.max(0, Math.round(Number(explicitEmp)));
+  }
+  const rawTransport = Math.max(0, Math.round(Number(employee.allowances?.transport) || 0));
+  const rawCommunication = Math.max(0, Math.round(Number(employee.allowances?.communication) || 0));
+  return rawTransport + rawCommunication;
+}
+
+// Ambil nominal dasar Tunjangan Kedisiplinan dari profil karyawan atau konfigurasi penyesuaian
+export function getEmployeeBaseTunjanganKedisiplinan(
+  employee?: Partial<Employee> | null,
+  adjustment?: Partial<EmployeeAdjustment> | null
+): number {
+  if (
+    adjustment &&
+    adjustment.base_tunjangan_kedisiplinan !== undefined &&
+    !isNaN(Number(adjustment.base_tunjangan_kedisiplinan)) &&
+    Number(adjustment.base_tunjangan_kedisiplinan) > 0
+  ) {
+    return Math.max(0, Math.round(Number(adjustment.base_tunjangan_kedisiplinan)));
+  }
+  if (
+    adjustment &&
+    !adjustment.is_manual_kedisiplinan &&
+    adjustment.tunjangan_kedisiplinan !== undefined &&
+    !isNaN(Number(adjustment.tunjangan_kedisiplinan)) &&
+    Number(adjustment.tunjangan_kedisiplinan) > 0
+  ) {
+    return Math.max(0, Math.round(Number(adjustment.tunjangan_kedisiplinan)));
+  }
+  if (!employee) return 0;
+  const explicitEmp =
+    employee.tunjangan_kedisiplinan ??
+    employee.tunjanganKedisiplinan ??
+    employee.allowances?.tunjangan_kedisiplinan ??
+    (employee.allowances as any)?._tunjangan_kedisiplinan;
+  if (explicitEmp !== undefined && explicitEmp !== null && !isNaN(Number(explicitEmp))) {
+    return Math.max(0, Math.round(Number(explicitEmp)));
+  }
+  return Math.max(0, Math.round(Number(employee.allowances?.meal) || 0));
+}
+
+export interface ResolvedKerajinanAndKedisiplinanResult {
+  baseTunjanganKerajinan: number;
+  baseTunjanganKedisiplinan: number;
+  tunjanganKerajinan: number;
+  tunjanganKedisiplinan: number;
+  effectiveAlphaDays: number;
+  effectiveLateMinutes: number;
+  isKerajinanForfeited: boolean;
+  isKedisiplinanForfeited: boolean;
+  isManualKerajinanOverride: boolean;
+  isManualKedisiplinanOverride: boolean;
+}
+
+// Kalkulasi Otomatis Tunjangan Kerajinan & Tunjangan Kedisiplinan per periode Cut-Off (tgl 26 s/d 25):
+// 1. Tunjangan Kerajinan:
+//    - Jika Tanpa Keterangan (Alpha) = 0 hari -> Cair penuh sebesar nominal dasar Tunjangan Kerajinan.
+//    - Jika Tanpa Keterangan (Alpha) >= 1 hari -> Otomatis menjadi Rp 0 (hangus).
+//    - Kecuali Admin mengaktifkan Override Manual (is_manual_kerajinan === true).
+// 2. Tunjangan Kedisiplinan:
+//    - Jika Total Keterlambatan = 0 menit -> Cair penuh sebesar nominal dasar Tunjangan Kedisiplinan.
+//    - Jika Total Keterlambatan > 0 menit -> Otomatis menjadi Rp 0 (hangus).
+//    - Kecuali Admin mengaktifkan Override Manual (is_manual_kedisiplinan === true).
+export function resolveKerajinanAndKedisiplinanForPeriod(params: {
+  employee?: Partial<Employee> | null;
+  alphaDaysCount?: number;
+  totalLateMinutes?: number;
+  lateFrequency?: number;
+  dayOffReplacementDaysCount?: number;
+  adjustment?: Partial<EmployeeAdjustment> | null;
+  deduction?: Partial<PayrollDeductionRecord> | null;
+}): ResolvedKerajinanAndKedisiplinanResult {
+  const {
+    employee,
+    alphaDaysCount = 0,
+    totalLateMinutes = 0,
+    lateFrequency = 0,
+    dayOffReplacementDaysCount = 0,
+    adjustment,
+    deduction,
+  } = params;
+
+  const baseTunjanganKerajinan = getEmployeeBaseTunjanganKerajinan(employee, adjustment);
+  const baseTunjanganKedisiplinan = getEmployeeBaseTunjanganKedisiplinan(employee, adjustment);
+
+  const rawManualDedAlpha =
+    deduction &&
+    deduction.tanpa_keterangan_hari !== undefined &&
+    !isNaN(Number(deduction.tanpa_keterangan_hari))
+      ? Math.max(0, Number(deduction.tanpa_keterangan_hari))
+      : 0;
+  // Jika ada kehadiran Hari Minggu yang disetujui sebagai Tukar Hari Libur (dayOffReplacementDaysCount > 0),
+  // kurangi juga catatan manual tanpa_keterangan_hari sejumlah hari pengganti tersebut.
+  const manualDedAlpha = Math.max(
+    0,
+    rawManualDedAlpha - Math.max(0, Math.round(Number(dayOffReplacementDaysCount) || 0))
+  );
+  const effectiveAlphaDays = Math.max(0, Number(alphaDaysCount) || 0, manualDedAlpha);
+
+  const effectiveLateMinutes = Math.max(
+    0,
+    Math.round(Number(totalLateMinutes) || 0),
+    Number(lateFrequency) > 0 && Number(totalLateMinutes) <= 0 ? 1 : 0
+  );
+
+  const isManualKerajinanOverride = Boolean(
+    adjustment &&
+      adjustment.is_manual_kerajinan === true &&
+      adjustment.tunjangan_kerajinan !== undefined &&
+      !isNaN(Number(adjustment.tunjangan_kerajinan))
+  );
+  const isManualKedisiplinanOverride = Boolean(
+    adjustment &&
+      adjustment.is_manual_kedisiplinan === true &&
+      adjustment.tunjangan_kedisiplinan !== undefined &&
+      !isNaN(Number(adjustment.tunjangan_kedisiplinan))
+  );
+
+  const tunjanganKerajinan = isManualKerajinanOverride
+    ? Math.max(0, Math.round(Number(adjustment!.tunjangan_kerajinan) || 0))
+    : effectiveAlphaDays === 0
+    ? baseTunjanganKerajinan
+    : 0;
+
+  const tunjanganKedisiplinan = isManualKedisiplinanOverride
+    ? Math.max(0, Math.round(Number(adjustment!.tunjangan_kedisiplinan) || 0))
+    : effectiveLateMinutes === 0
+    ? baseTunjanganKedisiplinan
+    : 0;
+
+  const isKerajinanForfeited =
+    !isManualKerajinanOverride && baseTunjanganKerajinan > 0 && effectiveAlphaDays > 0;
+  const isKedisiplinanForfeited =
+    !isManualKedisiplinanOverride && baseTunjanganKedisiplinan > 0 && effectiveLateMinutes > 0;
+
+  return {
+    baseTunjanganKerajinan,
+    baseTunjanganKedisiplinan,
+    tunjanganKerajinan,
+    tunjanganKedisiplinan,
+    effectiveAlphaDays,
+    effectiveLateMinutes,
+    isKerajinanForfeited,
+    isKedisiplinanForfeited,
+    isManualKerajinanOverride,
+    isManualKedisiplinanOverride,
+  };
+}
+
 // Hitung Payroll Karyawan Lengkap berbasis Gaji Per Jam (Total Gaji Pokok = Akumulasi Jam Kerja Riil × Tarif Gaji Per Jam)
 export function calculatePayroll(
   employee: Employee,
@@ -2355,7 +2944,15 @@ export function calculatePayroll(
   attendancePenaltyMeta?: PayrollAttendancePenaltyMeta
 ): PayrollRecord {
   const policy = getAttendancePenaltyPolicy(attendancePenaltyMeta?.penaltyPolicy);
-  const standardWorkingDays = Math.max(1, policy.alphaWorkingDaysDivisor || 25);
+  const workDaysPerWeek =
+    attendancePenaltyMeta?.workDaysPerWeek || getEmployeeWorkDaysPerWeek(employee);
+  const standardWorkingDays =
+    attendancePenaltyMeta?.standardWorkingDays && attendancePenaltyMeta.standardWorkingDays > 0
+      ? attendancePenaltyMeta.standardWorkingDays
+      : getEmployeeMonthlyWorkingDaysDivisor(
+          employee,
+          Math.max(1, policy.alphaWorkingDaysDivisor || 26)
+        );
   const standardWorkHoursPerDay = getEmployeeStandardDailyHours(
     employee,
     attendancePenaltyMeta?.standardWorkHoursPerDay || STANDARD_WORK_HOURS_PER_DAY
@@ -2363,10 +2960,10 @@ export function calculatePayroll(
 
   const hourlyRate =
     attendancePenaltyMeta?.hourlyRate !== undefined && attendancePenaltyMeta.hourlyRate > 0
-      ? Math.round(attendancePenaltyMeta.hourlyRate)
+      ? Number(attendancePenaltyMeta.hourlyRate)
       : getEmployeeHourlyRate(employee, standardWorkHoursPerDay, standardWorkingDays);
 
-  const dailySalary = Math.round(hourlyRate * standardWorkHoursPerDay);
+  const dailySalary = Number((hourlyRate * standardWorkHoursPerDay).toFixed(2));
 
   const resolvedAlphaDays = Math.max(0, Math.round(attendancePenaltyMeta?.alphaDaysCount || 0));
   const hasExplicitPresentDays = attendancePenaltyMeta?.presentDaysCount !== undefined;
@@ -2380,8 +2977,16 @@ export function calculatePayroll(
     ? attendancePenaltyMeta!.dailyWorkBreakdown!
     : [];
   const normalizedDailyBreakdown: DailyWorkWageItem[] = rawBreakdown.map((item) => {
+    if (item.isRestDayOvertime) {
+      return {
+        ...item,
+        workHours: 0,
+        dailyWage: 0,
+      };
+    }
     const isNonPresent =
       item.status === 'Alpa' ||
+      item.status === 'Libur Mingguan' ||
       item.status === 'Sakit' ||
       item.status === 'Izin' ||
       item.status === 'Cuti';
@@ -2401,15 +3006,59 @@ export function calculatePayroll(
       item.workHours,
       standardWorkHoursPerDay
     );
+    const resolvedItemWorkHours =
+      item.isDayOffReplacement && cappedRes.cappedWorkHours <= 0
+        ? standardWorkHoursPerDay
+        : cappedRes.cappedWorkHours;
     return {
       ...item,
-      workHours: cappedRes.cappedWorkHours,
+      workHours: resolvedItemWorkHours,
       rawDurationHours: cappedRes.rawDurationHours,
       isCappedToMax: cappedRes.isCappedToMax,
       isMissingClockOut: cappedRes.isMissingClockOut,
-      dailyWage: Math.round(cappedRes.cappedWorkHours * hourlyRate),
+      dailyWage: Math.round(resolvedItemWorkHours * hourlyRate),
     };
   });
+
+  const restDayOtMinutesFromBreakdown = normalizedDailyBreakdown.reduce(
+    (sum, item) =>
+      sum +
+      (item.isRestDayOvertime
+        ? Math.round((Number(item.restDayOvertimeHours) || 0) * 60)
+        : 0),
+    0
+  );
+  const restDayOtDaysFromBreakdown = normalizedDailyBreakdown.filter(
+    (item) => item.isRestDayOvertime && (Number(item.restDayOvertimeHours) || 0) > 0
+  ).length;
+  const dayOffReplacementDaysFromBreakdown = normalizedDailyBreakdown.filter(
+    (item) => item.isDayOffReplacement || item.sunday_work_type === 'day_off_replacement'
+  ).length;
+
+  const resolvedRestDayOvertimeMinutes =
+    attendancePenaltyMeta?.restDayOvertimeMinutes !== undefined
+      ? Math.max(0, Math.round(Number(attendancePenaltyMeta.restDayOvertimeMinutes) || 0))
+      : restDayOtMinutesFromBreakdown;
+  const resolvedRestDayOvertimeDaysCount =
+    attendancePenaltyMeta?.restDayOvertimeDaysCount !== undefined
+      ? Math.max(0, Math.round(Number(attendancePenaltyMeta.restDayOvertimeDaysCount) || 0))
+      : restDayOtDaysFromBreakdown;
+  const resolvedDayOffReplacementDaysCount =
+    attendancePenaltyMeta?.dayOffReplacementDaysCount !== undefined
+      ? Math.max(0, Math.round(Number(attendancePenaltyMeta.dayOffReplacementDaysCount) || 0))
+      : dayOffReplacementDaysFromBreakdown;
+  const resolvedRawAlphaBeforeReplacement =
+    attendancePenaltyMeta?.rawAlphaDaysBeforeReplacement !== undefined
+      ? Math.max(0, Math.round(Number(attendancePenaltyMeta.rawAlphaDaysBeforeReplacement) || 0))
+      : resolvedAlphaDays + resolvedDayOffReplacementDaysCount;
+  const resolvedAlphaDaysReplacedCount =
+    attendancePenaltyMeta?.alphaDaysReplacedCount !== undefined
+      ? Math.max(0, Math.round(Number(attendancePenaltyMeta.alphaDaysReplacedCount) || 0))
+      : Math.min(resolvedRawAlphaBeforeReplacement, resolvedDayOffReplacementDaysCount);
+  const resolvedUnpaidLeaveDaysReplacedCount =
+    attendancePenaltyMeta?.unpaidLeaveDaysReplacedCount !== undefined
+      ? Math.max(0, Math.round(Number(attendancePenaltyMeta.unpaidLeaveDaysReplacedCount) || 0))
+      : Math.max(0, resolvedDayOffReplacementDaysCount - resolvedAlphaDaysReplacedCount);
 
   const sumFromNormalizedBreakdown =
     normalizedDailyBreakdown.length > 0
@@ -2424,13 +3073,7 @@ export function calculatePayroll(
     sumFromNormalizedBreakdown !== undefined
       ? sumFromNormalizedBreakdown
       : attendancePenaltyMeta?.totalActualWorkHours !== undefined
-      ? Math.max(
-          0,
-          Math.min(
-            resolvedPresentDays * standardWorkHoursPerDay,
-            Number(attendancePenaltyMeta.totalActualWorkHours)
-          )
-        )
+      ? Math.max(0, Number(attendancePenaltyMeta.totalActualWorkHours))
       : Number((resolvedPresentDays * standardWorkHoursPerDay).toFixed(2));
 
   // Kalkulasi Real-Time Gaji Pokok Bulanan = Akumulasi Jam Kerja Riil (Maks 9 Jam/Hari) × Tarif Gaji Per Jam
@@ -2443,34 +3086,52 @@ export function calculatePayroll(
     communication: 0,
   };
   const position = Math.max(0, Math.round(Number(allowances.position) || 0));
-  const rawTransport = Math.max(0, Math.round(Number(allowances.transport) || 0));
-  const rawMeal = Math.max(0, Math.round(Number(allowances.meal) || 0));
-  const rawCommunication = Math.max(0, Math.round(Number(allowances.communication) || 0));
+
+  // Denda Keterlambatan & Potongan Absen (Otomatis dari Rekap Presensi atau Parameter)
+  const resolvedTotalLateMins =
+    attendancePenaltyMeta?.totalLateMinutes !== undefined
+      ? Math.max(0, Math.round(attendancePenaltyMeta.totalLateMinutes))
+      : Math.max(0, Math.round(lateMinutes));
+  const resolvedLateFreq =
+    attendancePenaltyMeta?.lateFrequency !== undefined
+      ? Math.max(0, Math.round(attendancePenaltyMeta.lateFrequency))
+      : resolvedTotalLateMins > policy.gracePeriodMinutes
+      ? 1
+      : 0;
 
   const adj = attendancePenaltyMeta?.employeeAdjustment || null;
-  const hasExplicitKerajinan =
-    adj !== null &&
-    adj.tunjangan_kerajinan !== undefined &&
-    !isNaN(Number(adj.tunjangan_kerajinan));
-  const hasExplicitKedisiplinan =
-    adj !== null &&
-    adj.tunjangan_kedisiplinan !== undefined &&
-    !isNaN(Number(adj.tunjangan_kedisiplinan));
+  const dedRec = attendancePenaltyMeta?.payrollDeduction || null;
 
-  const tunjanganKerajinan = hasExplicitKerajinan
-    ? Math.max(0, Math.round(Number(adj!.tunjangan_kerajinan) || 0))
-    : rawTransport + rawCommunication;
-  const tunjanganKedisiplinan = hasExplicitKedisiplinan
-    ? Math.max(0, Math.round(Number(adj!.tunjangan_kedisiplinan) || 0))
-    : rawMeal;
+  // Evaluasi Otomatis Tunjangan Kerajinan (Alpha = 0 -> Cair Penuh, Alpha >= 1 -> Rp 0)
+  // & Tunjangan Kedisiplinan (Terlambat = 0 mnt -> Cair Penuh, Terlambat > 0 mnt -> Rp 0)
+  // Jika Alpha hari biasa sudah digantikan oleh Tukar Hari Libur Minggu, maka Alpha efektif = 0 dan Tunjangan Kerajinan tetap aman!
+  const kerajinanKedisiplinanRes = resolveKerajinanAndKedisiplinanForPeriod({
+    employee,
+    alphaDaysCount: resolvedAlphaDays,
+    totalLateMinutes: resolvedTotalLateMins,
+    lateFrequency: resolvedLateFreq,
+    dayOffReplacementDaysCount: resolvedDayOffReplacementDaysCount,
+    adjustment: adj,
+    deduction: dedRec,
+  });
 
-  const transport = hasExplicitKerajinan ? tunjanganKerajinan : rawTransport;
-  const communication = hasExplicitKerajinan ? 0 : rawCommunication;
-  const meal = hasExplicitKedisiplinan ? tunjanganKedisiplinan : rawMeal;
+  const baseTunjanganKerajinan = kerajinanKedisiplinanRes.baseTunjanganKerajinan;
+  const baseTunjanganKedisiplinan = kerajinanKedisiplinanRes.baseTunjanganKedisiplinan;
+  const tunjanganKerajinan = kerajinanKedisiplinanRes.tunjanganKerajinan;
+  const tunjanganKedisiplinan = kerajinanKedisiplinanRes.tunjanganKedisiplinan;
+  const isKerajinanForfeited = kerajinanKedisiplinanRes.isKerajinanForfeited;
+  const isKedisiplinanForfeited = kerajinanKedisiplinanRes.isKedisiplinanForfeited;
+  const isManualKerajinanOverride = kerajinanKedisiplinanRes.isManualKerajinanOverride;
+  const isManualKedisiplinanOverride = kerajinanKedisiplinanRes.isManualKedisiplinanOverride;
 
-  // Hitungan Lembur Sesuai UU Ketenagakerjaan (PP 35/2021):
+  const transport = tunjanganKerajinan;
+  const communication = 0;
+  const meal = tunjanganKedisiplinan;
+
+  // Hitungan Lembur Sesuai UU Ketenagakerjaan (PP 35/2021) + Lembur Kehadiran Hari Minggu (khusus 6 Hari/Minggu yang dipilih 'overtime'):
   // Jam ke-1 (60 menit pertama) = 1.5x (atau defaultOvertimeMultiplier), Jam ke-2 dst (menit > 60) = 2.0x dari (Gaji Pokok + Tunjangan Jabatan) / 173
-  const normalizedMinutes = Math.max(0, Math.round(Number(overtimeMinutes) || 0));
+  const baseOvertimeMinutes = Math.max(0, Math.round(Number(overtimeMinutes) || 0));
+  const normalizedMinutes = baseOvertimeMinutes + resolvedRestDayOvertimeMinutes;
   const otBreakdown = calculateOvertimeBreakdown(
     employee,
     normalizedMinutes,
@@ -2514,18 +3175,6 @@ export function calculatePayroll(
     salesCommission +
     thrAmount;
 
-  // Denda Keterlambatan & Potongan Absen (Otomatis dari Rekap Presensi atau Parameter)
-  const resolvedTotalLateMins =
-    attendancePenaltyMeta?.totalLateMinutes !== undefined
-      ? Math.max(0, Math.round(attendancePenaltyMeta.totalLateMinutes))
-      : Math.max(0, Math.round(lateMinutes));
-  const resolvedLateFreq =
-    attendancePenaltyMeta?.lateFrequency !== undefined
-      ? Math.max(0, Math.round(attendancePenaltyMeta.lateFrequency))
-      : resolvedTotalLateMins > policy.gracePeriodMinutes
-      ? 1
-      : 0;
-
   let latePenaltyAmount = 0;
   let alphaPenaltyAmount = Math.round(resolvedAlphaDays * dailySalary);
   let lateDeduction = 0;
@@ -2547,9 +3196,10 @@ export function calculatePayroll(
       } else if (policy.latePenaltyScheme === 'per_minute') {
         latePenaltyAmount = Math.round(resolvedTotalLateMins * policy.perMinutePenaltyAmount);
       } else if (policy.latePenaltyScheme === 'daily_allowance_cut') {
-        const divisor = Math.max(1, policy.alphaWorkingDaysDivisor || 25);
+        const divisor = Math.max(1, standardWorkingDays);
+        const baseAllowancePool = baseTunjanganKerajinan + baseTunjanganKedisiplinan;
         const dailyAllow =
-          meal + transport > 0 ? Math.round((meal + transport) / divisor) : 50000;
+          baseAllowancePool > 0 ? Math.round(baseAllowancePool / divisor) : 50000;
         const cutPerDay = Math.round(dailyAllow * (policy.dailyAllowanceCutPercentage / 100));
         latePenaltyAmount = Math.round(resolvedLateFreq * cutPerDay);
       }
@@ -2600,13 +3250,12 @@ export function calculatePayroll(
         alphaPenaltyAmount
       )})`;
     } else {
-      attendanceDeductionNotes = `Gaji Per Jam Real-Time: ${resolvedActualWorkHours} Jam (${resolvedPresentDays} Hari) × ${formatRupiah(
+      attendanceDeductionNotes = `Skema ${workDaysPerWeek} Hari/Mgg (Pembagi ${standardWorkingDays} Hr) • ${resolvedActualWorkHours} Jam (${resolvedPresentDays} Hari) × ${formatRupiah(
         hourlyRate
       )}/jam`;
     }
   }
 
-  const dedRec = attendancePenaltyMeta?.payrollDeduction || null;
   const bpjsTkManual = dedRec
     ? Math.max(0, Math.round(Number(dedRec.bpjs_tk_manual) || 0))
     : 0;
@@ -2646,8 +3295,11 @@ export function calculatePayroll(
   const kesalahanDeduction = Math.round(kesalahanCount * kesalahanRate);
   const catatanKesalahan = adj?.catatan_kesalahan || '';
 
-  const tanpaKeteranganHari = dedRec
+  const rawTanpaKeteranganHari = dedRec
     ? Math.max(0, Number(dedRec.tanpa_keterangan_hari) || 0)
+    : resolvedAlphaDays;
+  const tanpaKeteranganHari = dedRec
+    ? Math.max(0, rawTanpaKeteranganHari - resolvedAlphaDaysReplacedCount)
     : resolvedAlphaDays;
   const tanpaKeteranganRate =
     dedRec && dedRec.tanpa_keterangan_rate > 0
@@ -2673,7 +3325,11 @@ export function calculatePayroll(
     dailySalary
   );
   const manualIzinHari = dedRec ? Math.max(0, Number(dedRec.izin_hari_jumlah) || 0) : 0;
-  const izinHariJumlah = Math.max(manualIzinHari, unpaidLeaveSummary.unpaidDays);
+  const rawIzinHariJumlah = Math.max(manualIzinHari, unpaidLeaveSummary.unpaidDays);
+  const izinHariJumlah = Math.max(
+    0,
+    rawIzinHariJumlah - resolvedUnpaidLeaveDaysReplacedCount
+  );
   const izinHariRate =
     dedRec && dedRec.izin_hari_rate > 0
       ? Math.max(0, Math.round(Number(dedRec.izin_hari_rate) || 0))
@@ -2756,6 +3412,13 @@ export function calculatePayroll(
     dailySalary,
     presentDaysCount: resolvedPresentDays,
     standardWorkingDays,
+    workDaysPerWeek,
+    restDayOvertimeMinutes: resolvedRestDayOvertimeMinutes,
+    restDayOvertimeDaysCount: resolvedRestDayOvertimeDaysCount,
+    dayOffReplacementDaysCount: resolvedDayOffReplacementDaysCount,
+    rawAlphaDaysBeforeReplacement: resolvedRawAlphaBeforeReplacement,
+    alphaDaysReplacedCount: resolvedAlphaDaysReplacedCount,
+    unpaidLeaveDaysReplacedCount: resolvedUnpaidLeaveDaysReplacedCount,
     baseSalary,
     allowancePosition: position,
     allowanceTransport: transport,
@@ -2807,6 +3470,12 @@ export function calculatePayroll(
     otherDeductions,
     tunjanganKerajinan,
     tunjanganKedisiplinan,
+    baseTunjanganKerajinan,
+    baseTunjanganKedisiplinan,
+    isKerajinanForfeited,
+    isKedisiplinanForfeited,
+    isManualKerajinanOverride,
+    isManualKedisiplinanOverride,
     kesalahanCount,
     kesalahanRate,
     catatanKesalahan,
@@ -2947,7 +3616,7 @@ export function getContractValidityInfo(employee?: Partial<Employee> | null): {
         ? 'Part-Time (Harian / Mingguan)'
         : 'Aktif Permanen (PKWTT / Karyawan Tetap)',
       shortBadgeText: isPartTimeNoContract ? 'Part-Time Aktif' : 'PKWTT Permanen',
-      badgeClass: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+      badgeClass: 'bg-amber-100 text-amber-800 border-amber-300',
       warningMessage: null,
     };
   }
@@ -3082,7 +3751,7 @@ export function getContractValidityInfo(employee?: Partial<Employee> | null): {
     status: 'active',
     badgeText: `Kontrak Aktif (Sisa ${remainingDays} Hari)`,
     shortBadgeText: `✓ Sisa ${remainingDays} Hari`,
-    badgeClass: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+    badgeClass: 'bg-amber-100 text-amber-800 border-amber-300',
     warningMessage: null,
   };
 }
@@ -4597,7 +5266,7 @@ export function getEmployeeContractProbationAlert(
       isWithin30Days: false,
       urgencyLevel: 'permanent',
       badgeText: isPartTimeNoDates ? 'Part-Time Aktif' : 'PKWTT (Tetap)',
-      badgeClass: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+      badgeClass: 'bg-amber-100 text-amber-800 border-amber-300',
     };
   }
 
@@ -4652,7 +5321,7 @@ export function getEmployeeContractProbationAlert(
 
   let urgencyLevel: EmployeeContractProbationAlert['urgencyLevel'] = 'safe';
   let badgeText = `Aktif (Sisa ${daysRemaining} Hari)`;
-  let badgeClass = 'bg-emerald-100 text-emerald-800 border-emerald-300';
+  let badgeClass = 'bg-amber-100 text-amber-800 border-amber-300';
 
   if (isExpired) {
     urgencyLevel = 'expired';
@@ -4710,3 +5379,371 @@ export function generateAutoHrLetterNumber(
   const romanMonth = getRomanMonth(month);
   return `${seqStr}/HRD-TGI/${letterType}/${romanMonth}/${year}`;
 }
+
+// ============================================================================
+// LEADERBOARD / PERINGKAT "KARYAWAN TERAJIN & DISIPLIN" (100% REAL SUPABASE DATA)
+// ============================================================================
+
+export function normalizeEmployeeBranch(raw?: unknown): EmployeeBranchName {
+  const str = String(raw || '').trim();
+  if (/green\s*lake|glc|cabang\s*02/i.test(str)) {
+    return 'Green Lake City';
+  }
+  return 'Sumber Mas';
+}
+
+export function getEmployeeBranch(emp?: Partial<Employee> | null): EmployeeBranchName {
+  if (!emp) return 'Sumber Mas';
+  const rawAllowances = (emp.allowances as any) || {};
+  const candidate =
+    emp.branch ||
+    emp.cabang ||
+    rawAllowances._branch ||
+    rawAllowances._cabang ||
+    (emp as any).branchName ||
+    '';
+  return normalizeEmployeeBranch(candidate);
+}
+
+export function resolveEmployeeBranchCategory(
+  employee: Partial<Employee>,
+  empAttendances: AttendanceRecord[],
+  shift?: Partial<WorkShift> | null
+): {
+  branchCategory: EmployeeBranchName;
+  branchDisplayLabel: string;
+} {
+  // 1. Utamakan field branch / cabang resmi pada profil karyawan di Supabase
+  const rawAllowances = (employee?.allowances as any) || {};
+  const explicitEmpBranch = String(
+    employee?.branch ||
+      employee?.cabang ||
+      rawAllowances._branch ||
+      rawAllowances._cabang ||
+      ''
+  ).trim();
+
+  if (explicitEmpBranch) {
+    const normalized = normalizeEmployeeBranch(explicitEmpBranch);
+    return {
+      branchCategory: normalized,
+      branchDisplayLabel: normalized,
+    };
+  }
+
+  // 2. Jika belum diset eksplisit, cek dari riwayat log presensi GPS / Cabang aktual karyawan di Supabase
+  let glcVotes = 0;
+  let sumberMasVotes = 0;
+
+  for (const att of empAttendances) {
+    if (!att) continue;
+    const bId = (att.branchId || '').toLowerCase();
+    const bName = (att.branchName || '').trim();
+    const locAddr = (att.locationAddress || '').trim();
+    const notesText = (att.notes || '').trim();
+    const combinedText = `${bName} ${locAddr} ${notesText}`.toLowerCase();
+
+    if (
+      bId === 'branch-cabang-02' ||
+      /green\s*lake|glc|cabang\s*02|kantor\s*\/\s*gudang\s*cabang|\bcabang\b/i.test(combinedText)
+    ) {
+      glcVotes += 2;
+      continue;
+    }
+
+    if (
+      bId === 'branch-main-tgr' ||
+      /sumber\s*mas|cipondoh|kantor\s*&\s*gudang\s*pusat|\bpusat\b/i.test(combinedText)
+    ) {
+      sumberMasVotes += 2;
+      continue;
+    }
+
+    const lat = Number(att.locationCoords?.latitude);
+    const lng = Number(att.locationCoords?.longitude);
+    if (!isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0) {
+      // Koordinat Green Lake City: -6.183852, 106.7104734
+      // Koordinat Sumber Mas: -6.2105112, 106.6847656
+      const distGlc = Math.hypot(lat - -6.183852, lng - 106.7104734);
+      const distSumberMas = Math.hypot(lat - -6.2105112, lng - 106.6847656);
+      if (distGlc < distSumberMas && distGlc < 0.03) {
+        glcVotes += 1;
+      } else if (distSumberMas <= distGlc && distSumberMas < 0.03) {
+        sumberMasVotes += 1;
+      }
+    }
+  }
+
+  if (glcVotes > sumberMasVotes) {
+    return {
+      branchCategory: 'Green Lake City',
+      branchDisplayLabel: 'Green Lake City',
+    };
+  }
+  if (sumberMasVotes > glcVotes) {
+    return {
+      branchCategory: 'Sumber Mas',
+      branchDisplayLabel: 'Sumber Mas',
+    };
+  }
+
+  // 3. Fallback dari atribut profil karyawan / shift kerja / alamat
+  const empMetaText = `${(employee as any)?.branchName || ''} ${employee?.branch || ''} ${
+    employee?.cabang || ''
+  } ${(employee as any)?.location || ''} ${shift?.location || ''} ${employee?.address || ''}`.toLowerCase();
+
+  if (/green\s*lake|glc|\bcabang\b/i.test(empMetaText)) {
+    return {
+      branchCategory: 'Green Lake City',
+      branchDisplayLabel: 'Green Lake City',
+    };
+  }
+
+  return {
+    branchCategory: 'Sumber Mas',
+    branchDisplayLabel: 'Sumber Mas',
+  };
+}
+
+export function calculateEmployeeDisciplineLeaderboard(params: {
+  employees: Employee[];
+  attendances: AttendanceRecord[];
+  companyConfig?: Partial<CompanyConfig> | null;
+  period?: string;
+  payrolls?: PayrollRecord[];
+  payrollDeductions?: PayrollDeductionRecord[];
+}): EmployeeDisciplineLeaderboardRow[] {
+  const {
+    employees = [],
+    attendances = [],
+    companyConfig,
+    period,
+    payrolls = [],
+    payrollDeductions = [],
+  } = params;
+
+  const activeEmployees = employees.filter((e) => e && e.isActive !== false);
+  if (activeEmployees.length === 0) return [];
+
+  const resolvedPeriod =
+    (period && period.trim()) ||
+    companyConfig?.currentPayrollPeriod ||
+    getCurrentRealTimePayrollPeriod();
+  const cutOffStartDay = companyConfig?.cutOffStartDay || 26;
+  const cutOffEndDay = companyConfig?.cutOffEndDay || 25;
+  const targetYm = normalizePeriodToYearMonth(resolvedPeriod);
+
+  const rowsWithoutRank: Omit<EmployeeDisciplineLeaderboardRow, 'rank'>[] = activeEmployees.map(
+    (emp) => {
+      const empShift = getEmployeeShift(emp, companyConfig?.workShifts);
+      const penaltySummary = calculateEmployeeAttendancePenalty(
+        emp,
+        attendances,
+        companyConfig?.workShifts,
+        companyConfig?.attendancePenaltyPolicy,
+        resolvedPeriod,
+        cutOffStartDay,
+        cutOffEndDay
+      );
+
+      // Sinkronkan juga jika ada catatan manual tanpa_keterangan_hari di PayrollDeductionRecord atau PayrollRecord periode yang sama
+      const empDeduction = getEmployeePayrollDeductionForPeriod(
+        payrollDeductions,
+        emp,
+        resolvedPeriod,
+        false
+      );
+      const rawManualAlpha =
+        empDeduction &&
+        empDeduction.tanpa_keterangan_hari !== undefined &&
+        !isNaN(Number(empDeduction.tanpa_keterangan_hari))
+          ? Math.max(0, Math.round(Number(empDeduction.tanpa_keterangan_hari)))
+          : 0;
+      const effectiveManualAlpha = Math.max(
+        0,
+        rawManualAlpha - penaltySummary.dayOffReplacementDaysCount
+      );
+
+      const matchingPayroll = payrolls.find(
+        (p) =>
+          p.employeeId === emp.id &&
+          (p.period === resolvedPeriod ||
+            (Boolean(targetYm) && normalizePeriodToYearMonth(p.period) === targetYm))
+      );
+      const payrollAlpha =
+        matchingPayroll?.alphaDaysCount !== undefined
+          ? Math.max(0, Math.round(Number(matchingPayroll.alphaDaysCount) || 0))
+          : 0;
+
+      const effectiveAlphaDays = Math.max(
+        penaltySummary.alphaDaysCount,
+        effectiveManualAlpha,
+        payrollAlpha
+      );
+
+      const requiredWorkDays = Math.max(1, penaltySummary.monthlyWorkingDaysDivisor || 26);
+      const presentDaysCount = Math.max(0, penaltySummary.presentDaysCount);
+      const onTimeDaysCount = Math.max(0, penaltySummary.onTimeDaysCount);
+      const totalLateMinutes = Math.max(0, penaltySummary.totalLateMinutes);
+      const lateFrequency = Math.max(0, penaltySummary.lateFrequency);
+      const totalActualWorkHours = Math.max(0, Number(penaltySummary.totalActualWorkHours) || 0);
+
+      // Hitung rata-rata jam masuk (avgCheckInMinutes) dari log presensi yang hadir di periode ini
+      let checkInSumMinutes = 0;
+      let checkInValidCount = 0;
+      for (const rec of penaltySummary.deduplicatedRecords) {
+        if (!rec || !rec.checkIn || !rec.checkIn.includes(':')) continue;
+        if (
+          rec.status === 'Alpa' ||
+          rec.status === 'Sakit' ||
+          rec.status === 'Izin' ||
+          rec.status === 'Cuti'
+        ) {
+          continue;
+        }
+        const [hh, mm] = rec.checkIn.trim().split(':').map(Number);
+        if (!isNaN(hh) && !isNaN(mm) && hh >= 0 && hh <= 23 && mm >= 0 && mm <= 59) {
+          checkInSumMinutes += hh * 60 + mm;
+          checkInValidCount += 1;
+        }
+      }
+
+      const avgCheckInMinutes =
+        checkInValidCount > 0 ? Math.round(checkInSumMinutes / checkInValidCount) : null;
+      const avgCheckInTimeLabel =
+        avgCheckInMinutes !== null
+          ? `${String(Math.floor(avgCheckInMinutes / 60)).padStart(2, '0')}:${String(
+              avgCheckInMinutes % 60
+            ).padStart(2, '0')} WIB`
+          : '-';
+
+      // Persentase Kehadiran = (Total Hari Hadir / Total Hari Kerja Wajib) x 100%
+      const attendancePercentage = Math.min(
+        100,
+        Math.max(0, Number(((presentDaysCount / requiredWorkDays) * 100).toFixed(1)))
+      );
+
+      // Kategori Badge Status Otomatis:
+      // 1. Teladan / 100% Disiplin (Emas/Gold): 0 Alpha & 0 Menit Terlambat
+      // 2. Cukup Disiplin (Kuning/Amber): 0 Alpha & 1-30 Menit Terlambat
+      // 3. Perlu Evaluasi / SP (Merah): >= 1 Hari Alpha ATAU > 30 Menit Terlambat
+      let badgeCategory: DisciplineBadgeCategory = 'teladan';
+      let badgeLabel: EmployeeDisciplineLeaderboardRow['badgeLabel'] = 'Teladan / 100% Disiplin';
+      let badgeSubtext = '0 Alpha • 0 Menit Terlambat';
+
+      if (effectiveAlphaDays === 0 && totalLateMinutes === 0) {
+        badgeCategory = 'teladan';
+        badgeLabel = 'Teladan / 100% Disiplin';
+        badgeSubtext =
+          penaltySummary.alphaDaysReplacedCount > 0
+            ? `0 Alpha (Pulih ${penaltySummary.alphaDaysReplacedCount} Hr Tukar Minggu) • 0 Mnt Terlambat`
+            : '0 Alpha • 0 Menit Terlambat (Berhak Tunj. Kerajinan & Disiplin)';
+      } else if (effectiveAlphaDays === 0 && totalLateMinutes >= 1 && totalLateMinutes <= 30) {
+        badgeCategory = 'cukup_disiplin';
+        badgeLabel = 'Cukup Disiplin';
+        badgeSubtext = `0 Alpha • Terlambat ${totalLateMinutes} Menit (${lateFrequency}x ≤ 30 Mnt)`;
+      } else {
+        badgeCategory = 'perlu_evaluasi';
+        badgeLabel = 'Perlu Evaluasi / SP';
+        if (effectiveAlphaDays >= 1 && totalLateMinutes > 0) {
+          badgeSubtext = `${effectiveAlphaDays} Hari Alpha & Terlambat ${totalLateMinutes} Menit`;
+        } else if (effectiveAlphaDays >= 1) {
+          badgeSubtext = `${effectiveAlphaDays} Hari Alpha (Hangus Tunj. Kerajinan)`;
+        } else {
+          badgeSubtext = `Terlambat ${totalLateMinutes} Menit (> 30 Mnt • Hangus Tunj. Disiplin)`;
+        }
+      }
+
+      const empAllAttendances = attendances.filter((a) => a && a.employeeId === emp.id);
+      const branchInfo = resolveEmployeeBranchCategory(
+        emp,
+        penaltySummary.deduplicatedRecords.length > 0
+          ? penaltySummary.deduplicatedRecords
+          : empAllAttendances,
+        empShift
+      );
+
+      return {
+        employee: emp,
+        employeeId: emp.id,
+        nik: emp.nik || '-',
+        fullName: emp.fullName,
+        role: emp.role || 'Staff',
+        department: emp.department || 'Operasional',
+        branchCategory: branchInfo.branchCategory,
+        branchDisplayLabel: branchInfo.branchDisplayLabel,
+        workDaysPerWeek: penaltySummary.workDaysPerWeek,
+        requiredWorkDays,
+        presentDaysCount,
+        onTimeDaysCount,
+        dayOffReplacementDaysCount: penaltySummary.dayOffReplacementDaysCount,
+        restDayOvertimeDaysCount: penaltySummary.restDayOvertimeDaysCount,
+        alphaDaysCount: effectiveAlphaDays,
+        rawAlphaDaysBeforeReplacement: penaltySummary.rawAlphaDaysBeforeReplacement,
+        alphaDaysReplacedCount: penaltySummary.alphaDaysReplacedCount,
+        sickOrLeaveDaysCount: penaltySummary.sickOrLeaveDaysCount,
+        totalLateMinutes,
+        lateFrequency,
+        totalActualWorkHours,
+        avgCheckInMinutes,
+        avgCheckInTimeLabel,
+        attendancePercentage,
+        badgeCategory,
+        badgeLabel,
+        badgeSubtext,
+        isKerajinanEligible: effectiveAlphaDays === 0,
+        isKedisiplinanEligible: totalLateMinutes === 0,
+      };
+    }
+  );
+
+  // Urutkan peringkat (ranking) utuh dari yang paling disiplin sampai yang paling kurang disiplin:
+  // 1. Peringkat teratas: 0 Alpha dan 0 Menit Terlambat. Jika ada beberapa karyawan dengan rekor sempurna,
+  //    urutkan berdasarkan total jam hadir terbanyak, persentase kehadiran/hari hadir terbanyak, lalu rata-rata jam masuk paling pagi.
+  // 2. Peringkat tengah: 0 Alpha, namun memiliki catatan menit keterlambatan (diurutkan dari menit terlambat paling sedikit ke paling banyak).
+  // 3. Peringkat bawah: Memiliki catatan Alpha atau menit keterlambatan tinggi (diurutkan dari jumlah Alpha paling sedikit ke paling banyak, lalu total menit terlambat).
+  rowsWithoutRank.sort((a, b) => {
+    // 1. Urutkan berdasarkan jumlah Alpha paling sedikit ke paling banyak (0 Alpha selalu di atas >= 1 Alpha)
+    if (a.alphaDaysCount !== b.alphaDaysCount) {
+      return a.alphaDaysCount - b.alphaDaysCount;
+    }
+
+    // 2. Urutkan berdasarkan Total Menit Terlambat paling sedikit ke paling banyak (0 menit selalu di atas > 0 menit)
+    if (a.totalLateMinutes !== b.totalLateMinutes) {
+      return a.totalLateMinutes - b.totalLateMinutes;
+    }
+
+    // 3. Urutkan berdasarkan frekuensi terlambat paling sedikit
+    if (a.lateFrequency !== b.lateFrequency) {
+      return a.lateFrequency - b.lateFrequency;
+    }
+
+    // 4. Tie-breaker rekor sempurna / setara: Total Jam Hadir terbanyak
+    if (b.totalActualWorkHours !== a.totalActualWorkHours) {
+      return b.totalActualWorkHours - a.totalActualWorkHours;
+    }
+
+    // 5. Tie-breaker berikutnya: Persentase Kehadiran / Total Hari Hadir terbanyak
+    if (b.attendancePercentage !== a.attendancePercentage) {
+      return b.attendancePercentage - a.attendancePercentage;
+    }
+    if (b.presentDaysCount !== a.presentDaysCount) {
+      return b.presentDaysCount - a.presentDaysCount;
+    }
+
+    // 6. Tie-breaker berikutnya: Rata-rata jam masuk paling pagi (menit terkecil)
+    const aAvgIn = a.avgCheckInMinutes !== null ? a.avgCheckInMinutes : 9999;
+    const bAvgIn = b.avgCheckInMinutes !== null ? b.avgCheckInMinutes : 9999;
+    if (aAvgIn !== bAvgIn) {
+      return aAvgIn - bAvgIn;
+    }
+
+    return a.fullName.localeCompare(b.fullName, 'id-ID');
+  });
+
+  return rowsWithoutRank.map((row, idx) => ({
+    ...row,
+    rank: idx + 1,
+  }));
+}
+

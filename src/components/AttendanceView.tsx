@@ -28,6 +28,7 @@ import {
   CompanyConfig,
   WorkShift,
   AttendancePenaltyPolicy,
+  SundayWorkType,
 } from '../types';
 import {
   formatIndoDate,
@@ -37,12 +38,18 @@ import {
   getAttendancePenaltyPolicy,
   getEmployeeShift,
   getEmployeeStandardDailyHours,
+  getEmployeeWorkDaysPerWeek,
+  getEmployeeMonthlyWorkingDaysDivisor,
+  isEmployeeWeeklyRestDay,
+  isSundayDateString,
+  resolveSundayWorkType,
   evaluateAttendanceAgainstShift,
   deduplicateDailyAttendances,
   calculateEmployeeAttendancePenalty,
   getJakartaDateString,
   getJakartaFullDateTimeLabel,
 } from '../utils/formatters';
+import { SUNDAY_WORK_TYPE_SQL_MIGRATION } from '../lib/supabase';
 import { UploadAttendanceModal } from './UploadAttendanceModal';
 
 interface AttendanceViewProps {
@@ -67,16 +74,16 @@ const SHIFT_COLOR_CLASSES: Record<
   { bg: string; text: string; border: string; badge: string }
 > = {
   emerald: {
-    bg: 'bg-emerald-50/70',
-    text: 'text-emerald-900',
-    border: 'border-emerald-200',
-    badge: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+    bg: 'bg-amber-50/70',
+    text: 'text-amber-900',
+    border: 'border-amber-200',
+    badge: 'bg-amber-100 text-amber-800 border-amber-300',
   },
   teal: {
-    bg: 'bg-teal-50/70',
-    text: 'text-teal-900',
-    border: 'border-teal-200',
-    badge: 'bg-teal-100 text-teal-800 border-teal-300',
+    bg: 'bg-amber-50/70',
+    text: 'text-amber-900',
+    border: 'border-amber-200',
+    badge: 'bg-amber-100 text-amber-800 border-amber-300',
   },
   indigo: {
     bg: 'bg-indigo-50/70',
@@ -229,7 +236,9 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
   >('AUTO_SHIFT');
   const [editAttManualLateMins, setEditAttManualLateMins] = useState(0);
   const [editAttNotes, setEditAttNotes] = useState('');
+  const [editAttSundayWorkType, setEditAttSundayWorkType] = useState<SundayWorkType>('overtime');
   const [attendanceToDelete, setAttendanceToDelete] = useState<AttendanceRecord | null>(null);
+  const [showSundaySqlBanner, setShowSundaySqlBanner] = useState(false);
 
   // Employee Plotting Filters & Bulk Assign State
   const [empPlotSearch, setEmpPlotSearch] = useState('');
@@ -247,6 +256,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
   const [formCheckIn, setFormCheckIn] = useState('08:55');
   const [formCheckOut, setFormCheckOut] = useState('17:30');
   const [formNotes, setFormNotes] = useState('Kehadiran sesuai jadwal shift');
+  const [formSundayWorkType, setFormSundayWorkType] = useState<SundayWorkType>('overtime');
 
   // Selected employee's shift in the attendance modal
   const selectedModalEmployee = useMemo(
@@ -312,6 +322,8 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
 
     const isAbsenceStatus = formAttendanceMode !== 'AUTO_SHIFT';
 
+    const isSundayRecord = isSundayDateString(formDate) || isEmployeeWeeklyRestDay(emp, formDate, empShift);
+
     const newAtt: AttendanceRecord = {
       id: `att-${Date.now()}`,
       employeeId: formEmpId,
@@ -326,6 +338,8 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
       shiftName: empShift.name,
       scheduledCheckIn: empShift.checkInTime,
       scheduledCheckOut: empShift.checkOutTime,
+      sunday_work_type: isSundayRecord ? formSundayWorkType : 'overtime',
+      sundayWorkType: isSundayRecord ? formSundayWorkType : 'overtime',
       notes:
         formNotes ||
         (isAbsenceStatus
@@ -342,7 +356,13 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
           : `${empShift.code}: ${formCheckIn} → ${
               evalRes.lateMinutes > 0 ? `Terlambat ${evalRes.lateMinutes} mnt` : 'Tepat Waktu'
             }`
-      }) berhasil disimpan & disinkronkan ke Payroll!`
+      }${
+        isSundayRecord && !isAbsenceStatus
+          ? ` • Status Minggu: ${
+              formSundayWorkType === 'day_off_replacement' ? 'Tukar Hari Libur' : 'Lembur Murni'
+            }`
+          : ''
+      }) berhasil disimpan ke Supabase & disinkronkan ke Payroll!`
     );
   };
 
@@ -574,6 +594,31 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
 
     setEditAttManualLateMins(att.lateMinutes || 0);
     setEditAttNotes(att.notes || att.locationAddress || '');
+    setEditAttSundayWorkType(resolveSundayWorkType(att, att.employeeId, att.date, att.id));
+  };
+
+  // Ubah Status Kehadiran Hari Minggu (Lembur Murni vs Tukar Hari Libur) secara langsung dari tabel
+  const handleQuickChangeSundayWorkType = (att: AttendanceRecord, newType: SundayWorkType) => {
+    const emp = employees.find((e) => e.id === att.employeeId);
+    const updatedRecord: AttendanceRecord = {
+      ...att,
+      sunday_work_type: newType,
+      sundayWorkType: newType,
+    };
+    if (onUpdateAttendance) {
+      onUpdateAttendance(updatedRecord);
+    } else {
+      onAddAttendance(updatedRecord);
+    }
+    showToast(
+      `Status Hari Minggu ${emp?.fullName || 'Karyawan'} (${formatIndoDate(
+        att.date
+      )}) diubah menjadi "${
+        newType === 'day_off_replacement'
+          ? 'Tukar Hari Libur (Memulihkan 1 Hari Absen/Alpha)'
+          : 'Lembur Murni (Dihitung Upah Lembur)'
+      }" & disinkronkan ke Supabase!`
+    );
   };
 
   // Aksi Cepat Admin: Lengkapi Clock-Out 1-Klik langsung dari tabel Presensi Harian
@@ -666,6 +711,10 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
         : Math.max(1, evalRes?.rawLateMinutes || evalRes?.lateMinutes || 15)
       : evalRes?.lateMinutes || 0;
 
+    const isSundayEdit =
+      isSundayDateString(editingAttendance.date) ||
+      isEmployeeWeeklyRestDay(emp, editingAttendance.date, empShift);
+
     const updatedRecord: AttendanceRecord = {
       ...editingAttendance,
       checkIn: finalCheckIn,
@@ -679,6 +728,8 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
       shiftName: empShift.name,
       scheduledCheckIn: empShift.checkInTime,
       scheduledCheckOut: empShift.checkOutTime,
+      sunday_work_type: isSundayEdit ? editAttSundayWorkType : editingAttendance.sunday_work_type,
+      sundayWorkType: isSundayEdit ? editAttSundayWorkType : editingAttendance.sundayWorkType,
       notes: editAttNotes.trim() || editingAttendance.notes,
       locationAddress: editAttNotes.trim() || editingAttendance.locationAddress,
     };
@@ -695,7 +746,15 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
         updatedRecord.date
       )}) berhasil diperbarui: Masuk ${updatedRecord.checkIn}, Pulang ${
         updatedRecord.checkOut
-      }, Status "${updatedRecord.status}"!`
+      }, Status "${updatedRecord.status}"${
+        isSundayEdit && !isNonPresent
+          ? ` (${
+              editAttSundayWorkType === 'day_off_replacement'
+                ? 'Tukar Hari Libur'
+                : 'Lembur Murni'
+            })`
+          : ''
+      }!`
     );
   };
 
@@ -758,7 +817,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
       {/* Toast Notification */}
       {toastMessage && (
         <div className="fixed bottom-6 right-6 z-50 bg-slate-900 text-white px-4 py-3 rounded-xl text-xs font-semibold shadow-xl flex items-center gap-2.5 border border-slate-700 animate-in fade-in">
-          <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+          <CheckCircle className="w-4 h-4 text-amber-400 shrink-0" />
           <span>{toastMessage}</span>
         </div>
       )}
@@ -768,11 +827,11 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
         <div>
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
-              <CalendarCheck2 className="w-6 h-6 text-emerald-600" />
+              <CalendarCheck2 className="w-6 h-6 text-amber-600" />
               Manajemen Presensi & Jadwal Shift Kerja
             </h1>
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-[11px] font-mono font-bold">
-              <Clock className="w-3.5 h-3.5 text-emerald-600" />
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-50 text-amber-800 border border-amber-200 text-[11px] font-mono font-bold">
+              <Clock className="w-3.5 h-3.5 text-amber-600" />
               <span>{liveClockWib.compactLabel}</span>
             </span>
           </div>
@@ -790,9 +849,9 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
           </button>
           <button
             onClick={() => setIsUploadModalOpen(true)}
-            className="px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+            className="px-3.5 py-2 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
           >
-            <Upload className="w-4 h-4 text-emerald-600" />
+            <Upload className="w-4 h-4 text-amber-600" />
             Upload CSV Absensi
           </button>
           <button
@@ -805,7 +864,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
               setFormCheckOut(shift.checkOutTime);
               setIsModalOpen(true);
             }}
-            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-md shadow-emerald-600/20"
+            className="px-4 py-2 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-md shadow-amber-600/20"
           >
             <Plus className="w-4 h-4" />
             Catat Presensi Manual
@@ -820,7 +879,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
           onClick={() => setActiveSubTab('shifts')}
           className={`flex-1 min-w-[210px] py-2.5 px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer ${
             activeSubTab === 'shifts'
-              ? 'bg-emerald-600 text-white shadow-sm'
+              ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 font-bold shadow-sm'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
           }`}
         >
@@ -833,7 +892,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
           onClick={() => setActiveSubTab('employee_shifts')}
           className={`flex-1 min-w-[210px] py-2.5 px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer ${
             activeSubTab === 'employee_shifts'
-              ? 'bg-emerald-600 text-white shadow-sm'
+              ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 font-bold shadow-sm'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
           }`}
         >
@@ -846,7 +905,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
           onClick={() => setActiveSubTab('attendance')}
           className={`flex-1 min-w-[210px] py-2.5 px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer ${
             activeSubTab === 'attendance'
-              ? 'bg-emerald-600 text-white shadow-sm'
+              ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 font-bold shadow-sm'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
           }`}
         >
@@ -864,7 +923,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
           <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="space-y-1">
               <div className="flex items-center gap-2">
-                <Clock className="w-5 h-5 text-emerald-600" />
+                <Clock className="w-5 h-5 text-amber-600" />
                 <h2 className="text-base font-bold text-slate-900">
                   Konfigurasi Manual Jam Masuk & Jam Pulang Kerja (Multi-Shift)
                 </h2>
@@ -917,6 +976,9 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                 ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'].every((d) =>
                   shift.workDays.includes(d)
                 );
+              const is7Days =
+                shift.workDays.length === 7 &&
+                ALL_DAYS.every((d) => shift.workDays.includes(d));
 
               return (
                 <div
@@ -939,7 +1001,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                           {shift.isDefault && (
                             <>
                               <span aria-hidden="true">·</span>
-                              <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-sans font-bold text-[10px]">
+                              <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 font-sans font-bold text-[10px]">
                                 Shift Default
                               </span>
                             </>
@@ -947,7 +1009,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                         </div>
                         <h3 className="text-base font-bold text-slate-900 mt-1.5">{shift.name}</h3>
                         <p className="text-xs text-slate-500 flex items-center gap-1.5 mt-1">
-                          <MapPin className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                          <MapPin className="w-3.5 h-3.5 text-amber-600 shrink-0" />
                           <span className="truncate">
                             {shift.location || 'Lokasi kantor/gudang belum diatur'}
                           </span>
@@ -959,7 +1021,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                           <button
                             type="button"
                             onClick={() => handleSetDefaultShift(shift.id)}
-                            className="px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg border border-slate-200 transition-colors cursor-pointer"
+                            className="px-2.5 py-1.5 text-[11px] font-semibold text-slate-600 hover:text-amber-700 hover:bg-amber-50 rounded-lg border border-slate-200 transition-colors cursor-pointer"
                             title="Jadikan shift default untuk karyawan baru"
                           >
                             Set Default
@@ -1014,7 +1076,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                             handleQuickUpdateShiftInfo(shift.id, { name: e.target.value })
                           }
                           placeholder="Nama Shift..."
-                          className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                          className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-amber-500"
                         />
                       </div>
                       <div>
@@ -1028,7 +1090,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                             handleQuickUpdateShiftInfo(shift.id, { location: e.target.value })
                           }
                           placeholder="Alamat Kantor / Gudang..."
-                          className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs text-slate-700 focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                          className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs text-slate-700 focus:outline-hidden focus:ring-2 focus:ring-amber-500"
                         />
                       </div>
 
@@ -1047,8 +1109,8 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                               }
                               className={`px-2 py-0.5 rounded text-[10px] font-bold border transition-colors cursor-pointer ${
                                 is5Days
-                                  ? 'bg-emerald-600 text-white border-emerald-600'
-                                  : 'bg-white text-slate-600 border-slate-300 hover:bg-emerald-50 hover:text-emerald-700'
+                                  ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 border-amber-500 font-bold'
+                                  : 'bg-white text-slate-600 border-slate-300 hover:bg-amber-50 hover:text-amber-700'
                               }`}
                             >
                               5 Hari (Sen-Jum)
@@ -1069,11 +1131,34 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                               }
                               className={`px-2 py-0.5 rounded text-[10px] font-bold border transition-colors cursor-pointer ${
                                 is6Days
-                                  ? 'bg-emerald-600 text-white border-emerald-600'
-                                  : 'bg-white text-slate-600 border-slate-300 hover:bg-emerald-50 hover:text-emerald-700'
+                                  ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 border-amber-500 font-bold'
+                                  : 'bg-white text-slate-600 border-slate-300 hover:bg-amber-50 hover:text-amber-700'
                               }`}
                             >
                               6 Hari (Sen-Sab)
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleQuickUpdateShiftInfo(shift.id, {
+                                  workDays: [
+                                    'Senin',
+                                    'Selasa',
+                                    'Rabu',
+                                    'Kamis',
+                                    'Jumat',
+                                    'Sabtu',
+                                    'Minggu',
+                                  ],
+                                })
+                              }
+                              className={`px-2 py-0.5 rounded text-[10px] font-bold border transition-colors cursor-pointer ${
+                                is7Days
+                                  ? 'bg-purple-700 text-white border-purple-700 font-bold'
+                                  : 'bg-white text-purple-700 border-purple-200 hover:bg-purple-50'
+                              }`}
+                            >
+                              7 Hari (Sen-Min)
                             </button>
                           </div>
                         </div>
@@ -1088,7 +1173,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                                 onClick={() => handleToggleCardWorkDay(shift, day)}
                                 className={`px-2 py-1 rounded-md text-[10px] font-semibold border transition-colors cursor-pointer ${
                                   activeDay
-                                    ? 'bg-emerald-100 text-emerald-900 border-emerald-300 font-bold'
+                                    ? 'bg-amber-100 text-amber-900 border-amber-300 font-bold'
                                     : 'bg-white text-slate-400 border-slate-200 hover:bg-slate-100'
                                 }`}
                               >
@@ -1120,7 +1205,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                             onChange={(e) =>
                               handleQuickUpdateShiftTime(shift.id, 'checkInTime', e.target.value)
                             }
-                            className="w-full px-2.5 py-2 bg-white border border-slate-300 rounded-xl font-mono text-sm font-bold text-slate-900 focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                            className="w-full px-2.5 py-2 bg-white border border-slate-300 rounded-xl font-mono text-sm font-bold text-slate-900 focus:outline-hidden focus:ring-2 focus:ring-amber-500"
                           />
                         </div>
 
@@ -1134,7 +1219,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                             onChange={(e) =>
                               handleQuickUpdateShiftTime(shift.id, 'checkOutTime', e.target.value)
                             }
-                            className="w-full px-2.5 py-2 bg-white border border-slate-300 rounded-xl font-mono text-sm font-bold text-slate-900 focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                            className="w-full px-2.5 py-2 bg-white border border-slate-300 rounded-xl font-mono text-sm font-bold text-slate-900 focus:outline-hidden focus:ring-2 focus:ring-amber-500"
                           />
                         </div>
 
@@ -1155,7 +1240,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                                 Number(e.target.value)
                               )
                             }
-                            className="w-full px-2.5 py-2 bg-white border border-slate-300 rounded-xl font-mono text-sm font-bold text-slate-900 focus:outline-hidden focus:ring-2 focus:ring-emerald-500"
+                            className="w-full px-2.5 py-2 bg-white border border-slate-300 rounded-xl font-mono text-sm font-bold text-slate-900 focus:outline-hidden focus:ring-2 focus:ring-amber-500"
                           />
                         </div>
                       </div>
@@ -1190,7 +1275,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                             setEmpPlotShiftFilter(shift.id);
                             setActiveSubTab('employee_shifts');
                           }}
-                          className="text-emerald-700 hover:underline font-semibold cursor-pointer"
+                          className="text-amber-700 hover:underline font-semibold cursor-pointer"
                         >
                           Kelola anggota →
                         </button>
@@ -1240,7 +1325,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div>
                 <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                  <Users className="w-5 h-5 text-emerald-600" />
+                  <Users className="w-5 h-5 text-amber-600" />
                   Penugasan Shift Massal per Departemen
                 </h2>
                 <p className="text-xs text-slate-500">
@@ -1297,7 +1382,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                       }!`
                     );
                   }}
-                  className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-2 shadow-xs"
+                  className="w-full py-2.5 px-4 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-2 shadow-xs"
                 >
                   <Check className="w-4 h-4" />
                   Terapkan Shift Massal
@@ -1315,7 +1400,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                 placeholder="Cari nama, NIK, atau jabatan karyawan..."
                 value={empPlotSearch}
                 onChange={(e) => setEmpPlotSearch(e.target.value)}
-                className="w-full pl-9 pr-4 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20 text-slate-700"
+                className="w-full pl-9 pr-4 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500/20 text-slate-700"
               />
             </div>
 
@@ -1398,12 +1483,29 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                           <span className="font-semibold text-slate-900 block">
                             {currentShift.name}
                           </span>
-                          <span className="text-[11px] text-slate-500 font-mono">
+                          <span className="text-[11px] text-slate-500 font-mono block">
                             Kode: {currentShift.code}
                           </span>
+                          <div className="mt-1 flex flex-wrap items-center gap-1">
+                            <span
+                              className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-extrabold border ${
+                                getEmployeeWorkDaysPerWeek(emp, currentShift) === 7
+                                  ? 'bg-purple-50 text-purple-800 border-purple-200'
+                                  : 'bg-amber-50 text-amber-800 border-amber-200'
+                              }`}
+                            >
+                              {getEmployeeWorkDaysPerWeek(emp, currentShift)} Hari/Minggu (÷
+                              {getEmployeeMonthlyWorkingDaysDivisor(emp, 26, currentShift)} Hr)
+                            </span>
+                            <span className="text-[10px] text-slate-500 font-medium">
+                              {getEmployeeWorkDaysPerWeek(emp, currentShift) === 7
+                                ? '• Minggu Masuk Reguler'
+                                : '• 1 Hari Libur (Masuk Minggu = Lembur)'}
+                            </span>
+                          </div>
                         </td>
                         <td className="py-3 px-4 font-mono">
-                          <span className="font-bold text-emerald-700">
+                          <span className="font-bold text-amber-700">
                             {currentShift.checkInTime}
                           </span>
                           <span className="text-slate-400 mx-1.5">–</span>
@@ -1428,7 +1530,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                                 `Shift kerja ${emp.fullName} diubah ke ${targetShift?.name} (${targetShift?.checkInTime} - ${targetShift?.checkOutTime} WIB)`
                               );
                             }}
-                            className="w-full max-w-[260px] px-3 py-2 text-xs bg-slate-50 hover:bg-white border border-slate-300 rounded-xl font-semibold text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-emerald-500 cursor-pointer"
+                            className="w-full max-w-[260px] px-3 py-2 text-xs bg-slate-50 hover:bg-white border border-slate-300 rounded-xl font-semibold text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-amber-500 cursor-pointer"
                           >
                             {workShifts.map((s) => (
                               <option key={s.id} value={s.id}>
@@ -1457,12 +1559,12 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
             <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
               <div className="flex items-center justify-between">
                 <span className="text-xs text-slate-500">Hadir Tepat Waktu</span>
-                <div className="p-1.5 bg-emerald-50 text-emerald-600 rounded-lg">
+                <div className="p-1.5 bg-amber-50 text-amber-600 rounded-lg">
                   <UserCheck className="w-4 h-4" />
                 </div>
               </div>
               <h3 className="text-2xl font-bold text-slate-900 mt-2">{onTimeCount}</h3>
-              <p className="text-[11px] text-emerald-600 mt-1 font-medium">
+              <p className="text-[11px] text-amber-600 mt-1 font-medium">
                 1 log masuk pertama / karyawan / tanggal
               </p>
             </div>
@@ -1519,9 +1621,9 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
 
           {/* PANEL KONFIGURASI: ATURAN DENDA KETERLAMBATAN & POTONGAN ABSEN */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-            <div className="p-4 sm:p-5 bg-gradient-to-r from-slate-900 via-slate-800 to-emerald-950 text-white flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="p-4 sm:p-5 bg-gradient-to-br from-neutral-950 via-stone-900 to-neutral-900 border-b border-amber-500/35 text-white flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-start sm:items-center gap-3">
-                <div className="p-2.5 rounded-xl bg-emerald-500/20 border border-emerald-400/30 text-emerald-300 shrink-0">
+                <div className="p-2.5 rounded-xl bg-amber-500/20 border border-amber-400/30 text-amber-300 shrink-0">
                   <Settings2 className="w-5 h-5" />
                 </div>
                 <div>
@@ -1532,7 +1634,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                     <span
                       className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
                         penaltyPolicy.enabled
-                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-400/40'
+                          ? 'bg-amber-500/20 text-amber-300 border-amber-400/40'
                           : 'bg-slate-700 text-slate-300 border-slate-600'
                       }`}
                     >
@@ -1557,14 +1659,14 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                           : 'Perhitungan denda keterlambatan dinonaktifkan.'
                       );
                     }}
-                    className="rounded text-emerald-500 focus:ring-emerald-400"
+                    className="rounded text-amber-500 focus:ring-amber-400"
                   />
                   <span>Aktifkan Potongan</span>
                 </label>
                 <button
                   type="button"
                   onClick={() => setIsPenaltyPanelOpen((prev) => !prev)}
-                  className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold cursor-pointer transition-colors"
+                  className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold text-xs font-bold cursor-pointer transition-colors"
                 >
                   {isPenaltyPanelOpen ? 'Sembunyikan Aturan' : 'Atur Skema Denda'}
                 </button>
@@ -1580,7 +1682,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                       <span className="font-bold text-slate-900">
                         A. Toleransi Keterlambatan (Grace Period)
                       </span>
-                      <span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 font-mono font-bold text-[11px]">
+                      <span className="px-2 py-0.5 rounded bg-amber-50 text-amber-700 font-mono font-bold text-[11px]">
                         {penaltyPolicy.gracePeriodMinutes} Menit
                       </span>
                     </div>
@@ -1613,7 +1715,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                               onClick={() => handlePolicyChange({ gracePeriodMinutes: val })}
                               className={`px-2 py-1 rounded-lg font-mono text-[11px] font-bold border cursor-pointer ${
                                 penaltyPolicy.gracePeriodMinutes === val
-                                  ? 'bg-emerald-600 text-white border-emerald-600'
+                                  ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 border-amber-500 font-bold'
                                   : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
                               }`}
                             >
@@ -1630,7 +1732,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                         onChange={(e) =>
                           handlePolicyChange({ useShiftGracePeriod: e.target.checked })
                         }
-                        className="rounded text-emerald-600 focus:ring-emerald-500"
+                        className="rounded text-amber-600 focus:ring-amber-500"
                       />
                       <span>Gunakan toleransi spesifik per masing-masing Shift Kerja</span>
                     </label>
@@ -1848,7 +1950,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                 placeholder="Cari nama atau NIK karyawan..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="w-full pl-9 pr-4 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-emerald-500/20 text-slate-700"
+                className="w-full pl-9 pr-4 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-amber-500/20 text-slate-700"
               />
             </div>
 
@@ -1903,10 +2005,47 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                   Rekap Presensi Harian &amp; Log Presensi Karyawan ({filteredAttendances.length} Log)
                 </h3>
                 <p className="text-[11px] text-slate-500">
-                  Admin dapat mengedit jam masuk/pulang (misal karyawan lupa check-out), menyesuaikan status absensi, atau menghapus log presensi per baris.
+                  Admin dapat mengedit jam masuk/pulang, menentukan status kehadiran Hari Minggu (
+                  <strong className="text-amber-700">Lembur Murni</strong> vs{' '}
+                  <strong className="text-indigo-700">Tukar Hari Libur</strong>), atau menghapus log presensi.
                 </p>
               </div>
+              <button
+                type="button"
+                onClick={() => setShowSundaySqlBanner((prev) => !prev)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-amber-300 border border-amber-500/40 text-[11px] font-bold cursor-pointer self-start sm:self-auto"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                <span>{showSundaySqlBanner ? 'Tutup SQL Migrasi Minggu' : 'SQL Migrasi sunday_work_type'}</span>
+              </button>
             </div>
+            {showSundaySqlBanner && (
+              <div className="p-4 bg-neutral-950 border-b border-amber-500/30 text-xs space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <span className="font-bold text-amber-300 block">
+                      Script Migrasi SQL Supabase — Kolom Status Kehadiran Hari Minggu (sunday_work_type)
+                    </span>
+                    <span className="text-[11px] text-neutral-400">
+                      Jalankan di Supabase SQL Editor untuk memastikan kolom <code className="text-amber-200">sunday_work_type</code> tersedia di tabel <code className="text-amber-200">attendances</code>, <code className="text-amber-200">attendance_logs</code>, dan <code className="text-amber-200">overtime_requests</code>.
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard?.writeText(SUNDAY_WORK_TYPE_SQL_MIGRATION);
+                      showToast('Script SQL ALTER TABLE sunday_work_type berhasil disalin ke clipboard!');
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 font-bold text-[11px] cursor-pointer"
+                  >
+                    Salin Script SQL
+                  </button>
+                </div>
+                <pre className="p-3 rounded-xl bg-neutral-900 border border-amber-500/20 text-amber-200 font-mono text-[11px] overflow-x-auto">
+                  {SUNDAY_WORK_TYPE_SQL_MIGRATION}
+                </pre>
+              </div>
+            )}
             <div className="overflow-x-auto">
               <table className="w-full text-xs text-left">
                 <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200">
@@ -1936,9 +2075,29 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                     const isPresentWithoutCheckout =
                       (att.status === 'Hadir Tepat Waktu' || att.status === 'Terlambat') &&
                       (!att.checkOut || att.checkOut === '-');
+                    const empWorkDaysPerWeek = getEmployeeWorkDaysPerWeek(emp, empShift);
+                    const isSundayLog = isSundayDateString(att.date);
+                    const isWeeklyRestLog = isEmployeeWeeklyRestDay(emp, att.date, empShift);
+                    const isPresentStatus =
+                      att.status === 'Hadir Tepat Waktu' || att.status === 'Terlambat';
+                    const sundayWorkType = resolveSundayWorkType(
+                      att,
+                      att.employeeId,
+                      att.date,
+                      att.id
+                    );
 
                     return (
-                      <tr key={att.id} className="hover:bg-slate-50/70 transition-colors">
+                      <tr
+                        key={att.id}
+                        className={`hover:bg-slate-50/70 transition-colors ${
+                          (isSundayLog || isWeeklyRestLog) && empWorkDaysPerWeek === 6 && isPresentStatus
+                            ? sundayWorkType === 'day_off_replacement'
+                              ? 'bg-indigo-50/35'
+                              : 'bg-amber-50/35'
+                            : ''
+                        }`}
+                      >
                         <td className="py-3 px-4">
                           <div className="flex items-center gap-3">
                             <img
@@ -1947,14 +2106,15 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                                 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=256&h=256&q=80'
                               }
                               alt={emp?.fullName}
-                              className="w-8 h-8 rounded-full object-cover shrink-0 ring-1 ring-emerald-500/30"
+                              className="w-8 h-8 rounded-full object-cover shrink-0 ring-1 ring-amber-500/30"
                             />
                             <div>
                               <span className="font-semibold text-slate-900 block text-xs">
                                 {emp?.fullName}
                               </span>
                               <span className="text-[11px] text-slate-500 font-mono block">
-                                {emp?.nik} • {emp?.department}
+                                {emp?.nik} • {emp?.department} •{' '}
+                                <strong className="text-amber-700">{empWorkDaysPerWeek} Hr/Mgg</strong>
                               </span>
                               {emp?.ktpNumber && (
                                 <span className="text-[10px] text-indigo-700 font-mono font-semibold block">
@@ -1966,8 +2126,21 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                         </td>
                         <td className="py-3 px-4 text-slate-700 font-medium whitespace-nowrap">
                           <span className="block">{formatIndoDate(att.date)}</span>
+                          {(isSundayLog || isWeeklyRestLog) && (
+                            <span
+                              className={`inline-flex items-center gap-1 mt-0.5 px-1.5 py-0.5 rounded text-[9px] font-extrabold border ${
+                                empWorkDaysPerWeek === 6
+                                  ? 'bg-amber-100 text-amber-900 border-amber-300'
+                                  : 'bg-slate-100 text-slate-700 border-slate-300'
+                              }`}
+                            >
+                              {empWorkDaysPerWeek === 6
+                                ? 'HARI MINGGU (Jadwal 6 Hr/Mgg)'
+                                : 'HARI MINGGU (Reguler 7 Hr/Mgg)'}
+                            </span>
+                          )}
                           {att.checkInFullTimestamp && (
-                            <span className="text-[10px] font-mono text-emerald-700 block">
+                            <span className="text-[10px] font-mono text-amber-700 block">
                               {att.checkInFullTimestamp}
                             </span>
                           )}
@@ -1985,9 +2158,9 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                                     <img
                                       src={photoInSnap}
                                       alt="Foto Clock-In"
-                                      className="w-11 h-9 rounded-lg object-cover border border-emerald-300 shadow-2xs group-hover:ring-2 group-hover:ring-emerald-500 transition-all"
+                                      className="w-11 h-9 rounded-lg object-cover border border-amber-300 shadow-2xs group-hover:ring-2 group-hover:ring-amber-500 transition-all"
                                     />
-                                    <span className="absolute -bottom-1 left-0.5 px-1 py-0.2 rounded bg-emerald-600 text-white text-[8px] font-extrabold">
+                                    <span className="absolute -bottom-1 left-0.5 px-1 py-0.2 rounded bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 font-bold text-[8px] font-extrabold">
                                       IN
                                     </span>
                                   </div>
@@ -2006,7 +2179,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                                 )}
                               </div>
                               <div>
-                                <span className="text-[11px] font-bold text-emerald-700 group-hover:underline block">
+                                <span className="text-[11px] font-bold text-amber-700 group-hover:underline block">
                                   {photoInSnap && photoOutSnap
                                     ? 'Foto IN & OUT'
                                     : photoInSnap
@@ -2033,7 +2206,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                           </span>
                         </td>
                         <td className="py-3 px-4 font-mono">
-                          <span className="font-semibold text-emerald-700 block">
+                          <span className="font-semibold text-amber-700 block">
                             Masuk: {att.checkIn}
                           </span>
                           <span className="font-semibold text-indigo-700 block text-[11px]">
@@ -2072,7 +2245,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                               Terlambat {att.lateMinutes} mnt (Shift {schedIn})
                             </span>
                           ) : att.status === 'Hadir Tepat Waktu' ? (
-                            <span className="text-emerald-600 font-medium block">
+                            <span className="text-amber-600 font-medium block">
                               Masuk Tepat Waktu
                             </span>
                           ) : (
@@ -2099,7 +2272,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                           <span
                             className={`inline-block px-2.5 py-1 rounded-md text-[10px] font-semibold ${
                               att.status === 'Hadir Tepat Waktu'
-                                ? 'bg-emerald-100 text-emerald-800'
+                                ? 'bg-amber-100 text-amber-800'
                                 : att.status === 'Terlambat'
                                 ? 'bg-amber-100 text-amber-800'
                                 : att.status === 'Alpa'
@@ -2116,6 +2289,48 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                               Diset Manual Admin
                             </span>
                           )}
+                          {(isSundayLog || isWeeklyRestLog) &&
+                            empWorkDaysPerWeek === 6 &&
+                            isPresentStatus && (
+                              <div className="mt-1.5 flex flex-col items-center gap-1">
+                                <span
+                                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[9px] font-extrabold border ${
+                                    sundayWorkType === 'day_off_replacement'
+                                      ? 'bg-indigo-100 text-indigo-900 border-indigo-300'
+                                      : 'bg-neutral-900 text-amber-300 border-amber-500/40'
+                                  }`}
+                                >
+                                  {sundayWorkType === 'day_off_replacement'
+                                    ? '🔄 TUKAR HARI LIBUR'
+                                    : '⚡ LEMBUR MURNI'}
+                                </span>
+                                <select
+                                  value={sundayWorkType}
+                                  onChange={(e) =>
+                                    handleQuickChangeSundayWorkType(
+                                      att,
+                                      e.target.value as SundayWorkType
+                                    )
+                                  }
+                                  className={`px-2 py-1 rounded-lg text-[10px] font-bold border cursor-pointer focus:outline-hidden ${
+                                    sundayWorkType === 'day_off_replacement'
+                                      ? 'bg-indigo-50 text-indigo-900 border-indigo-300'
+                                      : 'bg-amber-50 text-amber-900 border-amber-300'
+                                  }`}
+                                  title="Tentukan status kehadiran hari Minggu karyawan 6 Hari/Minggu"
+                                >
+                                  <option value="overtime">⚡ Lembur Murni (Overtime)</option>
+                                  <option value="day_off_replacement">
+                                    🔄 Tukar Hari Libur (Ganti Absen)
+                                  </option>
+                                </select>
+                                <span className="text-[9px] text-slate-500 leading-tight max-w-[165px]">
+                                  {sundayWorkType === 'day_off_replacement'
+                                    ? 'Pulihkan 1 Hr Absen/Alpha • Bukan Lembur'
+                                    : 'Upah Lembur di Luar Gaji 26 Hr'}
+                                </span>
+                              </div>
+                            )}
                         </td>
                         <td className="py-3 px-4 text-slate-600 max-w-[210px]">
                           <div className="text-[11px] font-medium text-slate-800 line-clamp-2">
@@ -2182,12 +2397,12 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                         <img
                           src={previewEmp.avatarUrl}
                           alt={previewEmp.fullName}
-                          className="w-10 h-10 rounded-full object-cover ring-2 ring-emerald-400 shrink-0"
+                          className="w-10 h-10 rounded-full object-cover ring-2 ring-amber-400 shrink-0"
                         />
                       )}
                       <div>
                         <h4 className="text-sm font-bold flex items-center gap-2">
-                          <Camera className="w-4 h-4 text-emerald-400" />
+                          <Camera className="w-4 h-4 text-amber-400" />
                           <span>Verifikasi Foto Wajah & Titik GPS HP ({formatIndoDate(previewPhotoRecord.date)})</span>
                         </h4>
                         <p className="text-[11px] text-slate-300 mt-0.5">
@@ -2210,7 +2425,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     {(previewPhotoRecord.facePhotoSnapshot || previewPhotoRecord.photoIn) && (
                       <div className="space-y-1.5">
-                        <span className="font-bold text-emerald-800 block">
+                        <span className="font-bold text-amber-800 block">
                           Foto Selfie Clock-In ({previewPhotoRecord.checkIn} WIB •{' '}
                           {previewPhotoRecord.distanceMeters ?? 0}m)
                         </span>
@@ -2263,7 +2478,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                     </div>
                     <div className="flex flex-wrap justify-between gap-2">
                       <span className="text-slate-500">Status Validasi Radius &amp; Wajah:</span>
-                      <span className="font-bold text-emerald-700">
+                      <span className="font-bold text-amber-700">
                         {previewPhotoRecord.isInOfficeRadius !== false
                           ? `Dalam Radius Kantor (Masuk: ${previewPhotoRecord.distanceMeters ?? 0}m${
                               previewPhotoRecord.checkOutDistanceMeters !== undefined
@@ -2277,7 +2492,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                     {previewPhotoRecord.locationCoords && (
                       <div className="flex flex-wrap justify-between gap-2">
                         <span className="text-slate-500">Koordinat GPS Clock-In:</span>
-                        <span className="font-mono font-bold text-emerald-700">
+                        <span className="font-mono font-bold text-amber-700">
                           Lat {previewPhotoRecord.locationCoords.latitude.toFixed(6)}°, Long{' '}
                           {previewPhotoRecord.locationCoords.longitude.toFixed(6)}° (Akurasi ±
                           {previewPhotoRecord.locationCoords.accuracy}m)
@@ -2345,7 +2560,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                         checkOutTime: preset.out,
                       }))
                     }
-                    className="px-2.5 py-1 text-[11px] font-medium bg-slate-100 hover:bg-emerald-50 hover:text-emerald-700 text-slate-700 rounded-lg border border-slate-200 transition-colors cursor-pointer"
+                    className="px-2.5 py-1 text-[11px] font-medium bg-slate-100 hover:bg-amber-50 hover:text-amber-700 text-slate-700 rounded-lg border border-slate-200 transition-colors cursor-pointer"
                   >
                     {preset.label}
                   </button>
@@ -2379,9 +2594,9 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 p-3.5 bg-emerald-50/60 border border-emerald-200 rounded-xl">
+              <div className="grid grid-cols-2 gap-3 p-3.5 bg-amber-50/60 border border-amber-200 rounded-xl">
                 <div>
-                  <label className="block text-emerald-900 font-bold mb-1">
+                  <label className="block text-amber-900 font-bold mb-1">
                     Jam Masuk Kerja (Check-In)
                   </label>
                   <input
@@ -2391,11 +2606,11 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                     onChange={(e) =>
                       setShiftForm((prev) => ({ ...prev, checkInTime: e.target.value }))
                     }
-                    className="w-full p-2.5 bg-white border border-emerald-300 rounded-xl font-mono text-sm font-bold text-slate-900"
+                    className="w-full p-2.5 bg-white border border-amber-300 rounded-xl font-mono text-sm font-bold text-slate-900"
                   />
                 </div>
                 <div>
-                  <label className="block text-emerald-900 font-bold mb-1">
+                  <label className="block text-amber-900 font-bold mb-1">
                     Jam Pulang Kerja (Check-Out)
                   </label>
                   <input
@@ -2405,7 +2620,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                     onChange={(e) =>
                       setShiftForm((prev) => ({ ...prev, checkOutTime: e.target.value }))
                     }
-                    className="w-full p-2.5 bg-white border border-emerald-300 rounded-xl font-mono text-sm font-bold text-slate-900"
+                    className="w-full p-2.5 bg-white border border-amber-300 rounded-xl font-mono text-sm font-bold text-slate-900"
                   />
                 </div>
               </div>
@@ -2465,7 +2680,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                           workDays: ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat'],
                         }))
                       }
-                      className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 cursor-pointer"
+                      className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 cursor-pointer"
                     >
                       Set 5 Hari Kerja (Sen-Jum)
                     </button>
@@ -2481,6 +2696,26 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                     >
                       Set 6 Hari Kerja (Sen-Sab)
                     </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setShiftForm((prev) => ({
+                          ...prev,
+                          workDays: [
+                            'Senin',
+                            'Selasa',
+                            'Rabu',
+                            'Kamis',
+                            'Jumat',
+                            'Sabtu',
+                            'Minggu',
+                          ],
+                        }))
+                      }
+                      className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-purple-50 hover:bg-purple-100 text-purple-800 border border-purple-200 cursor-pointer"
+                    >
+                      Set 7 Hari Kerja (Sen-Min)
+                    </button>
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
@@ -2493,7 +2728,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                         onClick={() => toggleWorkDayInForm(day)}
                         className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors cursor-pointer ${
                           active
-                            ? 'bg-emerald-600 text-white border-emerald-600'
+                            ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 border-amber-500 font-bold'
                             : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
                         }`}
                       >
@@ -2548,7 +2783,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                   onChange={(e) =>
                     setShiftForm((prev) => ({ ...prev, isDefault: e.target.checked }))
                   }
-                  className="rounded text-emerald-600 focus:ring-emerald-500"
+                  className="rounded text-amber-600 focus:ring-amber-500"
                 />
                 <span className="text-slate-700 font-medium">
                   Jadikan sebagai Shift Default untuk karyawan yang belum dipilih shift-nya
@@ -2565,7 +2800,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl cursor-pointer"
+                  className="px-4 py-2 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold font-semibold rounded-xl cursor-pointer"
                 >
                   Simpan Jadwal Shift
                 </button>
@@ -2609,7 +2844,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
               <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
                 <div className="flex items-center justify-between">
                   <span className="font-bold text-slate-800">{selectedModalShift.name}</span>
-                  <span className="font-mono text-[11px] font-bold text-emerald-700">
+                  <span className="font-mono text-[11px] font-bold text-amber-700">
                     {selectedModalShift.code}
                   </span>
                 </div>
@@ -2685,7 +2920,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                     className={`p-3 rounded-xl border flex items-center justify-between ${
                       modalShiftEvaluation.lateMinutes > 0
                         ? 'bg-amber-50 border-amber-200 text-amber-900'
-                        : 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                        : 'bg-amber-50 border-amber-200 text-amber-900'
                     }`}
                   >
                     <div>
@@ -2704,6 +2939,39 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                       <span className="font-bold">{modalShiftEvaluation.workHours} Jam</span>
                     </div>
                   </div>
+
+                  {(isSundayDateString(formDate) ||
+                    isEmployeeWeeklyRestDay(
+                      selectedModalEmployee,
+                      formDate,
+                      selectedModalShift
+                    )) &&
+                    getEmployeeWorkDaysPerWeek(selectedModalEmployee, selectedModalShift) === 6 && (
+                      <div className="p-3.5 rounded-xl bg-amber-50/70 border border-amber-300 space-y-2">
+                        <label className="block text-amber-950 font-bold text-xs">
+                          Status Kehadiran Hari Minggu (Karyawan 6 Hari/Minggu)
+                        </label>
+                        <select
+                          value={formSundayWorkType}
+                          onChange={(e) =>
+                            setFormSundayWorkType(e.target.value as SundayWorkType)
+                          }
+                          className="w-full p-2.5 bg-white border border-amber-300 rounded-xl font-bold text-slate-900 cursor-pointer"
+                        >
+                          <option value="overtime">
+                            ⚡ Lembur Murni (Overtime — Dihitung Upah Lembur di Luar Gaji 26 Hari)
+                          </option>
+                          <option value="day_off_replacement">
+                            🔄 Tukar Hari Libur (Day-Off Replacement — Gantikan 1 Hari Absen/Alpha)
+                          </option>
+                        </select>
+                        <p className="text-[11px] text-amber-900 leading-relaxed">
+                          {formSundayWorkType === 'day_off_replacement'
+                            ? 'Tukar Hari Libur: Kehadiran Minggu TIDAK dihitung lembur, melainkan memulihkan 1 hari absen/alfa/izin di hari biasa (Senin–Sabtu) sehingga gaji tidak terpotong & Tunjangan Kerajinan tetap aman.'
+                            : 'Lembur Murni: Kehadiran Minggu dihitung sebagai upah lembur tambahan. Potongan absen/alfa hari biasa & aturan Tunjangan Kerajinan tetap berlaku normal.'}
+                        </p>
+                      </div>
+                    )}
                 </>
               )}
 
@@ -2730,7 +2998,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl cursor-pointer"
+                  className="px-4 py-2 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold font-semibold rounded-xl cursor-pointer"
                 >
                   Simpan Presensi
                 </button>
@@ -2794,7 +3062,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                     <img
                       src={editEmp.avatarUrl}
                       alt={editEmp.fullName}
-                      className="w-9 h-9 rounded-full object-cover ring-1 ring-emerald-500/30"
+                      className="w-9 h-9 rounded-full object-cover ring-1 ring-amber-500/30"
                     />
                   )}
                   <div>
@@ -2807,7 +3075,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                   </div>
                 </div>
                 <div className="text-right">
-                  <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 font-mono font-bold text-[10px]">
+                  <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-800 font-mono font-bold text-[10px]">
                     {editShift.code}
                   </span>
                   <span className="block text-[11px] font-mono text-slate-600 mt-1">
@@ -2886,7 +3154,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                               setEditAttHasCheckOut(true);
                               setEditAttCheckOut(editShift.checkOutTime);
                             }}
-                            className="text-[10px] font-bold text-emerald-700 hover:underline cursor-pointer"
+                            className="text-[10px] font-bold text-amber-700 hover:underline cursor-pointer"
                           >
                             Isi Sesuai Shift ({editShift.checkOutTime})
                           </button>
@@ -2961,6 +3229,35 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                         </div>
                       </div>
                     )}
+
+                    {(isSundayDateString(editingAttendance.date) ||
+                      isEmployeeWeeklyRestDay(editEmp, editingAttendance.date, editShift)) &&
+                      getEmployeeWorkDaysPerWeek(editEmp, editShift) === 6 && (
+                        <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-300 space-y-2">
+                          <label className="block text-amber-950 font-bold text-xs">
+                            Status Kehadiran Hari Minggu (Karyawan 6 Hari/Minggu)
+                          </label>
+                          <select
+                            value={editAttSundayWorkType}
+                            onChange={(e) =>
+                              setEditAttSundayWorkType(e.target.value as SundayWorkType)
+                            }
+                            className="w-full p-2.5 bg-white border border-amber-300 rounded-xl font-bold text-slate-900 cursor-pointer"
+                          >
+                            <option value="overtime">
+                              ⚡ Lembur Murni (Overtime — Upah Lembur di Luar Gaji 26 Hari)
+                            </option>
+                            <option value="day_off_replacement">
+                              🔄 Tukar Hari Libur (Day-Off Replacement — Gantikan 1 Hari Absen/Alpha)
+                            </option>
+                          </select>
+                          <p className="text-[11px] text-amber-900 leading-relaxed">
+                            {editAttSundayWorkType === 'day_off_replacement'
+                              ? 'Tukar Hari Libur: Kehadiran Minggu ini memulihkan 1 hari absen/alfa/izin di hari biasa (Senin–Sabtu) pada periode cut-off yang sama (tidak dihitung upah lembur).'
+                              : 'Lembur Murni: Kehadiran Minggu ini dihitung sebagai upah lembur tambahan di luar gaji pokok 26 hari kerja.'}
+                          </p>
+                        </div>
+                      )}
                   </div>
                 )}
 

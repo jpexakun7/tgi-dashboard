@@ -119,7 +119,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Penggajian (Payroll)',
       icon: WalletCards,
       badge: 'Aktif',
-      badgeColor: 'bg-emerald-100 text-emerald-800',
+      badgeColor: 'bg-amber-100 text-amber-800',
     },
     {
       id: 'part_time_payroll' as ActiveTab,
@@ -133,7 +133,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'THR & Hari Raya',
       icon: Gift,
       badge: 'THR',
-      badgeColor: 'bg-emerald-100 text-emerald-800',
+      badgeColor: 'bg-amber-100 text-amber-800',
     },
     {
       id: 'payroll_adjustments' as ActiveTab,
@@ -154,7 +154,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Manajemen Bonus',
       icon: Award,
       badge: 'Apresiasi',
-      badgeColor: 'bg-teal-100 text-teal-800',
+      badgeColor: 'bg-amber-100 text-amber-800',
     },
     {
       id: 'attendance' as ActiveTab,
@@ -167,7 +167,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Jadwal & Shift Kerja',
       icon: Clock,
       badge: 'Multi-Shift',
-      badgeColor: 'bg-teal-100 text-teal-800',
+      badgeColor: 'bg-amber-100 text-amber-800',
     },
     {
       id: 'leave' as ActiveTab,
@@ -198,14 +198,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
       badgeColor:
         pendingCashAdvancesCount > 0
           ? 'bg-amber-100 text-amber-800'
-          : 'bg-emerald-100 text-emerald-800',
+          : 'bg-amber-100 text-amber-800',
     },
     {
       id: 'assets' as ActiveTab,
       label: 'Manajemen Aset',
       icon: Boxes,
       badge: 'Inventaris',
-      badgeColor: 'bg-teal-100 text-teal-800',
+      badgeColor: 'bg-amber-100 text-amber-800',
     },
     {
       id: 'tax_bpjs' as ActiveTab,
@@ -226,7 +226,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Kinerja KPI Departemen',
       icon: Target,
       badge: 'Analisis',
-      badgeColor: 'bg-emerald-100 text-emerald-800',
+      badgeColor: 'bg-amber-100 text-amber-800',
     },
     {
       id: 'reports' as ActiveTab,

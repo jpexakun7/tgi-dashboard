@@ -307,11 +307,11 @@ export const PayrollTrendChart: React.FC<PayrollTrendChartProps> = ({
         <div className="flex items-center justify-between gap-3 border-b border-slate-700 pb-2 mb-2.5">
           <div>
             <span className="font-bold text-sm text-white flex items-center gap-1.5">
-              <Calendar className="w-3.5 h-3.5 text-emerald-400" />
+              <Calendar className="w-3.5 h-3.5 text-amber-400" />
               {dataItem?.monthLabel || label}
             </span>
             {dataItem?.isCurrentMonth && (
-              <span className="text-[10px] font-semibold text-emerald-400 bg-emerald-500/20 px-1.5 py-0.5 rounded-full inline-block mt-0.5">
+              <span className="text-[10px] font-semibold text-amber-400 bg-amber-500/20 px-1.5 py-0.5 rounded-full inline-block mt-0.5">
                 Bulan Berjalan
               </span>
             )}
@@ -322,12 +322,12 @@ export const PayrollTrendChart: React.FC<PayrollTrendChartProps> = ({
         </div>
 
         <div className="space-y-2">
-          <div className="flex items-center justify-between text-emerald-300 font-semibold bg-emerald-950/40 p-1.5 rounded-lg border border-emerald-800/40">
+          <div className="flex items-center justify-between text-amber-300 font-semibold bg-amber-950/40 p-1.5 rounded-lg border border-amber-800/40">
             <span className="flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+              <span className="w-2 h-2 rounded-full bg-amber-400"></span>
               Take Home Pay (Netto):
             </span>
-            <span className="font-mono text-emerald-300 font-bold">
+            <span className="font-mono text-amber-300 font-bold">
               {formatRupiah(dataItem?.totalTHP || 0)}
             </span>
           </div>
@@ -377,7 +377,7 @@ export const PayrollTrendChart: React.FC<PayrollTrendChartProps> = ({
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-100 pb-5">
         <div className="space-y-1">
           <div className="flex items-center gap-2">
-            <div className="p-2 rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-100">
+            <div className="p-2 rounded-xl bg-amber-50 text-amber-600 border border-amber-100">
               <TrendingUp className="w-5 h-5" />
             </div>
             <div>
@@ -385,7 +385,7 @@ export const PayrollTrendChart: React.FC<PayrollTrendChartProps> = ({
                 <h3 className="text-base sm:text-lg font-bold text-slate-900">
                   Tren Total Biaya Gaji Bulanan (Payroll Cost Trend)
                 </h3>
-                <span className="hidden sm:inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                <span className="hidden sm:inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
                   <Sparkles className="w-3 h-3" />
                   6 Bulan Terakhir
                 </span>
@@ -406,7 +406,7 @@ export const PayrollTrendChart: React.FC<PayrollTrendChartProps> = ({
               onClick={() => setTimeRange('6m')}
               className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
                 timeRange === '6m'
-                  ? 'bg-white text-emerald-700 shadow-2xs font-bold'
+                  ? 'bg-white text-amber-700 shadow-2xs font-bold'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
@@ -417,7 +417,7 @@ export const PayrollTrendChart: React.FC<PayrollTrendChartProps> = ({
               onClick={() => setTimeRange('3m')}
               className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
                 timeRange === '3m'
-                  ? 'bg-white text-emerald-700 shadow-2xs font-bold'
+                  ? 'bg-white text-amber-700 shadow-2xs font-bold'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
@@ -487,7 +487,7 @@ export const PayrollTrendChart: React.FC<PayrollTrendChartProps> = ({
         <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80">
           <div className="flex items-center justify-between">
             <span className="text-[11px] font-medium text-slate-500">Biaya Periode Ini</span>
-            <div className="p-1 rounded-md bg-emerald-100 text-emerald-700">
+            <div className="p-1 rounded-md bg-amber-100 text-amber-700">
               <Wallet className="w-3.5 h-3.5" />
             </div>
           </div>
@@ -498,7 +498,7 @@ export const PayrollTrendChart: React.FC<PayrollTrendChartProps> = ({
             <div className="flex items-center gap-1 mt-1 text-[11px]">
               <span
                 className={`inline-flex items-center font-bold ${
-                  momChange.isPositive ? 'text-emerald-600' : 'text-rose-600'
+                  momChange.isPositive ? 'text-amber-600' : 'text-rose-600'
                 }`}
               >
                 {momChange.isPositive ? (
@@ -575,8 +575,8 @@ export const PayrollTrendChart: React.FC<PayrollTrendChartProps> = ({
             <AreaChart data={trendData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
               <defs>
                 <linearGradient id="colorTHP" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#10b981" stopOpacity={0.4} />
-                  <stop offset="95%" stopColor="#10b981" stopOpacity={0.02} />
+                  <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.4} />
+                  <stop offset="95%" stopColor="#f59e0b" stopOpacity={0.02} />
                 </linearGradient>
                 <linearGradient id="colorGross" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#6366f1" stopOpacity={0.3} />
@@ -619,11 +619,11 @@ export const PayrollTrendChart: React.FC<PayrollTrendChartProps> = ({
                 type="monotone"
                 dataKey="totalTHP"
                 name="Take Home Pay / Bersih (Rp)"
-                stroke="#10b981"
+                stroke="#f59e0b"
                 strokeWidth={3}
                 fillOpacity={1}
                 fill="url(#colorTHP)"
-                activeDot={{ r: 7, stroke: '#10b981', strokeWidth: 2, fill: '#fff' }}
+                activeDot={{ r: 7, stroke: '#f59e0b', strokeWidth: 2, fill: '#fff' }}
               />
             </AreaChart>
           ) : viewMode === 'stacked_bar' ? (
@@ -703,7 +703,7 @@ export const PayrollTrendChart: React.FC<PayrollTrendChartProps> = ({
                 yAxisId="left"
                 dataKey="totalTHP"
                 name="Total Biaya THP (Kiri)"
-                fill="#10b981"
+                fill="#f59e0b"
                 radius={[6, 6, 0, 0]}
                 barSize={28}
               />
@@ -735,7 +735,7 @@ export const PayrollTrendChart: React.FC<PayrollTrendChartProps> = ({
           <button
             type="button"
             onClick={onNavigatePayroll}
-            className="text-emerald-700 hover:text-emerald-800 font-semibold flex items-center gap-1 cursor-pointer hover:underline self-end sm:self-auto"
+            className="text-amber-700 hover:text-amber-800 font-semibold flex items-center gap-1 cursor-pointer hover:underline self-end sm:self-auto"
           >
             Buka Rincian Payroll Periode Ini <ArrowUpRight className="w-3.5 h-3.5" />
           </button>

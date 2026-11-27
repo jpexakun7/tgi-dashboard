@@ -13,6 +13,7 @@ import {
   ArrowUpRight,
   Lock,
   Unlock,
+  Trophy,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -34,6 +35,8 @@ import {
   DivisionAccountingJournalRow,
   PartTimeWeeklyPayout,
   PartTimeWorkLog,
+  AttendanceRecord,
+  PayrollDeductionRecord,
 } from '../types';
 import {
   formatRupiah,
@@ -53,10 +56,13 @@ import {
 } from '../utils/formatters';
 import { getSavedThrPayouts } from '../services/supabaseService';
 import { EmployeeDemographicsCharts } from './EmployeeDemographicsCharts';
+import { DisciplineLeaderboardTable } from './DisciplineLeaderboardTable';
 
 interface ReportsViewProps {
   employees: Employee[];
   payrolls: PayrollRecord[];
+  attendances?: AttendanceRecord[];
+  payrollDeductions?: PayrollDeductionRecord[];
   companyConfig: CompanyConfig;
   thrPayouts?: ThrPayoutRecord[];
   partTimePayouts?: PartTimeWeeklyPayout[];
@@ -67,6 +73,8 @@ interface ReportsViewProps {
 export const ReportsView: React.FC<ReportsViewProps> = ({
   employees,
   payrolls,
+  attendances = [],
+  payrollDeductions = [],
   companyConfig,
   thrPayouts,
   partTimePayouts = [],
@@ -74,8 +82,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
   onChangePayrollPeriod,
 }) => {
   const [selectedReport, setSelectedReport] = useState<
-    'payroll' | 'accounting_journal' | 'bpjs' | 'tax' | 'demografi'
-  >('payroll');
+    'payroll' | 'discipline_leaderboard' | 'accounting_journal' | 'bpjs' | 'tax' | 'demografi'
+  >('discipline_leaderboard');
   const [chartType, setChartType] = useState<'bar' | 'area'>('bar');
   const [selectedWeeklyJournalCycle, setSelectedWeeklyJournalCycle] =
     useState<string>('ALL_IN_PERIOD');
@@ -764,7 +772,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         <div>
           <div className="flex flex-wrap items-center gap-2.5">
             <h1 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">
-              <BarChart3 className="w-6 h-6 text-emerald-600" />
+              <BarChart3 className="w-6 h-6 text-amber-600" />
               Laporan &amp; Rekapitulasi Penggajian
             </h1>
             {isSelectedPeriodLocked ? (
@@ -773,8 +781,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                 Periode Terkunci (Arsip)
               </span>
             ) : (
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-[11px] font-semibold">
-                <Unlock className="w-3.5 h-3.5 text-emerald-600" />
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-50 text-amber-800 border border-amber-200 text-[11px] font-semibold">
+                <Unlock className="w-3.5 h-3.5 text-amber-600" />
                 Periode Aktif Berjalan
               </span>
             )}
@@ -785,7 +793,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex items-center gap-1.5 bg-white border border-slate-300 rounded-xl px-3 py-1.5 shadow-2xs">
-            <Calendar className="w-4 h-4 text-emerald-600 shrink-0" />
+            <Calendar className="w-4 h-4 text-amber-600 shrink-0" />
             <span className="text-[11px] font-semibold text-slate-500 hidden sm:inline">
               Periode &amp; Arsip:
             </span>
@@ -820,7 +828,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           </div>
           <button
             onClick={handleExportSummaryCSV}
-            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-md shadow-emerald-600/30"
+            className="px-4 py-2 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-md shadow-amber-600/30"
           >
             <Download className="w-4 h-4" />
             Unduh Rekap Excel/CSV
@@ -832,8 +840,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 mb-4 border-b border-slate-100 gap-3">
           <div>
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-semibold text-[11px] mb-1">
-              <Activity className="w-3.5 h-3.5 text-emerald-600" />
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-700 font-semibold text-[11px] mb-1">
+              <Activity className="w-3.5 h-3.5 text-amber-600" />
               Tren Tahunan 2026
             </div>
             <h2 className="text-base font-bold text-slate-900">
@@ -851,7 +859,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                 onClick={() => setChartType('bar')}
                 className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
                   chartType === 'bar'
-                    ? 'bg-white text-emerald-700 shadow-2xs font-semibold'
+                    ? 'bg-white text-amber-700 shadow-2xs font-semibold'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
@@ -861,7 +869,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                 onClick={() => setChartType('area')}
                 className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
                   chartType === 'area'
-                    ? 'bg-white text-emerald-700 shadow-2xs font-semibold'
+                    ? 'bg-white text-amber-700 shadow-2xs font-semibold'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
@@ -873,14 +881,14 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
 
         {/* YTD Mini-KPI Badges */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
-          <div className="p-3.5 bg-emerald-50/60 rounded-xl border border-emerald-100 flex items-center justify-between">
+          <div className="p-3.5 bg-amber-50/60 rounded-xl border border-amber-100 flex items-center justify-between">
             <div>
-              <span className="text-[11px] text-emerald-800 font-medium">Total Gaji Bruto (YTD 2026)</span>
-              <h3 className="text-base sm:text-lg font-extrabold text-emerald-950 mt-0.5">
+              <span className="text-[11px] text-amber-800 font-medium">Total Gaji Bruto (YTD 2026)</span>
+              <h3 className="text-base sm:text-lg font-extrabold text-amber-950 mt-0.5">
                 {formatRupiah(ytdGross)}
               </h3>
             </div>
-            <span className="w-3 h-3 rounded-full bg-emerald-500"></span>
+            <span className="w-3 h-3 rounded-full bg-amber-500"></span>
           </div>
 
           <div className="p-3.5 bg-sky-50/60 rounded-xl border border-sky-100 flex items-center justify-between">
@@ -935,7 +943,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                 <Bar
                   dataKey="grossPayroll"
                   name="Total Gaji Bruto"
-                  fill="#059669"
+                  fill="#d97706"
                   radius={[4, 4, 0, 0]}
                   maxBarSize={32}
                 />
@@ -961,8 +969,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               >
                 <defs>
                   <linearGradient id="colorGross" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#059669" stopOpacity={0.8} />
-                    <stop offset="95%" stopColor="#059669" stopOpacity={0.05} />
+                    <stop offset="5%" stopColor="#d97706" stopOpacity={0.8} />
+                    <stop offset="95%" stopColor="#d97706" stopOpacity={0.05} />
                   </linearGradient>
                   <linearGradient id="colorBpjs" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#0284c7" stopOpacity={0.8} />
@@ -997,7 +1005,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                   type="monotone"
                   dataKey="grossPayroll"
                   name="Total Gaji Bruto"
-                  stroke="#059669"
+                  stroke="#d97706"
                   strokeWidth={2}
                   fillOpacity={1}
                   fill="url(#colorGross)"
@@ -1027,12 +1035,23 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
       </div>
 
       {/* Report Type Selector */}
-      <div className="flex bg-slate-100 p-1 rounded-xl max-w-3xl text-xs font-semibold overflow-x-auto gap-1">
+      <div className="flex bg-slate-100 p-1 rounded-xl max-w-5xl text-xs font-semibold overflow-x-auto gap-1">
+        <button
+          onClick={() => setSelectedReport('discipline_leaderboard')}
+          className={`flex-1 py-1.5 px-3 rounded-lg transition-all cursor-pointer whitespace-nowrap flex items-center justify-center gap-1.5 ${
+            selectedReport === 'discipline_leaderboard'
+              ? 'bg-neutral-950 text-amber-300 shadow-xs font-extrabold border border-amber-500/40'
+              : 'text-slate-700 hover:text-slate-900'
+          }`}
+        >
+          <Trophy className="w-3.5 h-3.5 text-amber-500" />
+          <span>Peringkat Terajin &amp; Disiplin</span>
+        </button>
         <button
           onClick={() => setSelectedReport('payroll')}
           className={`flex-1 py-1.5 px-3 rounded-lg transition-all cursor-pointer whitespace-nowrap ${
             selectedReport === 'payroll'
-              ? 'bg-white text-emerald-700 shadow-xs'
+              ? 'bg-white text-amber-700 shadow-xs'
               : 'text-slate-600 hover:text-slate-900'
           }`}
         >
@@ -1053,7 +1072,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           onClick={() => setSelectedReport('bpjs')}
           className={`flex-1 py-1.5 px-3 rounded-lg transition-all cursor-pointer whitespace-nowrap ${
             selectedReport === 'bpjs'
-              ? 'bg-white text-emerald-700 shadow-xs'
+              ? 'bg-white text-amber-700 shadow-xs'
               : 'text-slate-600 hover:text-slate-900'
           }`}
         >
@@ -1063,7 +1082,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           onClick={() => setSelectedReport('tax')}
           className={`flex-1 py-1.5 px-3 rounded-lg transition-all cursor-pointer whitespace-nowrap ${
             selectedReport === 'tax'
-              ? 'bg-white text-emerald-700 shadow-xs'
+              ? 'bg-white text-amber-700 shadow-xs'
               : 'text-slate-600 hover:text-slate-900'
           }`}
         >
@@ -1073,7 +1092,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           onClick={() => setSelectedReport('demografi')}
           className={`flex-1 py-1.5 px-3 rounded-lg transition-all cursor-pointer whitespace-nowrap ${
             selectedReport === 'demografi'
-              ? 'bg-white text-emerald-700 shadow-xs'
+              ? 'bg-white text-amber-700 shadow-xs'
               : 'text-slate-600 hover:text-slate-900'
           }`}
         >
@@ -1097,15 +1116,15 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               <span className="text-xs text-slate-500">Total Upah Lembur</span>
               <h3 className="text-lg font-bold text-slate-900 mt-1">{formatRupiah(totalLembur)}</h3>
             </div>
-            <div className="bg-white p-4 rounded-2xl border border-emerald-200 bg-emerald-50/40">
-              <span className="text-xs text-emerald-800 font-semibold">Total Pengeluaran THR</span>
-              <h3 className="text-lg font-bold text-emerald-800 mt-1">
+            <div className="bg-white p-4 rounded-2xl border border-amber-200 bg-amber-50/40">
+              <span className="text-xs text-amber-800 font-semibold">Total Pengeluaran THR</span>
+              <h3 className="text-lg font-bold text-amber-800 mt-1">
                 {formatRupiah(totalThrDisbursed)}
               </h3>
             </div>
             <div className="bg-white p-4 rounded-2xl border border-slate-200">
               <span className="text-xs text-slate-500">Gaji Bersih Dicairkan (THP)</span>
-              <h3 className="text-lg font-bold text-emerald-600 mt-1">{formatRupiah(totalTHP)}</h3>
+              <h3 className="text-lg font-bold text-amber-600 mt-1">{formatRupiah(totalTHP)}</h3>
             </div>
           </div>
 
@@ -1148,11 +1167,11 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                       <td className="p-3">{formatRupiah(p.baseSalary)}</td>
                       <td className="p-3">{formatRupiah(tunj)}</td>
                       <td className="p-3">{formatRupiah(p.overtimePay + p.bonus)}</td>
-                      <td className="p-3 font-semibold text-emerald-700">
+                      <td className="p-3 font-semibold text-amber-700">
                         {thrVal > 0 ? formatRupiah(thrVal) : '-'}
                       </td>
                       <td className="p-3 text-rose-600">({formatRupiah(p.totalDeductions)})</td>
-                      <td className="p-3 font-bold text-emerald-700 text-right">
+                      <td className="p-3 font-bold text-amber-700 text-right">
                         {formatRupiah(p.takeHomePay)}
                       </td>
                     </tr>
@@ -1163,17 +1182,17 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           </div>
 
           {activeCheckedThrList.length > 0 && (
-            <div className="bg-white rounded-2xl border border-emerald-200 overflow-hidden shadow-xs">
-              <div className="p-4 border-b border-emerald-100 bg-emerald-50/60 flex items-center justify-between text-xs">
+            <div className="bg-white rounded-2xl border border-amber-200 overflow-hidden shadow-xs">
+              <div className="p-4 border-b border-amber-100 bg-amber-50/60 flex items-center justify-between text-xs">
                 <div>
-                  <span className="font-bold text-emerald-950 block">
+                  <span className="font-bold text-amber-950 block">
                     Laporan Pengeluaran Tunjangan Hari Raya (THR) Tercatat
                   </span>
-                  <span className="text-[11px] text-emerald-700">
+                  <span className="text-[11px] text-amber-700">
                     Mencakup karyawan PKWTT, PKWT, dan Part-Time yang telah dicentang &amp; dicairkan oleh Admin
                   </span>
                 </div>
-                <span className="font-extrabold text-emerald-900">
+                <span className="font-extrabold text-amber-900">
                   Total THR: {formatRupiah(totalThrDisbursed)}
                 </span>
               </div>
@@ -1208,14 +1227,14 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                         <span
                           className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                             t.payment_status === 'Sudah Dibayar'
-                              ? 'bg-emerald-100 text-emerald-800'
+                              ? 'bg-amber-100 text-amber-800'
                               : 'bg-amber-100 text-amber-800'
                           }`}
                         >
                           {t.payment_status}
                         </span>
                       </td>
-                      <td className="p-3 font-bold text-emerald-700 text-right">
+                      <td className="p-3 font-bold text-amber-700 text-right">
                         {formatRupiah(t.total_thr_amount)}
                       </td>
                     </tr>
@@ -1233,8 +1252,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
             Rekapitulasi Iuran BPJS Ketenagakerjaan & BPJS Kesehatan
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs">
-            <div className="p-4 bg-teal-50/60 rounded-xl border border-teal-200/80 space-y-2">
-              <span className="font-bold text-teal-900 block text-sm border-b border-teal-200 pb-1">
+            <div className="p-4 bg-amber-50/60 rounded-xl border border-amber-200/80 space-y-2">
+              <span className="font-bold text-amber-900 block text-sm border-b border-amber-200 pb-1">
                 BPJS Kesehatan (Total 5%)
               </span>
               <div className="flex justify-between">
@@ -1245,7 +1264,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                 <span>Dipotong dari Karyawan (1%):</span>
                 <span className="font-semibold">{formatRupiah(bpjsKesEmp)}</span>
               </div>
-              <div className="border-t border-teal-200 pt-2 flex justify-between font-bold text-teal-900">
+              <div className="border-t border-amber-200 pt-2 flex justify-between font-bold text-amber-900">
                 <span>Total Setoran BPJS Kesehatan:</span>
                 <span>{formatRupiah(bpjsKesComp + bpjsKesEmp)}</span>
               </div>
@@ -1316,7 +1335,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
           <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 rounded-2xl p-6 text-white shadow-lg border border-indigo-500/20 space-y-4">
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
               <div className="space-y-1">
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-400/30 text-emerald-300 text-xs font-bold">
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/20 border border-amber-400/30 text-amber-300 text-xs font-bold">
                   <CheckCircle className="w-3.5 h-3.5" />
                   <span>
                     Double-Entry Balanced Journal (Bulanan Cut-Off 26–25 &amp; Part-Time Sunday Payout)
@@ -1336,7 +1355,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                 <button
                   type="button"
                   onClick={handleExportAccountingJournalCSV}
-                  className="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold flex items-center gap-2 shadow-lg shadow-emerald-500/25 cursor-pointer transition-all"
+                  className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold text-xs font-bold flex items-center gap-2 shadow-lg shadow-amber-500/25 cursor-pointer transition-all"
                 >
                   <Download className="w-4 h-4" />
                   <span>Ekspor CSV Jurnal Akuntansi</span>
@@ -1347,7 +1366,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
             {/* Filter Periode Cut-Off Bulanan & Siklus Mingguan Part-Time (Sunday Payout) */}
             <div className="pt-3 border-t border-white/10 flex flex-wrap items-center gap-3 text-xs">
               <div className="flex items-center gap-2">
-                <Calendar className="w-4 h-4 text-emerald-400 shrink-0" />
+                <Calendar className="w-4 h-4 text-amber-400 shrink-0" />
                 <span className="font-bold text-indigo-200">Periode Cut-Off Bulanan:</span>
                 <select
                   value={companyConfig.currentPayrollPeriod}
@@ -1442,14 +1461,14 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
               </p>
             </div>
 
-            <div className="bg-white p-4 rounded-2xl border border-emerald-200 bg-emerald-50/40 shadow-2xs">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-700">
+            <div className="bg-white p-4 rounded-2xl border border-amber-200 bg-amber-50/40 shadow-2xs">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-amber-700">
                 KREDIT • Net Pay Dicairkan (THP)
               </span>
-              <h4 className="text-lg font-extrabold text-emerald-800 mt-1 font-mono">
+              <h4 className="text-lg font-extrabold text-amber-800 mt-1 font-mono">
                 {formatRupiah(journalGrandTotals.creditNetPayPayable)}
               </h4>
-              <p className="text-[11px] text-emerald-700 font-semibold mt-0.5">
+              <p className="text-[11px] text-amber-700 font-semibold mt-0.5">
                 Total Balance: {formatRupiah(journalGrandTotals.totalDebit)}
               </p>
             </div>
@@ -1468,7 +1487,7 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                   Karyawan)
                 </p>
               </div>
-              <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-extrabold">
+              <span className="px-3 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-300 text-xs font-extrabold">
                 ✓ SEIMBANG (DEBIT = KREDIT)
               </span>
             </div>
@@ -1489,8 +1508,8 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                     </th>
                     <th className="p-3 text-right text-amber-800">Pot. Kasbon (K)</th>
                     <th className="p-3 text-right text-rose-700">Pot. Lain/Pajak (K)</th>
-                    <th className="p-3 text-right text-emerald-800">Net Pay / THP (K)</th>
-                    <th className="p-3 text-right bg-emerald-50 text-emerald-950 font-extrabold">
+                    <th className="p-3 text-right text-amber-800">Net Pay / THP (K)</th>
+                    <th className="p-3 text-right bg-amber-50 text-amber-950 font-extrabold">
                       Total Kredit
                     </th>
                   </tr>
@@ -1533,10 +1552,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                         <td className="p-3 text-right font-mono text-rose-700">
                           {formatRupiah(row.creditOtherDeductions)}
                         </td>
-                        <td className="p-3 text-right font-mono font-bold text-emerald-700">
+                        <td className="p-3 text-right font-mono font-bold text-amber-700">
                           {formatRupiah(row.creditNetPayPayable)}
                         </td>
-                        <td className="p-3 text-right font-mono font-extrabold bg-emerald-50/60 text-emerald-950">
+                        <td className="p-3 text-right font-mono font-extrabold bg-amber-50/60 text-amber-950">
                           {formatRupiah(row.totalCredit)}
                         </td>
                       </tr>
@@ -1572,10 +1591,10 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
                       <td className="p-3 text-right font-mono text-rose-300">
                         {formatRupiah(journalGrandTotals.creditOtherDeductions)}
                       </td>
-                      <td className="p-3 text-right font-mono text-emerald-300">
+                      <td className="p-3 text-right font-mono text-amber-300">
                         {formatRupiah(journalGrandTotals.creditNetPayPayable)}
                       </td>
-                      <td className="p-3 text-right font-mono text-emerald-300">
+                      <td className="p-3 text-right font-mono text-amber-300">
                         {formatRupiah(journalGrandTotals.totalCredit)}
                       </td>
                     </tr>
@@ -1585,6 +1604,17 @@ export const ReportsView: React.FC<ReportsViewProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {selectedReport === 'discipline_leaderboard' && (
+        <DisciplineLeaderboardTable
+          employees={employees}
+          attendances={attendances}
+          companyConfig={companyConfig}
+          payrolls={payrolls}
+          payrollDeductions={payrollDeductions}
+          onChangePayrollPeriod={onChangePayrollPeriod}
+        />
       )}
 
       {selectedReport === 'demografi' && (

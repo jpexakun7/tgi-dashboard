@@ -315,7 +315,7 @@ export const PinManagementPanel: React.FC<PinManagementPanelProps> = ({
     <div className="space-y-6 animate-fade-in w-full max-w-full overflow-x-hidden">
       {toastMsg && (
         <div className="fixed top-5 right-5 z-50 flex items-center gap-2.5 bg-slate-900 text-white px-4 py-3 rounded-xl shadow-xl text-xs font-semibold border border-slate-700 animate-in fade-in">
-          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" />
           <span>{toastMsg}</span>
         </div>
       )}
@@ -501,7 +501,7 @@ export const PinManagementPanel: React.FC<PinManagementPanelProps> = ({
                             title="Salin PIN Admin"
                           >
                             {copiedId === adm.id ? (
-                              <Check className="w-3.5 h-3.5 text-emerald-600" />
+                              <Check className="w-3.5 h-3.5 text-amber-600" />
                             ) : (
                               <Copy className="w-3.5 h-3.5" />
                             )}
@@ -521,15 +521,15 @@ export const PinManagementPanel: React.FC<PinManagementPanelProps> = ({
       {/* BAGIAN 2: PIN / PASSWORD PER AKUN KARYAWAN (PORTAL KARYAWAN)          */}
       {/* ===================================================================== */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-        <div className="p-5 bg-emerald-50/60 border-b border-emerald-100 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+        <div className="p-5 bg-amber-50/60 border-b border-amber-100 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-xs shrink-0">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 font-bold flex items-center justify-center shadow-xs shrink-0">
               <UserCheck className="w-5 h-5" />
             </div>
             <div>
               <h3 className="text-sm font-extrabold text-slate-900 flex items-center gap-2">
                 <span>2. Pengaturan PIN / Password Portal Karyawan (Per Akun Karyawan)</span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold">
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200 font-bold">
                   {employees.length} Akun Karyawan
                 </span>
               </h3>
@@ -543,17 +543,17 @@ export const PinManagementPanel: React.FC<PinManagementPanelProps> = ({
             <button
               type="button"
               onClick={handleGenerateUniqueNikPins}
-              className="px-3.5 py-2 bg-white hover:bg-emerald-50 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+              className="px-3.5 py-2 bg-white hover:bg-amber-50 text-amber-800 border border-amber-300 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
               title="Buat PIN otomatis berbeda-beda untuk tiap karyawan dari nomor NIK"
             >
-              <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
+              <Sparkles className="w-3.5 h-3.5 text-amber-600" />
               <span>Generate PIN Unik Sesuai NIK</span>
             </button>
 
             <button
               type="button"
               onClick={handleSaveAllEmployeePins}
-              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+              className="px-4 py-2 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
             >
               <Database className="w-3.5 h-3.5" />
               <span>Simpan Semua PIN Karyawan</span>
@@ -571,7 +571,7 @@ export const PinManagementPanel: React.FC<PinManagementPanelProps> = ({
                 value={searchEmp}
                 onChange={(e) => setSearchEmp(e.target.value)}
                 placeholder="Cari nama karyawan, NIK, atau jabatan untuk mengatur PIN..."
-                className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-hidden focus:border-emerald-500"
+                className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-hidden focus:border-amber-500"
               />
             </div>
 
@@ -617,7 +617,7 @@ export const PinManagementPanel: React.FC<PinManagementPanelProps> = ({
                     const isModified = editedPin.trim() !== currentEffectivePin;
 
                     return (
-                      <tr key={emp.id} className="hover:bg-emerald-50/30 transition-colors">
+                      <tr key={emp.id} className="hover:bg-amber-50/30 transition-colors">
                         <td className="py-3 px-4">
                           <div className="flex items-center gap-2.5">
                             <img
@@ -643,13 +643,13 @@ export const PinManagementPanel: React.FC<PinManagementPanelProps> = ({
                           </span>
                         </td>
                         <td className="py-3 px-3">
-                          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 font-mono font-extrabold">
-                            <KeyRound className="w-3 h-3 text-emerald-600" />
+                          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 font-mono font-extrabold">
+                            <KeyRound className="w-3 h-3 text-amber-600" />
                             <span>{showAllPins ? currentEffectivePin : '••••'}</span>
                             <button
                               type="button"
                               onClick={() => handleCopyPin(emp.id, currentEffectivePin)}
-                              className="ml-1 text-emerald-600 hover:text-emerald-900 cursor-pointer"
+                              className="ml-1 text-amber-600 hover:text-amber-900 cursor-pointer"
                               title="Salin PIN Karyawan"
                             >
                               {copiedId === emp.id ? (
@@ -676,7 +676,7 @@ export const PinManagementPanel: React.FC<PinManagementPanelProps> = ({
                               className={`w-full px-2.5 py-1.5 rounded-lg font-mono font-bold text-xs tracking-wider border focus:outline-hidden ${
                                 isSameAsAdminPin
                                   ? 'bg-amber-50 border-amber-400 text-amber-900'
-                                  : 'bg-white border-slate-300 text-slate-900 focus:border-emerald-600'
+                                  : 'bg-white border-slate-300 text-slate-900 focus:border-amber-600'
                               }`}
                             />
                             {isSameAsAdminPin && (
@@ -693,8 +693,8 @@ export const PinManagementPanel: React.FC<PinManagementPanelProps> = ({
                             onClick={() => handleSaveSingleEmployeePin(emp)}
                             className={`px-3 py-1.5 rounded-lg text-xs font-bold inline-flex items-center gap-1.5 transition-all cursor-pointer ${
                               isModified
-                                ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs'
-                                : 'bg-slate-100 hover:bg-emerald-600 hover:text-white text-slate-700'
+                                ? 'bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold shadow-xs'
+                                : 'bg-slate-100 hover:bg-amber-500 hover:text-neutral-950 text-slate-700'
                             }`}
                           >
                             <Save className="w-3.5 h-3.5" />

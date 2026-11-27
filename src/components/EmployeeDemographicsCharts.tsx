@@ -42,7 +42,7 @@ const GENDER_COLORS = {
 
 const DEPARTMENT_COLORS: { [key: string]: string } = {
   'Teknologi & IT': '#0284c7', // sky-600
-  'Keuangan & Akuntansi': '#10b981', // emerald-500
+  'Keuangan & Akuntansi': '#f59e0b', // amber-500
   'Operasional': '#f59e0b', // amber-500
   'Human Resources & GA': '#8b5cf6', // purple-500
   'Pemasaran & Bisnis': '#ec4899', // pink-500
@@ -223,7 +223,7 @@ export const EmployeeDemographicsCharts: React.FC<EmployeeDemographicsChartsProp
       <div className="p-5 border-b border-slate-100 bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-950 text-white">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-start sm:items-center gap-3">
-            <div className="p-2.5 rounded-xl bg-white/10 backdrop-blur-xs border border-white/10 text-emerald-400">
+            <div className="p-2.5 rounded-xl bg-white/10 backdrop-blur-xs border border-white/10 text-amber-400">
               <PieIcon className="w-5 h-5" />
             </div>
             <div>
@@ -231,7 +231,7 @@ export const EmployeeDemographicsCharts: React.FC<EmployeeDemographicsChartsProp
                 <h3 className="text-base font-bold text-white">
                   Diagram & Analisis Karyawan Tas Grosir Import
                 </h3>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30">
                   Real-time Data
                 </span>
               </div>
@@ -247,7 +247,7 @@ export const EmployeeDemographicsCharts: React.FC<EmployeeDemographicsChartsProp
             <select
               value={selectedDeptFilter}
               onChange={(e) => setSelectedDeptFilter(e.target.value)}
-              className="text-xs bg-slate-800/90 hover:bg-slate-800 border border-slate-700 rounded-xl px-3 py-1.5 text-white focus:outline-hidden focus:ring-2 focus:ring-emerald-400 cursor-pointer"
+              className="text-xs bg-slate-800/90 hover:bg-slate-800 border border-slate-700 rounded-xl px-3 py-1.5 text-white focus:outline-hidden focus:ring-2 focus:ring-amber-400 cursor-pointer"
             >
               <option value="ALL">Semua Departemen ({employees.length})</option>
               {availableDepartments.map(([deptName, count]) => (
@@ -274,7 +274,7 @@ export const EmployeeDemographicsCharts: React.FC<EmployeeDemographicsChartsProp
             <span className="text-2xl font-bold text-slate-900">{totalCount}</span>
             <span className="text-xs text-slate-500 font-medium">Orang</span>
           </div>
-          <p className="text-[11px] text-emerald-600 mt-1 font-medium flex items-center gap-1">
+          <p className="text-[11px] text-amber-600 mt-1 font-medium flex items-center gap-1">
             <UserCheck className="w-3 h-3" /> {activeCount} Aktif Bekerja
           </p>
         </div>
@@ -346,7 +346,7 @@ export const EmployeeDemographicsCharts: React.FC<EmployeeDemographicsChartsProp
             <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
               Rasio Pria : Wanita
             </span>
-            <TrendingUp className="w-4 h-4 text-emerald-500" />
+            <TrendingUp className="w-4 h-4 text-amber-500" />
           </div>
           <div className="mt-2 flex items-baseline gap-1.5">
             <span className="text-2xl font-bold text-slate-900">
@@ -527,7 +527,7 @@ export const EmployeeDemographicsCharts: React.FC<EmployeeDemographicsChartsProp
               <div className="p-3.5 rounded-xl border border-slate-200 bg-white">
                 <div className="flex items-center justify-between text-xs gap-2">
                   <span className="font-semibold text-slate-700">Kesimpulan Kesetaraan Gender:</span>
-                  <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
                     Rasio {genderStats.pria} Pria : {genderStats.wanita} Wanita ({genderStats.priaPct}% : {genderStats.wanitaPct}%)
                   </span>
                 </div>
@@ -548,7 +548,7 @@ export const EmployeeDemographicsCharts: React.FC<EmployeeDemographicsChartsProp
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
                 <div>
                   <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
-                    <BarChart3 className="w-4 h-4 text-emerald-600" />
+                    <BarChart3 className="w-4 h-4 text-amber-600" />
                     Diagram Jumlah Karyawan Berdasarkan Jabatan (Posisi Kerja)
                   </h4>
                   <p className="text-xs text-slate-500 mt-0.5">
@@ -718,7 +718,7 @@ export const EmployeeDemographicsCharts: React.FC<EmployeeDemographicsChartsProp
                 <div
                   key={idx}
                   onClick={() => onSelectDepartment && onSelectDepartment(d.dept)}
-                  className="bg-white p-3.5 rounded-xl border border-slate-200 hover:border-emerald-400 hover:shadow-xs transition-all cursor-pointer"
+                  className="bg-white p-3.5 rounded-xl border border-slate-200 hover:border-amber-400 hover:shadow-xs transition-all cursor-pointer"
                 >
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="font-bold text-xs text-slate-800 truncate">{d.dept}</span>

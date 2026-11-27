@@ -261,6 +261,7 @@ CREATE TABLE IF NOT EXISTS public.attendances (
   is_in_office_radius BOOLEAN DEFAULT true,
   distance_meters NUMERIC DEFAULT 0,
   check_out_distance_meters NUMERIC DEFAULT 0,
+  sunday_work_type TEXT DEFAULT 'overtime',
   created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()),
   updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now())
 );
@@ -272,6 +273,7 @@ ALTER TABLE public.attendances ADD COLUMN IF NOT EXISTS face_photo_out TEXT;
 ALTER TABLE public.attendances ADD COLUMN IF NOT EXISTS check_out_location_coords JSONB;
 ALTER TABLE public.attendances ADD COLUMN IF NOT EXISTS check_out_location_address TEXT;
 ALTER TABLE public.attendances ADD COLUMN IF NOT EXISTS check_out_distance_meters NUMERIC DEFAULT 0;
+ALTER TABLE public.attendances ADD COLUMN IF NOT EXISTS sunday_work_type TEXT DEFAULT 'overtime';
 CREATE INDEX IF NOT EXISTS idx_attendances_emp ON public.attendances(employee_id);
 CREATE INDEX IF NOT EXISTS idx_attendances_date ON public.attendances(date);
 
@@ -298,6 +300,7 @@ CREATE TABLE IF NOT EXISTS public.attendance_logs (
   location_lng NUMERIC,
   distance_meters NUMERIC DEFAULT 0,
   check_out_distance_meters NUMERIC DEFAULT 0,
+  sunday_work_type TEXT DEFAULT 'overtime',
   notes TEXT,
   updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now())
 );
@@ -307,6 +310,7 @@ ALTER TABLE public.attendance_logs ADD COLUMN IF NOT EXISTS face_photo_out TEXT;
 ALTER TABLE public.attendance_logs ADD COLUMN IF NOT EXISTS face_scan_verified BOOLEAN DEFAULT false;
 ALTER TABLE public.attendance_logs ADD COLUMN IF NOT EXISTS is_in_office_radius BOOLEAN DEFAULT true;
 ALTER TABLE public.attendance_logs ADD COLUMN IF NOT EXISTS check_out_distance_meters NUMERIC DEFAULT 0;
+ALTER TABLE public.attendance_logs ADD COLUMN IF NOT EXISTS sunday_work_type TEXT DEFAULT 'overtime';
 
 -- 4. TABEL LOG JAM KERJA & GAJI MINGGUAN PART-TIME (parttime_logs, tgi_parttime_logs, tgi_part_time_weekly_payouts)
 CREATE TABLE IF NOT EXISTS public.tgi_parttime_logs (
@@ -484,9 +488,11 @@ CREATE TABLE IF NOT EXISTS public.overtime_requests (
   task_description TEXT NOT NULL,
   calculated_pay NUMERIC NOT NULL DEFAULT 0 CHECK (calculated_pay >= 0),
   status TEXT NOT NULL DEFAULT 'Menunggu Persetujuan',
+  sunday_work_type TEXT DEFAULT 'overtime',
   created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()),
   updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now())
 );
+ALTER TABLE public.overtime_requests ADD COLUMN IF NOT EXISTS sunday_work_type TEXT DEFAULT 'overtime';
 
 -- 10. TABEL KLAIM REIMBURSEMENT (reimbursements)
 CREATE TABLE IF NOT EXISTS public.reimbursements (
@@ -1277,3 +1283,11 @@ END $$;
 
 export const SUPABASE_SECURITY_MIGRATION_SQL = SUPABASE_SQL_SCHEMA;
 export const SUPABASE_ADDITIONAL_SQL_SCHEMA = SUPABASE_SQL_SCHEMA;
+
+export const SUNDAY_WORK_TYPE_SQL_MIGRATION = `-- MIGRASI SQL SUPABASE: STATUS KEHADIRAN HARI MINGGU (LEMBUR MURNI vs TUKAR HARI LIBUR)
+-- Jalankan perintah SQL ini di Supabase SQL Editor untuk menambahkan kolom sunday_work_type ('overtime' | 'day_off_replacement')
+ALTER TABLE public.attendances ADD COLUMN IF NOT EXISTS sunday_work_type TEXT DEFAULT 'overtime';
+ALTER TABLE public.attendance_logs ADD COLUMN IF NOT EXISTS sunday_work_type TEXT DEFAULT 'overtime';
+ALTER TABLE public.overtime_requests ADD COLUMN IF NOT EXISTS sunday_work_type TEXT DEFAULT 'overtime';
+`;
+

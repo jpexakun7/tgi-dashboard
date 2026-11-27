@@ -13,6 +13,7 @@ import {
   initialPerformanceReviews,
   initialNotifications,
   initialCashAdvances,
+  ensureDefaultOfficeBranches,
 } from './mockData';
 import {
   Employee,
@@ -47,6 +48,7 @@ import {
   PayrollDeductionRecord,
   ThrPayoutRecord,
   DashboardModule,
+  SundayWorkType,
 } from './types';
 import {
   calculatePayroll,
@@ -61,6 +63,7 @@ import {
   evaluateAttendanceAgainstShift,
   getEmployeeHourlyRate,
   getEmployeeStandardDailyHours,
+  isEmployeeWeeklyRestDay,
   getApprovedOvertimeHoursForEmployeeDate,
   STANDARD_WORK_HOURS_PER_DAY,
   isEmployeePartTime,
@@ -81,6 +84,10 @@ import {
   getJakartaIsoTimestamp,
   formatEndOfPeriodPrintDate,
   getJakartaDateString,
+  getEffectiveOvertimeMinutesForPayroll,
+  isSundayDateString,
+  resolveSundayWorkType,
+  calculateOvertimeBreakdown,
 } from './utils/formatters';
 import { computeHoursFromClockInOut } from './components/PartTimeLogs';
 import { Sidebar, ActiveTab } from './components/Sidebar';
@@ -139,6 +146,7 @@ import {
   upsertLeaveRequestToSupabase,
   fetchOvertimeRequestsFromSupabase,
   upsertOvertimeRequestToSupabase,
+  saveSundayWorkTypeLocal,
   fetchReimbursementsFromSupabase,
   upsertReimbursementToSupabase,
   deleteReimbursementFromSupabase,
@@ -877,6 +885,7 @@ export default function App() {
             location: sh.location || 'Jl. Sumber Mas I Blok C No. 191, Tangerang, Banten, ID',
           }));
         }
+        parsed.officeBranches = ensureDefaultOfficeBranches(parsed.officeBranches);
         if (!parsed.address || parsed.address.includes('Hayam Wuruk')) {
           parsed.address = 'Jl. Sumber Mas I Blok C No. 191, Tangerang, Banten, ID';
         }
@@ -1622,7 +1631,7 @@ export default function App() {
     } catch (e) {
       console.error('Failed to parse saved leave requests', e);
     }
-    return initialLeaveRequests.filter((l) => !deletedIds.has(l.employeeId));
+    return [];
   });
 
   useEffect(() => {
@@ -1644,7 +1653,7 @@ export default function App() {
     } catch (e) {
       console.error('Failed to parse saved overtime requests', e);
     }
-    return initialOvertimeRequests.filter((o) => !deletedIds.has(o.employeeId));
+    return [];
   });
 
   useEffect(() => {
@@ -2067,23 +2076,7 @@ export default function App() {
         };
       }
 
-      // Filter Pengajuan Lembur khusus dalam rentang Cut-Off periode ini (26 bln lalu s/d 25 bln ini)
-      // agar lembur bulan lalu tidak terbawa saat siklus baru dimulai tanggal 26
-      const employeeOts = filterOvertimeRequestsForPeriod(
-        overtimeRequests,
-        emp.id,
-        currentPeriod,
-        cutOffStart,
-        cutOffEnd,
-        true
-      );
-      const approvedOtMinutes = employeeOts.reduce(
-        (acc, curr) => acc + getOvertimeMinutes(curr),
-        0
-      );
-      const effectiveOtMinutes = approvedOtMinutes;
-
-      let penaltySummary = calculateEmployeeAttendancePenalty(
+      const penaltySummary = calculateEmployeeAttendancePenalty(
         emp,
         attendances,
         companyConfig.workShifts,
@@ -2093,43 +2086,26 @@ export default function App() {
         cutOffEnd
       );
 
-      // Jika sedang membuka periode ARSIP masa lalu (isPastCutoff === true, misal Oktober 2026 atau September 2026)
-      // dan belum ada log absensi di tabel attendances untuk bulan lama tersebut, bangkitkan snapshot arsip historis periode tersebut
-      // (CATATAN: Untuk siklus berjalan / siklus baru mulai tanggal 26 di mana isPastCutoff === false, hitungan WAJIB mulai dari 0!)
-      if (isPastCutoff && penaltySummary.deduplicatedRecords.length === 0 && !existing) {
-        const cutoffRange = getMonthlyCutoffDateRange(currentPeriod, cutOffStart, cutOffEnd);
-        const empShift = getEmployeeShift(emp, companyConfig.workShifts);
-        const stdHours = penaltySummary.standardWorkHoursPerDay;
-        const hrRate = penaltySummary.hourlyRate;
-        const syntheticBreakdown: NonNullable<PayrollRecord['dailyWorkBreakdown']> = [];
-        let curD = cutoffRange.startDate;
-        while (curD <= cutoffRange.endDate && syntheticBreakdown.length < 25) {
-          const dow = getDayOfWeekFromDateString(curD);
-          if (dow !== 0) {
-            syntheticBreakdown.push({
-              date: curD,
-              checkIn: empShift.checkInTime || '08:00',
-              checkOut: empShift.checkOutTime || '17:00',
-              workHours: stdHours,
-              rawDurationHours: stdHours,
-              isCappedToMax: false,
-              isMissingClockOut: false,
-              dailyWage: Math.round(stdHours * hrRate),
-              status: 'Hadir Tepat Waktu',
-            });
-          }
-          curD = addDaysToDateString(curD, 1);
-        }
-        const totalArchHours = Number((syntheticBreakdown.length * stdHours).toFixed(2));
-        penaltySummary = {
-          ...penaltySummary,
-          presentDaysCount: syntheticBreakdown.length,
-          onTimeDaysCount: syntheticBreakdown.length,
-          totalActualWorkHours: totalArchHours,
-          dailyWorkBreakdown: syntheticBreakdown,
-          deductionNotes: `Arsip Periode ${currentPeriod}: ${totalArchHours} Jam Kerja (${syntheticBreakdown.length} Hari) × Rp ${hrRate.toLocaleString('id-ID')}/jam`,
-        };
-      }
+      // Filter Pengajuan Lembur khusus dalam rentang Cut-Off periode ini (26 bln lalu s/d 25 bln ini)
+      // Jika lembur hari Minggu berstatus 'day_off_replacement' (Tukar Hari Libur), otomatis dihitung 0 menit lembur
+      const sundayRestDayOvertimeDates = new Set<string>(
+        (penaltySummary.dailyWorkBreakdown || [])
+          .filter((d) => d.isRestDayOvertime && !d.isDayOffReplacement)
+          .map((d) => d.date)
+      );
+      const employeeOts = filterOvertimeRequestsForPeriod(
+        overtimeRequests,
+        emp.id,
+        currentPeriod,
+        cutOffStart,
+        cutOffEnd,
+        true
+      );
+      const approvedOtMinutes = employeeOts.reduce(
+        (acc, curr) => acc + getEffectiveOvertimeMinutesForPayroll(curr, sundayRestDayOvertimeDates),
+        0
+      );
+      const effectiveOtMinutes = approvedOtMinutes;
 
       const isLateFeeWaived = Boolean(
         existing?.isLateFeeWaived !== undefined
@@ -2182,11 +2158,19 @@ export default function App() {
         existing?.cashAdvanceDeduction || 0,
         existing?.cashAdvanceNotes,
         {
+          workDaysPerWeek: penaltySummary.workDaysPerWeek,
+          standardWorkingDays: penaltySummary.monthlyWorkingDaysDivisor,
           hourlyRate: penaltySummary.hourlyRate,
           totalActualWorkHours: penaltySummary.totalActualWorkHours,
           standardWorkHoursPerDay: penaltySummary.standardWorkHoursPerDay,
           dailyWorkBreakdown: penaltySummary.dailyWorkBreakdown,
           presentDaysCount: penaltySummary.presentDaysCount,
+          restDayOvertimeDaysCount: penaltySummary.restDayOvertimeDaysCount,
+          restDayOvertimeMinutes: penaltySummary.restDayOvertimeMinutes,
+          dayOffReplacementDaysCount: penaltySummary.dayOffReplacementDaysCount,
+          rawAlphaDaysBeforeReplacement: penaltySummary.rawAlphaDaysBeforeReplacement,
+          alphaDaysReplacedCount: penaltySummary.alphaDaysReplacedCount,
+          unpaidLeaveDaysReplacedCount: penaltySummary.unpaidLeaveDaysReplacedCount,
           lateFrequency: penaltySummary.lateFrequency,
           totalLateMinutes: penaltySummary.totalLateMinutes,
           latePenaltyAmount: penaltySummary.latePenaltyAmount,
@@ -2302,16 +2286,7 @@ export default function App() {
           continue;
         }
 
-        const empOts = filterOvertimeRequestsForPeriod(
-          overtimeRequests,
-          emp.id,
-          archPeriod,
-          cutOffStart,
-          cutOffEnd,
-          true
-        );
-        const otMins = empOts.reduce((acc, c) => acc + getOvertimeMinutes(c), 0);
-        let pen = calculateEmployeeAttendancePenalty(
+        const pen = calculateEmployeeAttendancePenalty(
           emp,
           attendances,
           companyConfig.workShifts,
@@ -2320,40 +2295,23 @@ export default function App() {
           cutOffStart,
           cutOffEnd
         );
-
-        if (pen.deduplicatedRecords.length === 0) {
-          const empShift = getEmployeeShift(emp, companyConfig.workShifts);
-          const stdHours = pen.standardWorkHoursPerDay;
-          const hrRate = pen.hourlyRate;
-          const syntheticBreakdown: NonNullable<PayrollRecord['dailyWorkBreakdown']> = [];
-          let curD = cutoffRange.startDate;
-          while (curD <= cutoffRange.endDate && syntheticBreakdown.length < 25) {
-            const dow = getDayOfWeekFromDateString(curD);
-            if (dow !== 0) {
-              syntheticBreakdown.push({
-                date: curD,
-                checkIn: empShift.checkInTime || '08:00',
-                checkOut: empShift.checkOutTime || '17:00',
-                workHours: stdHours,
-                rawDurationHours: stdHours,
-                isCappedToMax: false,
-                isMissingClockOut: false,
-                dailyWage: Math.round(stdHours * hrRate),
-                status: 'Hadir Tepat Waktu',
-              });
-            }
-            curD = addDaysToDateString(curD, 1);
-          }
-          const totalArchHours = Number((syntheticBreakdown.length * stdHours).toFixed(2));
-          pen = {
-            ...pen,
-            presentDaysCount: syntheticBreakdown.length,
-            onTimeDaysCount: syntheticBreakdown.length,
-            totalActualWorkHours: totalArchHours,
-            dailyWorkBreakdown: syntheticBreakdown,
-            deductionNotes: `Arsip Periode ${archPeriod}: ${totalArchHours} Jam Kerja (${syntheticBreakdown.length} Hari) × Rp ${hrRate.toLocaleString('id-ID')}/jam`,
-          };
-        }
+        const archSundayOtDates = new Set<string>(
+          (pen.dailyWorkBreakdown || [])
+            .filter((d) => d.isRestDayOvertime && !d.isDayOffReplacement)
+            .map((d) => d.date)
+        );
+        const empOts = filterOvertimeRequestsForPeriod(
+          overtimeRequests,
+          emp.id,
+          archPeriod,
+          cutOffStart,
+          cutOffEnd,
+          true
+        );
+        const otMins = empOts.reduce(
+          (acc, c) => acc + getEffectiveOvertimeMinutesForPayroll(c, archSundayOtDates),
+          0
+        );
 
         const empAdj = getEmployeeAdjustmentForPeriod(employeeAdjustments, emp, archPeriod, false);
         const empDed = getEmployeePayrollDeductionForPeriod(
@@ -2374,11 +2332,19 @@ export default function App() {
           0,
           undefined,
           {
+            workDaysPerWeek: pen.workDaysPerWeek,
+            standardWorkingDays: pen.monthlyWorkingDaysDivisor,
             hourlyRate: pen.hourlyRate,
             totalActualWorkHours: pen.totalActualWorkHours,
             standardWorkHoursPerDay: pen.standardWorkHoursPerDay,
             dailyWorkBreakdown: pen.dailyWorkBreakdown,
             presentDaysCount: pen.presentDaysCount,
+            restDayOvertimeDaysCount: pen.restDayOvertimeDaysCount,
+            restDayOvertimeMinutes: pen.restDayOvertimeMinutes,
+            dayOffReplacementDaysCount: pen.dayOffReplacementDaysCount,
+            rawAlphaDaysBeforeReplacement: pen.rawAlphaDaysBeforeReplacement,
+            alphaDaysReplacedCount: pen.alphaDaysReplacedCount,
+            unpaidLeaveDaysReplacedCount: pen.unpaidLeaveDaysReplacedCount,
             lateFrequency: pen.lateFrequency,
             totalLateMinutes: pen.totalLateMinutes,
             latePenaltyAmount: pen.latePenaltyAmount,
@@ -2804,6 +2770,12 @@ export default function App() {
                 cloudCompanyConfig.workShifts.length > 0
                   ? cloudCompanyConfig.workShifts
                   : prev.workShifts,
+              officeBranches: ensureDefaultOfficeBranches(
+                Array.isArray(cloudCompanyConfig.officeBranches) &&
+                  cloudCompanyConfig.officeBranches.length > 0
+                  ? cloudCompanyConfig.officeBranches
+                  : prev.officeBranches
+              ),
               attendancePenaltyPolicy: getAttendancePenaltyPolicy(
                 cloudCompanyConfig.attendancePenaltyPolicy || prev.attendancePenaltyPolicy
               ),
@@ -3252,7 +3224,15 @@ export default function App() {
         () => {
           fetchCompanyConfigFromSupabase().then((cfg) => {
             if (cfg && Object.keys(cfg).length > 0) {
-              setCompanyConfig((prev) => ({ ...prev, ...cfg }));
+              setCompanyConfig((prev) => ({
+                ...prev,
+                ...cfg,
+                officeBranches: ensureDefaultOfficeBranches(
+                  Array.isArray(cfg.officeBranches) && cfg.officeBranches.length > 0
+                    ? cfg.officeBranches
+                    : prev.officeBranches
+                ),
+              }));
             }
           });
         }
@@ -3632,6 +3612,22 @@ export default function App() {
     const currentPeriodYm = normalizePeriodToYearMonth(currentPeriod);
     const regularEmployees = employees.filter((e) => !isEmployeePartTime(e));
     const updated = regularEmployees.map((emp) => {
+      // Deduplicated & Shift-evaluated Attendance Penalty Summary
+      const penaltySummary = calculateEmployeeAttendancePenalty(
+        emp,
+        attendances,
+        companyConfig.workShifts,
+        companyConfig.attendancePenaltyPolicy,
+        currentPeriod,
+        companyConfig.cutOffStartDay || 26,
+        companyConfig.cutOffEndDay || 25
+      );
+
+      const sundayRestDayOvertimeDates = new Set<string>(
+        (penaltySummary.dailyWorkBreakdown || [])
+          .filter((d) => d.isRestDayOvertime && !d.isDayOffReplacement)
+          .map((d) => d.date)
+      );
       // Find approved overtimes for this employee strictly within currentPeriod cut-off range (in minutes)
       const employeeOts = filterOvertimeRequestsForPeriod(
         overtimeRequests,
@@ -3642,19 +3638,8 @@ export default function App() {
         true
       );
       const totalOtMinutes = employeeOts.reduce(
-        (acc, curr) => acc + getOvertimeMinutes(curr),
+        (acc, curr) => acc + getEffectiveOvertimeMinutesForPayroll(curr, sundayRestDayOvertimeDates),
         0
-      );
-
-      // Deduplicated & Shift-evaluated Attendance Penalty Summary
-      const penaltySummary = calculateEmployeeAttendancePenalty(
-        emp,
-        attendances,
-        companyConfig.workShifts,
-        companyConfig.attendancePenaltyPolicy,
-        currentPeriod,
-        companyConfig.cutOffStartDay || 26,
-        companyConfig.cutOffEndDay || 25
       );
 
       // Find existing bonus & cash advance deduction for this exact period if any
@@ -3706,11 +3691,19 @@ export default function App() {
         caDeduct,
         caNotes,
         {
+          workDaysPerWeek: penaltySummary.workDaysPerWeek,
+          standardWorkingDays: penaltySummary.monthlyWorkingDaysDivisor,
           hourlyRate: penaltySummary.hourlyRate,
           totalActualWorkHours: penaltySummary.totalActualWorkHours,
           standardWorkHoursPerDay: penaltySummary.standardWorkHoursPerDay,
           dailyWorkBreakdown: penaltySummary.dailyWorkBreakdown,
           presentDaysCount: penaltySummary.presentDaysCount,
+          restDayOvertimeDaysCount: penaltySummary.restDayOvertimeDaysCount,
+          restDayOvertimeMinutes: penaltySummary.restDayOvertimeMinutes,
+          dayOffReplacementDaysCount: penaltySummary.dayOffReplacementDaysCount,
+          rawAlphaDaysBeforeReplacement: penaltySummary.rawAlphaDaysBeforeReplacement,
+          alphaDaysReplacedCount: penaltySummary.alphaDaysReplacedCount,
+          unpaidLeaveDaysReplacedCount: penaltySummary.unpaidLeaveDaysReplacedCount,
           lateFrequency: penaltySummary.lateFrequency,
           totalLateMinutes: penaltySummary.totalLateMinutes,
           latePenaltyAmount: penaltySummary.latePenaltyAmount,
@@ -3930,11 +3923,19 @@ export default function App() {
         existingRec?.cashAdvanceDeduction || 0,
         existingRec?.cashAdvanceNotes,
         {
+          workDaysPerWeek: penaltySummary.workDaysPerWeek,
+          standardWorkingDays: penaltySummary.monthlyWorkingDaysDivisor,
           hourlyRate: penaltySummary.hourlyRate,
           totalActualWorkHours: penaltySummary.totalActualWorkHours,
           standardWorkHoursPerDay: penaltySummary.standardWorkHoursPerDay,
           dailyWorkBreakdown: penaltySummary.dailyWorkBreakdown,
           presentDaysCount: penaltySummary.presentDaysCount,
+          restDayOvertimeDaysCount: penaltySummary.restDayOvertimeDaysCount,
+          restDayOvertimeMinutes: penaltySummary.restDayOvertimeMinutes,
+          dayOffReplacementDaysCount: penaltySummary.dayOffReplacementDaysCount,
+          rawAlphaDaysBeforeReplacement: penaltySummary.rawAlphaDaysBeforeReplacement,
+          alphaDaysReplacedCount: penaltySummary.alphaDaysReplacedCount,
+          unpaidLeaveDaysReplacedCount: penaltySummary.unpaidLeaveDaysReplacedCount,
           lateFrequency: penaltySummary.lateFrequency,
           totalLateMinutes: penaltySummary.totalLateMinutes,
           latePenaltyAmount: penaltySummary.latePenaltyAmount,
@@ -4295,6 +4296,53 @@ export default function App() {
     upsertAttendanceToSupabase(normalizedAtt);
     syncAttendanceToPartTimeLogs(normalizedAtt);
     duplicateIdsToDelete.forEach((dupId) => deleteAttendanceFromSupabase(dupId));
+
+    // Jika kehadiran pada Hari Minggu diubah status sunday_work_type ('overtime' | 'day_off_replacement'),
+    // sinkronkan juga ke overtimeRequests pada tanggal & karyawan yang sama agar Payroll & Klaim Lembur selalu selaras
+    if (isSundayDateString(normalizedAtt.date)) {
+      const resolvedSundayMode = resolveSundayWorkType(
+        normalizedAtt.sunday_work_type ?? normalizedAtt.sundayWorkType
+      );
+      saveSundayWorkTypeLocal(
+        normalizedAtt.employeeId,
+        normalizedAtt.date,
+        resolvedSundayMode,
+        normalizedAtt.id
+      );
+      setOvertimeRequests((prev) => {
+        let changed = false;
+        const next = prev.map((ot) => {
+          if (ot.employeeId === normalizedAtt.employeeId && ot.date === normalizedAtt.date) {
+            const currentMode = resolveSundayWorkType(ot.sunday_work_type ?? ot.sundayWorkType);
+            if (currentMode !== resolvedSundayMode) {
+              changed = true;
+              const otMins = getOvertimeMinutes(ot);
+              const nextPay =
+                resolvedSundayMode === 'day_off_replacement'
+                  ? 0
+                  : emp
+                  ? calculateOvertimeBreakdown(
+                      emp,
+                      otMins,
+                      undefined,
+                      companyConfig.defaultOvertimeMultiplier || 1.5
+                    ).totalOvertimePay
+                  : ot.calculatedPay;
+              const syncedOt: OvertimeRequest = {
+                ...ot,
+                sunday_work_type: resolvedSundayMode,
+                sundayWorkType: resolvedSundayMode,
+                calculatedPay: nextPay,
+              };
+              upsertOvertimeRequestToSupabase(syncedOt);
+              return syncedOt;
+            }
+          }
+          return ot;
+        });
+        return changed ? next : prev;
+      });
+    }
 
     logActivity(
       'COMPANY_SETTINGS_UPDATE',
@@ -4695,6 +4743,10 @@ export default function App() {
   };
 
   const handleAddOvertime = (req: OvertimeRequest) => {
+    if (isSundayDateString(req.date)) {
+      const resolvedMode = resolveSundayWorkType(req.sunday_work_type ?? req.sundayWorkType);
+      saveSundayWorkTypeLocal(req.employeeId, req.date, resolvedMode, req.id);
+    }
     setOvertimeRequests((prev) => [req, ...prev]);
     upsertOvertimeRequestToSupabase(req);
     const emp = employees.find((e) => e.id === req.employeeId);
@@ -4707,6 +4759,81 @@ export default function App() {
         targetId: req.id,
         targetName: emp?.fullName || req.employeeId,
         newValue: `Tanggal: ${req.date}, Durasi: ${otMins} Menit, Estimasi: Rp ${req.calculatedPay.toLocaleString('id-ID')}`,
+        severity: 'info',
+      }
+    );
+  };
+
+  const handleUpdateOvertimeWorkType = (id: string, sundayWorkType: SundayWorkType) => {
+    const otItem = overtimeRequests.find((o) => o.id === id);
+    if (!otItem) return;
+    const emp = employees.find((e) => e.id === otItem.employeeId);
+    const otMins = getOvertimeMinutes(otItem);
+    const recalcPay =
+      sundayWorkType === 'day_off_replacement'
+        ? 0
+        : emp
+        ? calculateOvertimeBreakdown(
+            emp,
+            otMins,
+            undefined,
+            companyConfig.defaultOvertimeMultiplier || 1.5
+          ).totalOvertimePay
+        : otItem.calculatedPay;
+
+    saveSundayWorkTypeLocal(otItem.employeeId, otItem.date, sundayWorkType, otItem.id);
+
+    const updatedOt: OvertimeRequest = {
+      ...otItem,
+      sunday_work_type: sundayWorkType,
+      sundayWorkType,
+      calculatedPay: recalcPay,
+    };
+
+    setOvertimeRequests((prev) => prev.map((ot) => (ot.id === id ? updatedOt : ot)));
+    upsertOvertimeRequestToSupabase(updatedOt);
+
+    // Sinkronkan juga ke record presensi (attendances) di hari Minggu yang sama jika ada
+    setAttendances((prev) => {
+      let attChanged = false;
+      const next = prev.map((a) => {
+        if (a.employeeId === otItem.employeeId && a.date === otItem.date) {
+          attChanged = true;
+          const syncedAtt: AttendanceRecord = {
+            ...a,
+            sunday_work_type: sundayWorkType,
+            sundayWorkType,
+          };
+          saveSundayWorkTypeLocal(a.employeeId, a.date, sundayWorkType, a.id);
+          upsertAttendanceToSupabase(syncedAtt);
+          return syncedAtt;
+        }
+        return a;
+      });
+      if (attChanged) {
+        safeSetLocalStorage(
+          'tgi_attendances_data',
+          JSON.stringify(sanitizeAttendancesForStorage(next))
+        );
+      }
+      return attChanged ? next : prev;
+    });
+
+    logActivity(
+      'OVERTIME_STATUS_UPDATE',
+      'Persetujuan & Klaim',
+      `Mengubah status kehadiran Hari Minggu (${otItem.date}) untuk ${emp?.fullName || otItem.employeeId} menjadi "${
+        sundayWorkType === 'day_off_replacement'
+          ? 'Tukar Hari Libur (Day-Off Replacement)'
+          : 'Lembur Murni (Overtime)'
+      }".`,
+      {
+        targetId: id,
+        targetName: `${emp?.fullName || otItem.employeeId} (${otItem.date})`,
+        newValue:
+          sundayWorkType === 'day_off_replacement'
+            ? 'Tukar Hari Libur (Pulihkan 1 Hari Alpha/Izin & Amankan Tunjangan Kerajinan)'
+            : `Lembur Murni (Upah Lembur: Rp ${recalcPay.toLocaleString('id-ID')})`,
         severity: 'info',
       }
     );
@@ -5769,7 +5896,7 @@ export default function App() {
                       setIsAdminAuthModalOpen(true);
                     }
                   }}
-                  className="mt-4 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/20 cursor-pointer"
+                  className="mt-4 px-4 py-2.5 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold rounded-xl text-xs font-bold shadow-md shadow-amber-600/20 cursor-pointer"
                 >
                   + Tambah Karyawan Baru
                 </button>
@@ -6162,6 +6289,7 @@ export default function App() {
                 onApproveOvertime={handleApproveOvertime}
                 onRejectOvertime={handleRejectOvertime}
                 onAddOvertime={handleAddOvertime}
+                onUpdateOvertimeWorkType={handleUpdateOvertimeWorkType}
               />
             )}
 
@@ -6176,6 +6304,7 @@ export default function App() {
                 onApproveOvertime={handleApproveOvertime}
                 onRejectOvertime={handleRejectOvertime}
                 onAddOvertime={handleAddOvertime}
+                onUpdateOvertimeWorkType={handleUpdateOvertimeWorkType}
               />
             )}
 
@@ -6230,8 +6359,11 @@ export default function App() {
                 reviews={reviews}
                 employees={employees}
                 payrolls={syncedPayrolls}
+                attendances={attendances}
+                payrollDeductions={payrollDeductions}
                 companyConfig={companyConfig}
                 adminUser={adminUser}
+                onChangePayrollPeriod={handleChangePayrollPeriod}
                 onAddReview={handleAddReview}
                 onUpdateReview={handleUpdateReview}
                 onDeleteReview={handleDeleteReview}
@@ -6251,6 +6383,8 @@ export default function App() {
               <ReportsView
                 employees={employees}
                 payrolls={syncedPayrolls}
+                attendances={attendances}
+                payrollDeductions={payrollDeductions}
                 companyConfig={companyConfig}
                 thrPayouts={thrPayouts}
                 partTimePayouts={partTimePayouts}
@@ -6431,7 +6565,7 @@ export default function App() {
         <div
           className={`fixed bottom-5 right-5 z-50 max-w-md w-full p-4 rounded-2xl shadow-2xl border flex items-start justify-between gap-3 animate-in fade-in slide-in-from-bottom-4 ${
             supabaseToast?.ok
-              ? 'bg-emerald-950 text-emerald-50 border-emerald-700'
+              ? 'bg-neutral-900 text-amber-300 border-amber-500/40'
               : 'bg-rose-950 text-rose-50 border-rose-700'
           }`}
         >

@@ -248,8 +248,8 @@ export const RoleModuleVisibilityPanel: React.FC<RoleModuleVisibilityPanelProps>
       shortLabel: 'Finance & Klaim',
       label: 'Finance & Reimbursement (Finance)',
       description: 'Fokus pada perhitungan gaji, pajak PPh 21 TER, BPJS, klaim reimbursement, dan pencairan kasbon.',
-      badgeColor: 'bg-emerald-100 text-emerald-800 border-emerald-200',
-      activeColor: 'text-emerald-700 bg-emerald-50 border-emerald-300',
+      badgeColor: 'bg-amber-100 text-amber-800 border-amber-200',
+      activeColor: 'text-amber-700 bg-amber-50 border-amber-300',
     },
     {
       role: 'Operations Manager',
@@ -590,7 +590,7 @@ export const RoleModuleVisibilityPanel: React.FC<RoleModuleVisibilityPanelProps>
       {/* Toast Notification */}
       {toastMessage && (
         <div className="fixed top-5 right-5 z-50 flex items-center gap-2.5 bg-slate-900 text-white px-4 py-3 rounded-xl shadow-xl text-xs font-semibold animate-fade-in border border-slate-700">
-          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" />
           <span>{toastMessage}</span>
         </div>
       )}
@@ -656,7 +656,7 @@ export const RoleModuleVisibilityPanel: React.FC<RoleModuleVisibilityPanelProps>
               disabled={!hasChanges}
               className={`px-5 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-md cursor-pointer ${
                 hasChanges
-                  ? 'bg-emerald-500 hover:bg-emerald-600 text-white ring-2 ring-emerald-400/50'
+                  ? 'bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold ring-2 ring-amber-400/50'
                   : 'bg-slate-800 text-slate-400 border border-slate-700 cursor-not-allowed opacity-60'
               }`}
             >
@@ -752,7 +752,7 @@ export const RoleModuleVisibilityPanel: React.FC<RoleModuleVisibilityPanelProps>
                               <button
                                 type="button"
                                 onClick={() => handleToggleAllModulesForRole(r.role, true)}
-                                className="text-[9px] px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-slate-700 cursor-pointer"
+                                className="text-[9px] px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 cursor-pointer"
                                 title="Buka seluruh 15 modul untuk peran ini"
                               >
                                 Buka Semua
@@ -860,14 +860,14 @@ export const RoleModuleVisibilityPanel: React.FC<RoleModuleVisibilityPanelProps>
                                 onClick={() => handleToggleModuleForRole(r.role, mod.id)}
                                 className={`w-full py-1.5 px-2 rounded-lg font-bold text-[11px] transition-all flex items-center justify-center gap-1.5 cursor-pointer border ${
                                   isAllowed
-                                    ? 'bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100 shadow-2xs'
+                                    ? 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100 shadow-2xs'
                                     : 'bg-slate-100 text-slate-400 border-slate-200 hover:bg-slate-200/70 hover:text-slate-600'
                                 }`}
                                 title={`Klik untuk mengubah akses modul ${mod.label} bagi peran ${r.role}`}
                               >
                                 {isAllowed ? (
                                   <>
-                                    <Check className="w-3.5 h-3.5 text-emerald-600" />
+                                    <Check className="w-3.5 h-3.5 text-amber-600" />
                                     <span>Aktif</span>
                                   </>
                                 ) : (
@@ -1083,7 +1083,7 @@ export const RoleModuleVisibilityPanel: React.FC<RoleModuleVisibilityPanelProps>
                         isCurrentSuperAdmin ? 'cursor-default' : 'cursor-pointer'
                       } ${
                         isAllowed
-                          ? 'bg-white border-emerald-300/80 shadow-xs ring-1 ring-emerald-500/10 hover:border-emerald-400'
+                          ? 'bg-white border-amber-300/80 shadow-xs ring-1 ring-amber-500/10 hover:border-amber-400'
                           : 'bg-slate-50/70 border-slate-200 opacity-65 hover:opacity-85 hover:border-slate-300'
                       }`}
                     >
@@ -1092,7 +1092,7 @@ export const RoleModuleVisibilityPanel: React.FC<RoleModuleVisibilityPanelProps>
                           <div
                             className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 transition-colors ${
                               isAllowed
-                                ? 'bg-emerald-50 text-emerald-600 border border-emerald-200'
+                                ? 'bg-amber-50 text-amber-600 border border-amber-200'
                                 : 'bg-slate-200 text-slate-500 border border-slate-300'
                             }`}
                           >
@@ -1126,12 +1126,12 @@ export const RoleModuleVisibilityPanel: React.FC<RoleModuleVisibilityPanelProps>
                         <div className="shrink-0 pt-0.5">
                           <div
                             className={`w-11 h-6 rounded-full transition-colors p-0.5 flex items-center ${
-                              isAllowed ? 'bg-emerald-600 justify-end' : 'bg-slate-300 justify-start'
+                              isAllowed ? 'bg-amber-600 justify-end' : 'bg-slate-300 justify-start'
                             }`}
                           >
                             <div className="w-5 h-5 rounded-full bg-white shadow-xs flex items-center justify-center">
                               {isAllowed ? (
-                                <Check className="w-3 h-3 text-emerald-600" />
+                                <Check className="w-3 h-3 text-amber-600" />
                               ) : (
                                 <X className="w-3 h-3 text-slate-400" />
                               )}
@@ -1139,7 +1139,7 @@ export const RoleModuleVisibilityPanel: React.FC<RoleModuleVisibilityPanelProps>
                           </div>
                           <span
                             className={`text-[9px] font-bold block text-center mt-1 ${
-                              isAllowed ? 'text-emerald-700' : 'text-slate-400'
+                              isAllowed ? 'text-amber-700' : 'text-slate-400'
                             }`}
                           >
                             {isAllowed ? 'Dapat Dilihat' : 'Disembunyikan'}
@@ -1157,12 +1157,12 @@ export const RoleModuleVisibilityPanel: React.FC<RoleModuleVisibilityPanelProps>
               <div className="bg-slate-900 text-slate-200 p-5 rounded-2xl border border-slate-800 shadow-lg sticky top-6">
                 <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-3">
                   <div className="flex items-center gap-2">
-                    <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+                    <div className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse" />
                     <span className="text-xs font-bold text-white tracking-wide">
                       Simulasi Tampilan Sidebar ({selectedRole})
                     </span>
                   </div>
-                  <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-800/60">
+                  <span className="text-[10px] font-mono text-amber-400 bg-amber-950/80 px-2 py-0.5 rounded border border-amber-800/60">
                     {allowedCount}/{ALL_DASHBOARD_MODULES.length} Menu
                   </span>
                 </div>
@@ -1182,13 +1182,13 @@ export const RoleModuleVisibilityPanel: React.FC<RoleModuleVisibilityPanelProps>
                       return (
                         <div
                           key={mod.id}
-                          className="flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium bg-slate-800/80 text-emerald-300 border border-slate-700/60 group transition-all"
+                          className="flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium bg-slate-800/80 text-amber-300 border border-slate-700/60 group transition-all"
                         >
                           <div className="flex items-center gap-2.5 truncate">
-                            <Icon className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                            <Icon className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                             <span className="truncate text-slate-200">{mod.label}</span>
                           </div>
-                          <span className="text-[9px] font-bold text-emerald-400 bg-emerald-950/90 px-1.5 py-0.5 rounded border border-emerald-800/40 shrink-0">
+                          <span className="text-[9px] font-bold text-amber-400 bg-amber-950/90 px-1.5 py-0.5 rounded border border-amber-800/40 shrink-0">
                             Aktif
                           </span>
                         </div>
@@ -1215,7 +1215,7 @@ export const RoleModuleVisibilityPanel: React.FC<RoleModuleVisibilityPanelProps>
 
                 <div className="mt-4 pt-3 border-t border-slate-800 text-[11px] text-slate-400 flex items-center justify-between">
                   <span>Status Perubahan:</span>
-                  <span className={`font-bold ${hasChanges ? 'text-amber-400' : 'text-emerald-400'}`}>
+                  <span className={`font-bold ${hasChanges ? 'text-amber-400' : 'text-amber-400'}`}>
                     {hasChanges ? 'Belum Disimpan' : 'Tersinkronisasi'}
                   </span>
                 </div>

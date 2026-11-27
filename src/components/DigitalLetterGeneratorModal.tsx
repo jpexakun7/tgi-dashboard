@@ -545,7 +545,7 @@ export const DigitalLetterGeneratorModal: React.FC<DigitalLetterGeneratorModalPr
         {/* Sticky Header */}
         <div className="shrink-0 px-5 py-4 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white flex flex-wrap items-center justify-between gap-3 border-b border-slate-800">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-400/30 flex items-center justify-center text-emerald-300">
+            <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-400/30 flex items-center justify-center text-amber-300">
               <FileText className="w-5 h-5" />
             </div>
             <div>
@@ -553,7 +553,7 @@ export const DigitalLetterGeneratorModal: React.FC<DigitalLetterGeneratorModalPr
                 <h3 className="font-bold text-sm sm:text-base text-white">
                   Digital Document Archive &amp; Automated HR Letter Generator
                 </h3>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-400/30">
                   WIB Real-Time
                 </span>
               </div>
@@ -608,7 +608,7 @@ export const DigitalLetterGeneratorModal: React.FC<DigitalLetterGeneratorModalPr
               onClick={() => setActiveTab('documents')}
               className={`px-3.5 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
                 activeTab === 'documents'
-                  ? 'bg-emerald-600 text-white shadow-xs'
+                  ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 font-bold shadow-xs'
                   : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
               }`}
             >
@@ -618,8 +618,8 @@ export const DigitalLetterGeneratorModal: React.FC<DigitalLetterGeneratorModalPr
           </div>
 
           {toastMsg && (
-            <div className="px-3 py-1 rounded-lg bg-emerald-100 border border-emerald-300 text-emerald-900 text-xs font-semibold flex items-center gap-1.5">
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+            <div className="px-3 py-1 rounded-lg bg-amber-100 border border-amber-300 text-amber-900 text-xs font-semibold flex items-center gap-1.5">
+              <CheckCircle2 className="w-3.5 h-3.5 text-amber-600" />
               <span>{toastMsg}</span>
             </div>
           )}
@@ -629,10 +629,10 @@ export const DigitalLetterGeneratorModal: React.FC<DigitalLetterGeneratorModalPr
         <div className="flex-1 overflow-y-auto p-5 space-y-5">
           {activeTab === 'documents' ? (
             <div className="space-y-5">
-              <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-50 via-teal-50/60 to-white border border-emerald-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="p-4 rounded-2xl bg-gradient-to-r from-amber-50 via-amber-50/60 to-white border border-amber-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                    <FileCheck2 className="w-4 h-4 text-emerald-600" />
+                    <FileCheck2 className="w-4 h-4 text-amber-600" />
                     <span>Brankas Arsip Dokumen Digital Karyawan (Cloud-First Supabase)</span>
                   </h4>
                   <p className="text-xs text-slate-600 mt-0.5">
@@ -654,7 +654,7 @@ export const DigitalLetterGeneratorModal: React.FC<DigitalLetterGeneratorModalPr
                       <span
                         className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                           currentEmp.ktpPhotoUrl
-                            ? 'bg-emerald-100 text-emerald-800'
+                            ? 'bg-amber-100 text-amber-800'
                             : 'bg-amber-100 text-amber-800'
                         }`}
                       >
@@ -741,7 +741,7 @@ export const DigitalLetterGeneratorModal: React.FC<DigitalLetterGeneratorModalPr
                       <span
                         className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                           currentEmp.npwpPhotoUrl
-                            ? 'bg-emerald-100 text-emerald-800'
+                            ? 'bg-amber-100 text-amber-800'
                             : 'bg-amber-100 text-amber-800'
                         }`}
                       >
@@ -822,13 +822,13 @@ export const DigitalLetterGeneratorModal: React.FC<DigitalLetterGeneratorModalPr
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                        <FileCheck2 className="w-4 h-4 text-emerald-600" />
+                        <FileCheck2 className="w-4 h-4 text-amber-600" />
                         <span>3. Arsip Dokumen Kontrak</span>
                       </span>
                       <span
                         className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                           currentEmp.contractDocumentUrl
-                            ? 'bg-emerald-100 text-emerald-800'
+                            ? 'bg-amber-100 text-amber-800'
                             : 'bg-amber-100 text-amber-800'
                         }`}
                       >
@@ -856,7 +856,7 @@ export const DigitalLetterGeneratorModal: React.FC<DigitalLetterGeneratorModalPr
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">
-                    <label className="flex-1 py-2 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold text-center cursor-pointer inline-flex items-center justify-center gap-1.5">
+                    <label className="flex-1 py-2 px-3 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold text-xs font-bold text-center cursor-pointer inline-flex items-center justify-center gap-1.5">
                       <Upload className="w-3.5 h-3.5" />
                       <span>
                         {uploadingDocType === 'contract'
@@ -1170,7 +1170,7 @@ export const DigitalLetterGeneratorModal: React.FC<DigitalLetterGeneratorModalPr
                   <button
                     type="button"
                     onClick={handleSaveLetterToArchive}
-                    className="py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer"
+                    className="py-3 px-4 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer"
                   >
                     <CheckCircle2 className="w-4 h-4" />
                     <span>Simpan ke Profil</span>
@@ -1190,7 +1190,7 @@ export const DigitalLetterGeneratorModal: React.FC<DigitalLetterGeneratorModalPr
                       <div className="kop-company text-base sm:text-lg font-black uppercase tracking-wide text-slate-900">
                         PT LUPYTA MAJU PERKASA ({companyConfig.companyName})
                       </div>
-                      <div className="kop-brand text-xs font-bold text-emerald-700">
+                      <div className="kop-brand text-xs font-bold text-amber-700">
                         Divisi Human Resources &amp; Legal Compliance
                       </div>
                       <div className="kop-addr text-[11px] text-slate-600 mt-0.5">
@@ -1473,7 +1473,7 @@ export const DigitalLetterGeneratorModal: React.FC<DigitalLetterGeneratorModalPr
               <a
                 href={previewDoc.url}
                 download={previewDoc.fileName}
-                className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold inline-flex items-center gap-1.5"
+                className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-400 hover:to-yellow-500 text-neutral-950 font-semibold text-xs font-bold inline-flex items-center gap-1.5"
               >
                 <Download className="w-3.5 h-3.5" />
                 <span>Unduh Dokumen</span>

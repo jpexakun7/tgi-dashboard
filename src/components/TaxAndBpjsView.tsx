@@ -125,7 +125,7 @@ export const TaxAndBpjsView: React.FC<TaxAndBpjsViewProps> = ({
           <span className="text-xs text-slate-500 block font-medium">
             Total Iuran BPJS Kesehatan (5%)
           </span>
-          <h3 className="text-2xl font-bold text-teal-700 mt-2">
+          <h3 className="text-2xl font-bold text-amber-700 mt-2">
             {formatRupiah(totalBpjsKesComp + totalBpjsKesEmp)}
           </h3>
           <p className="text-[11px] text-slate-500 mt-1">
@@ -173,7 +173,7 @@ export const TaxAndBpjsView: React.FC<TaxAndBpjsViewProps> = ({
               onClick={() => setSimMode('december_a1')}
               className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1.5 ${
                 simMode === 'december_a1'
-                  ? 'bg-emerald-600 text-white shadow-xs'
+                  ? 'bg-gradient-to-r from-amber-500 to-yellow-600 text-neutral-950 font-bold shadow-xs'
                   : 'text-slate-400 hover:text-white'
               }`}
             >
@@ -245,7 +245,7 @@ export const TaxAndBpjsView: React.FC<TaxAndBpjsViewProps> = ({
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-300">+ Premi BPJS Kes (4%) + JKK + JKM:</span>
-                <span className="font-semibold text-emerald-300">
+                <span className="font-semibold text-amber-300">
                   +{formatRupiah(simEmployerBpjsTaxable)}
                 </span>
               </div>
@@ -285,13 +285,13 @@ export const TaxAndBpjsView: React.FC<TaxAndBpjsViewProps> = ({
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-300">- Biaya Jabatan (5%, maks 6jt):</span>
-                  <span className="text-emerald-300">
+                  <span className="text-amber-300">
                     -{formatRupiah(simDecReconciliation.biayaJabatanAnnual)}
                   </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-300">- Iuran JHT (2%) + JP (1%) Setahun:</span>
-                  <span className="text-emerald-300">
+                  <span className="text-amber-300">
                     -{formatRupiah(simDecReconciliation.bpjsEmployeeAnnualDeduction)}
                   </span>
                 </div>
@@ -321,7 +321,7 @@ export const TaxAndBpjsView: React.FC<TaxAndBpjsViewProps> = ({
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-300">- Dipotong TER Jan–Nov:</span>
-                  <span className="text-emerald-300">
+                  <span className="text-amber-300">
                     -{formatRupiah(simDecReconciliation.terAlreadyPaidJanToNov)}
                   </span>
                 </div>
@@ -361,11 +361,11 @@ export const TaxAndBpjsView: React.FC<TaxAndBpjsViewProps> = ({
               </>
             )}
 
-            <div className="bg-emerald-950/70 p-2.5 rounded-lg border border-emerald-600/50 mt-2">
-              <span className="text-[10px] text-emerald-300 block uppercase">
+            <div className="bg-amber-950/70 p-2.5 rounded-lg border border-amber-600/50 mt-2">
+              <span className="text-[10px] text-amber-300 block uppercase">
                 Estimasi Take Home Pay ({simMode === 'december_a1' ? 'Desember' : 'Bulanan'})
               </span>
-              <span className="text-lg font-black text-emerald-400">
+              <span className="text-lg font-black text-amber-400">
                 {formatRupiah(takeHomePaySim)}
               </span>
             </div>
@@ -373,33 +373,33 @@ export const TaxAndBpjsView: React.FC<TaxAndBpjsViewProps> = ({
 
           {/* Results: Tanggungan Perusahaan Tas Grosir Import */}
           <div className="bg-slate-800/70 p-4 rounded-xl border border-slate-700/80 text-xs space-y-2.5">
-            <h4 className="font-bold text-teal-300 border-b border-slate-700 pb-1.5 flex justify-between">
+            <h4 className="font-bold text-amber-300 border-b border-slate-700 pb-1.5 flex justify-between">
               <span>Ditanggung Tas Grosir Import (Benefit)</span>
               <span>Jumlah</span>
             </h4>
             <div className="flex justify-between">
               <span className="text-slate-300">BPJS Kesehatan (4% - Objek Pajak)</span>
-              <span className="font-semibold text-teal-300">{formatRupiah(simBpjsKesComp)}</span>
+              <span className="font-semibold text-amber-300">{formatRupiah(simBpjsKesComp)}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-slate-300">BPJS TK - JKK (0.24% - Objek Pajak)</span>
-              <span className="font-semibold text-teal-300">{formatRupiah(simBpjsJkkComp)}</span>
+              <span className="font-semibold text-amber-300">{formatRupiah(simBpjsJkkComp)}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-slate-300">BPJS TK - JKM (0.30% - Objek Pajak)</span>
-              <span className="font-semibold text-teal-300">{formatRupiah(simBpjsJkmComp)}</span>
+              <span className="font-semibold text-amber-300">{formatRupiah(simBpjsJkmComp)}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-slate-300">BPJS TK - JHT (3.7% - Non Objek)</span>
-              <span className="font-semibold text-teal-300">{formatRupiah(bpjsJhtComp)}</span>
+              <span className="font-semibold text-amber-300">{formatRupiah(bpjsJhtComp)}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-slate-300">BPJS TK - JP (2% - Non Objek)</span>
-              <span className="font-semibold text-teal-300">{formatRupiah(simBpjsJpComp)}</span>
+              <span className="font-semibold text-amber-300">{formatRupiah(simBpjsJpComp)}</span>
             </div>
             <div className="border-t border-slate-700 pt-2 flex justify-between font-bold text-white">
               <span>Total Iuran Perusahaan</span>
-              <span className="text-teal-300">
+              <span className="text-amber-300">
                 {formatRupiah(
                   simBpjsKesComp + bpjsJhtComp + simBpjsJpComp + simBpjsJkkComp + simBpjsJkmComp
                 )}
@@ -496,7 +496,7 @@ export const TaxAndBpjsView: React.FC<TaxAndBpjsViewProps> = ({
                       <span
                         className={`inline-block mt-0.5 px-1.5 py-0.2 rounded text-[9px] font-bold ${
                           npwpInfo.isValid
-                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            ? 'bg-amber-50 text-amber-700 border border-amber-200'
                             : 'bg-amber-50 text-amber-700 border border-amber-200'
                         }`}
                       >
@@ -531,7 +531,7 @@ export const TaxAndBpjsView: React.FC<TaxAndBpjsViewProps> = ({
                         p.bpjsKesehatanEmployee + p.bpjsJhtEmployee + p.bpjsJpEmployee
                       )}
                     </td>
-                    <td className="py-3 px-4 font-semibold text-teal-700">
+                    <td className="py-3 px-4 font-semibold text-amber-700">
                       {formatRupiah(totalCompLiability)}
                     </td>
                   </tr>
