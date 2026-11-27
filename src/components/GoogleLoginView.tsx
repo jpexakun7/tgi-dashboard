@@ -102,7 +102,7 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
   onRegisterNewAdmin,
   onLoginAsEmployee,
 }) => {
-  const [customEmail, setCustomEmail] = useState(OFFICIAL_ADMIN_EMAILS[0]);
+  const [customEmail, setCustomEmail] = useState('');
   const [customName, setCustomName] = useState('');
   const [customPin, setCustomPin] = useState('');
   const [customRole, setCustomRole] = useState<GoogleAdminRole>('Super Admin');
@@ -851,19 +851,22 @@ export const GoogleLoginView: React.FC<GoogleLoginViewProps> = ({
                   <div className="space-y-2.5">
                     <div>
                       <label className="block text-[11px] text-slate-300 mb-1 font-medium">
-                        Alamat Email Admin Resmi <span className="text-rose-400">*</span>
+                        Email Administrator Resmi <span className="text-rose-400">*</span>
                       </label>
-                      <select
+                      <input
+                        type="text"
+                        inputMode="email"
+                        required
+                        maxLength={120}
                         value={customEmail}
-                        onChange={(e) => setCustomEmail(e.target.value)}
-                        className="w-full px-3 py-2 text-xs bg-slate-800 border border-slate-700 rounded-lg text-white focus:outline-hidden focus:border-amber-500 font-mono"
-                      >
-                        {OFFICIAL_ADMIN_EMAILS.map((email) => (
-                          <option key={email} value={email}>
-                            {email}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={(e) => setCustomEmail(e.target.value.slice(0, 120))}
+                        placeholder="Masukkan Email Administrator"
+                        autoComplete="off"
+                        autoCorrect="off"
+                        autoCapitalize="none"
+                        spellCheck={false}
+                        className="w-full px-3 py-2 text-xs bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-hidden focus:border-amber-500 font-mono"
+                      />
                     </div>
 
                     <div>

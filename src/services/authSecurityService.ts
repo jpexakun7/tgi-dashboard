@@ -16,12 +16,29 @@ export const OFFICIAL_ADMIN_EMAILS: readonly string[] = [
   'lupytacounting77@gmail.com',
 ];
 
+const dynamicAllowedAdminEmails = new Set<string>(
+  OFFICIAL_ADMIN_EMAILS.map((e) => e.trim().toLowerCase())
+);
+
+export function registerAllowedAdminEmails(emails?: Array<string | null | undefined>): void {
+  if (!Array.isArray(emails)) return;
+  for (const email of emails) {
+    if (typeof email === 'string' && email.includes('@')) {
+      dynamicAllowedAdminEmails.add(email.trim().toLowerCase());
+    }
+  }
+}
+
 export const MAX_PIN_ATTEMPTS = 5;
 export const PIN_LOCKOUT_DURATION_MS = 5 * 60 * 1000; // 5 menit
 
 export function isOfficialAdminEmail(email?: string | null): boolean {
   if (!email || typeof email !== 'string') return false;
-  return OFFICIAL_ADMIN_EMAILS.includes(email.trim().toLowerCase());
+  const normalized = email.trim().toLowerCase();
+  return (
+    OFFICIAL_ADMIN_EMAILS.includes(normalized) ||
+    dynamicAllowedAdminEmails.has(normalized)
+  );
 }
 
 export interface AdminVerifyResponse {
@@ -454,9 +471,22 @@ export async function syncAdminPinStatusFromSupabase(
       if (candidateMap && typeof candidateMap === 'object') {
         for (const [k, v] of Object.entries(candidateMap)) {
           if (typeof v === 'string' && v.trim().length > 0) {
-            discoveredMap[k.trim().toLowerCase()] = v.trim();
+            const normKey = k.trim().toLowerCase();
+            discoveredMap[normKey] = v.trim();
+            if (normKey.includes('@')) {
+              registerAllowedAdminEmails([normKey]);
+            }
           }
         }
+      }
+      if (Array.isArray(obj.allowedGoogleAdmins)) {
+        const activeList = obj.allowedGoogleAdmins
+          .filter((a: any) => a && a.email && a.status !== 'blocked')
+          .map((a: any) => String(a.email));
+        registerAllowedAdminEmails(activeList);
+      }
+      if (typeof obj.adminEmail === 'string' && obj.adminEmail.includes('@')) {
+        registerAllowedAdminEmails([obj.adminEmail]);
       }
       const obf =
         obj.adminPinObfuscated ||
@@ -609,12 +639,12 @@ export async function updateAdminPinSecure(
     };
   }
 
-  const normalizedEmail = (email || 'jpexakun7@gmail.com').trim().toLowerCase();
-  if (!isOfficialAdminEmail(normalizedEmail)) {
+  const normalizedEmail = (email || '').trim().toLowerCase();
+  if (!normalizedEmail || !isOfficialAdminEmail(normalizedEmail)) {
     return {
       success: false,
       message:
-        'Akses ditolak: Hanya email Admin resmi (jpexakun7@gmail.com / lupytacounting77@gmail.com) yang diizinkan.',
+        'Akses Ditolak: Email yang Anda masukkan tidak terdaftar sebagai Administrator resmi di sistem.',
     };
   }
 
@@ -753,11 +783,21 @@ export async function verifyAdminLoginSecure(
   const normalizedEmail = (email || '').trim().toLowerCase();
   const trimmedSecret = secret.trim();
 
-  if (!normalizedEmail || !isOfficialAdminEmail(normalizedEmail)) {
+  if (!normalizedEmail) {
+    return {
+      authenticated: false,
+      message: 'Silakan masukkan Email Administrator resmi terlebih dahulu.',
+    };
+  }
+
+  // Sync latest Admin PIN and registered admin list from Supabase before checking email authorization
+  const cloudPinStatus = await syncAdminPinStatusFromSupabase(normalizedEmail);
+
+  if (!isOfficialAdminEmail(normalizedEmail)) {
     return {
       authenticated: false,
       message:
-        'Akses Ditolak: Hanya email Admin resmi terdaftar (jpexakun7@gmail.com / lupytacounting77@gmail.com) yang diizinkan membuka Panel Admin.',
+        'Akses Ditolak: Email yang Anda masukkan tidak terdaftar sebagai Administrator resmi di database sistem.',
     };
   }
 
@@ -781,8 +821,6 @@ export async function verifyAdminLoginSecure(
     return { authenticated: false, message: 'Masukkan PIN atau kata sandi terlebih dahulu.' };
   }
 
-  // Always fetch latest Admin PIN configuration from Supabase before verifying
-  const cloudPinStatus = await syncAdminPinStatusFromSupabase(normalizedEmail);
   const map = cloudPinStatus.hashMap;
   const expectedEmailHash = map[normalizedEmail];
   const expectedGlobalHash = map['*'];

@@ -23,7 +23,8 @@ import {
   updateAdminPinSecure,
   syncAdminPinStatusFromSupabase,
   checkPinRateLimit,
-  OFFICIAL_ADMIN_EMAILS,
+  isOfficialAdminEmail,
+  registerAllowedAdminEmails,
   sanitizeSafeText,
 } from '../services/authSecurityService';
 
@@ -69,7 +70,7 @@ export const WebPinGatekeeper: React.FC<WebPinGatekeeperProps> = ({
 
   const [loginRole, setLoginRole] = useState<'employee' | 'admin'>('employee');
   const [employeeIdentifier, setEmployeeIdentifier] = useState<string>('');
-  const [adminEmail, setAdminEmail] = useState<string>(OFFICIAL_ADMIN_EMAILS[0]);
+  const [adminEmail, setAdminEmail] = useState<string>('');
   const [pinInput, setPinInput] = useState('');
   const [showPin, setShowPin] = useState(false);
   const [showScreenKeypad, setShowScreenKeypad] = useState(false);
@@ -83,9 +84,23 @@ export const WebPinGatekeeper: React.FC<WebPinGatekeeperProps> = ({
 
   const inputRef = useRef<HTMLInputElement>(null);
 
+  useEffect(() => {
+    const configEmails: string[] = [];
+    if (Array.isArray(companyConfig?.allowedGoogleAdmins)) {
+      for (const acc of companyConfig.allowedGoogleAdmins) {
+        if (acc?.email && acc.status === 'active') {
+          configEmails.push(acc.email);
+        }
+      }
+    }
+    if (configEmails.length > 0) {
+      registerAllowedAdminEmails(configEmails);
+    }
+  }, [companyConfig]);
+
   const activeRateScope =
     loginRole === 'admin'
-      ? `admin_pin::${adminEmail.trim().toLowerCase()}`
+      ? `admin_pin::${(adminEmail.trim() || 'default_admin').toLowerCase()}`
       : `emp_pin::${(employeeIdentifier.trim() || 'default').toLowerCase()}`;
 
   useEffect(() => {
@@ -112,7 +127,7 @@ export const WebPinGatekeeper: React.FC<WebPinGatekeeperProps> = ({
     const checkCloudPin = async () => {
       setIsCheckingPinStatus(true);
       try {
-        const res = await syncAdminPinStatusFromSupabase(adminEmail);
+        const res = await syncAdminPinStatusFromSupabase(adminEmail.trim() || undefined);
         if (!isMounted) return;
         if (loginRole === 'admin') {
           setIsInitialAdminSetup(!res.isConfigured);
@@ -132,7 +147,8 @@ export const WebPinGatekeeper: React.FC<WebPinGatekeeperProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [loginRole, adminEmail]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loginRole]);
 
   const handleDigitClick = (digit: string) => {
     if (lockoutSeconds > 0) return;
@@ -158,6 +174,19 @@ export const WebPinGatekeeper: React.FC<WebPinGatekeeperProps> = ({
   const handleInitialSetupSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (lockoutSeconds > 0) return;
+
+    const cleanEmail = adminEmail.trim().toLowerCase();
+    if (!cleanEmail) {
+      setErrorMsg('Silakan masukkan Email Administrator resmi terlebih dahulu.');
+      return;
+    }
+    if (!isOfficialAdminEmail(cleanEmail)) {
+      setErrorMsg(
+        'Akses Ditolak: Email yang Anda masukkan tidak terdaftar sebagai Administrator resmi di sistem.'
+      );
+      return;
+    }
+
     const trimmed = pinInput.trim();
     if (trimmed.length < 4) {
       setErrorMsg('PIN / Kata Sandi baru minimal 4 karakter.');
@@ -171,19 +200,19 @@ export const WebPinGatekeeper: React.FC<WebPinGatekeeperProps> = ({
     setIsVerifying(true);
     setErrorMsg(null);
     try {
-      const setupRes = await updateAdminPinSecure(adminEmail, 'Super Admin', trimmed);
+      const setupRes = await updateAdminPinSecure(cleanEmail, 'Super Admin', trimmed);
       if (!setupRes.success) {
         setErrorMsg(setupRes.message || 'Gagal menyimpan kredensial Admin.');
         setIsVerifying(false);
         return;
       }
       setSuccessMsg('Kredensial Admin berhasil dienkripsi & disimpan. Mengautentikasi sesi...');
-      const verifyRes = await verifyAdminLoginSecure(adminEmail, trimmed, 'Super Admin');
+      const verifyRes = await verifyAdminLoginSecure(cleanEmail, trimmed, 'Super Admin');
       if (verifyRes.authenticated) {
         emitUnlock({
           mode: 'admin',
           unlockAdmin: true,
-          adminEmail: verifyRes.email || adminEmail,
+          adminEmail: verifyRes.email || cleanEmail,
           sessionToken: verifyRes.sessionToken,
         });
       } else {
@@ -205,6 +234,20 @@ export const WebPinGatekeeper: React.FC<WebPinGatekeeperProps> = ({
       return;
     }
 
+    if (loginRole === 'admin') {
+      const cleanEmail = adminEmail.trim().toLowerCase();
+      if (!cleanEmail) {
+        setErrorMsg('Silakan masukkan Email Administrator resmi terlebih dahulu.');
+        return;
+      }
+      if (!isOfficialAdminEmail(cleanEmail)) {
+        setErrorMsg(
+          'Akses Ditolak: Email yang Anda masukkan tidak terdaftar sebagai Administrator resmi di database sistem.'
+        );
+        return;
+      }
+    }
+
     const trimmed = pinInput.trim();
     if (!trimmed) {
       setErrorMsg('Silakan masukkan PIN atau Kata Sandi Anda terlebih dahulu.');
@@ -216,12 +259,13 @@ export const WebPinGatekeeper: React.FC<WebPinGatekeeperProps> = ({
 
     try {
       if (loginRole === 'admin') {
-        const res = await verifyAdminLoginSecure(adminEmail, trimmed, 'Super Admin');
+        const cleanEmail = adminEmail.trim().toLowerCase();
+        const res = await verifyAdminLoginSecure(cleanEmail, trimmed, 'Super Admin');
         if (res.authenticated) {
           emitUnlock({
             mode: 'admin',
             unlockAdmin: true,
-            adminEmail: res.email || adminEmail,
+            adminEmail: res.email || cleanEmail,
             sessionToken: res.sessionToken,
           });
           return;
@@ -420,21 +464,23 @@ export const WebPinGatekeeper: React.FC<WebPinGatekeeperProps> = ({
                 </label>
                 <div className="relative">
                   <Mail className="w-3.5 h-3.5 text-amber-400/80 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <select
+                  <input
+                    type="text"
+                    inputMode="email"
+                    maxLength={120}
                     disabled={lockoutSeconds > 0}
                     value={adminEmail}
                     onChange={(e) => {
-                      setAdminEmail(e.target.value);
+                      setAdminEmail(e.target.value.slice(0, 120));
                       setErrorMsg(null);
                     }}
-                    className="w-full pl-9 pr-3 py-2 bg-black/65 border border-amber-500/30 rounded-xl text-xs text-white focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400/40 transition-colors disabled:opacity-50"
-                  >
-                    {OFFICIAL_ADMIN_EMAILS.map((email) => (
-                      <option key={email} value={email} className="bg-stone-900 text-white">
-                        {email}
-                      </option>
-                    ))}
-                  </select>
+                    placeholder="Masukkan Email Administrator"
+                    autoComplete="off"
+                    autoCorrect="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    className="w-full pl-9 pr-3 py-2 bg-black/65 border border-amber-500/30 rounded-xl text-xs text-white placeholder-stone-500 focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400/40 transition-colors disabled:opacity-50"
+                  />
                 </div>
               </div>
             )}

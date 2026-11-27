@@ -17,8 +17,8 @@ import {
   updateAdminPinSecure,
   syncAdminPinStatusFromSupabase,
   checkPinRateLimit,
-  OFFICIAL_ADMIN_EMAILS,
   isOfficialAdminEmail,
+  registerAllowedAdminEmails,
 } from '../services/authSecurityService';
 
 interface AdminPinAuthModalProps {
@@ -46,7 +46,7 @@ export const AdminPinAuthModal: React.FC<AdminPinAuthModalProps> = ({
   const [selectedEmail, setSelectedEmail] = useState<string>(
     currentAdminUser?.email && isOfficialAdminEmail(currentAdminUser.email)
       ? currentAdminUser.email
-      : OFFICIAL_ADMIN_EMAILS[0]
+      : ''
   );
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -57,7 +57,17 @@ export const AdminPinAuthModal: React.FC<AdminPinAuthModalProps> = ({
   const [isInitialSetup, setIsInitialSetup] = useState(false);
   const [lockoutSeconds, setLockoutSeconds] = useState<number>(0);
 
-  const rateScope = `admin_pin::${selectedEmail.trim().toLowerCase()}`;
+  const rateScope = `admin_pin::${(selectedEmail.trim() || 'default_admin').toLowerCase()}`;
+
+  useEffect(() => {
+    if (effectiveAdmins.length > 0) {
+      registerAllowedAdminEmails(
+        effectiveAdmins
+          .filter((a) => a.status === 'active' && a.email)
+          .map((a) => a.email)
+      );
+    }
+  }, [effectiveAdmins]);
 
   useEffect(() => {
     let isMounted = true;
@@ -65,16 +75,18 @@ export const AdminPinAuthModal: React.FC<AdminPinAuthModalProps> = ({
       const targetEmail =
         currentAdminUser?.email && isOfficialAdminEmail(currentAdminUser.email)
           ? currentAdminUser.email
-          : OFFICIAL_ADMIN_EMAILS[0];
+          : '';
       setSelectedEmail(targetEmail);
       setPassword('');
       setConfirmPassword('');
       setError(null);
       setIsCheckingPinStatus(true);
-      const rate = checkPinRateLimit(`admin_pin::${targetEmail.trim().toLowerCase()}`);
+      const rate = checkPinRateLimit(
+        `admin_pin::${(targetEmail.trim() || 'default_admin').toLowerCase()}`
+      );
       setLockoutSeconds(rate.isLocked ? rate.remainingSeconds : 0);
 
-      void syncAdminPinStatusFromSupabase(targetEmail)
+      void syncAdminPinStatusFromSupabase(targetEmail || undefined)
         .then((res) => {
           if (!isMounted) return;
           setIsInitialSetup(!res.isConfigured);
@@ -250,36 +262,32 @@ export const AdminPinAuthModal: React.FC<AdminPinAuthModalProps> = ({
 
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-1.5">
-              Akun Email Admin Resmi Terdaftar
+              Email Administrator Resmi
             </label>
             <div className="relative">
               <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-              <select
+              <input
+                type="text"
+                inputMode="email"
+                maxLength={120}
                 disabled={lockoutSeconds > 0}
                 value={selectedEmail}
                 onChange={(e) => {
-                  const val = e.target.value;
+                  const val = e.target.value.slice(0, 120);
                   setSelectedEmail(val);
                   setError(null);
-                  const rate = checkPinRateLimit(`admin_pin::${val.trim().toLowerCase()}`);
+                  const rate = checkPinRateLimit(
+                    `admin_pin::${(val.trim() || 'default_admin').toLowerCase()}`
+                  );
                   setLockoutSeconds(rate.isLocked ? rate.remainingSeconds : 0);
-                  setIsCheckingPinStatus(true);
-                  void syncAdminPinStatusFromSupabase(val)
-                    .then((res) => {
-                      setIsInitialSetup(!res.isConfigured);
-                    })
-                    .finally(() => {
-                      setIsCheckingPinStatus(false);
-                    });
                 }}
-                className="w-full pl-10 pr-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs sm:text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-500 disabled:opacity-50"
-              >
-                {OFFICIAL_ADMIN_EMAILS.map((email) => (
-                  <option key={email} value={email}>
-                    {email}
-                  </option>
-                ))}
-              </select>
+                placeholder="Masukkan Email Administrator"
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="none"
+                spellCheck={false}
+                className="w-full pl-10 pr-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs sm:text-sm text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-500 disabled:opacity-50"
+              />
             </div>
           </div>
 
